@@ -1,0 +1,52 @@
+# secrets and per-machine files
+/settings.json
+/settings.local.json
+/mcp.json
+/.credentials.json
+/.claude.json*
+/mcp-needs-auth-cache.json
+/secrets.local.json
+/secrets.env
+dock.json
+elevenlabs-keys.json
+dock-chat.json
+
+# state
+/kit/*.log
+/kit/*.lock
+/kit/kit.local.json
+/kit/dock-chat-sessions.json
+/kit/dock-sessions-state.json
+
+# not configuration
+/plugins/*
+!/plugins/plugins.json
+/projects/
+/sessions/
+/file-history/
+/history.jsonl
+/backups/
+/cache/
+/downloads/
+/paste-cache/
+/shell-snapshots/
+/session-env/
+/telemetry/
+/tmp/
+/state/
+/jobs/
+/ide/
+/feedback/
+/hooks/
+/skills-omx-archive/
+/.omc/
+/.session-stats.json*
+/.caveman-*
+/.last-*
+
+# old backups anywhere
+*.bak
+*.bak-*
+
+node_modules/
+__pycache__/

@@ -1,0 +1,51 @@
+# Arsitektur claude-config
+
+Repo ini adalah sumber konfigurasi Claude Code milik satu orang. Satu repo dipasang ke dua mesin. Tidak ada secret di dalamnya.
+
+## Dua mesin
+
+| | Laptop | Workspace Coder |
+|---|---|---|
+| OS | Windows 11 | Linux aarch64 |
+| Folder konfigurasi | `C:/Users/danus/.claude-kantor` | `/home/coder/.claude` |
+| Checkout repo | `C:/Users/danus/claude-config` | `/home/coder/claude-config` |
+| Secret | `secrets.local.json` di folder konfigurasi | `~/.config/claude-config/secrets.env` (mode 600) |
+| Shell | Git Bash | bash |
+
+## Cara pasang
+
+Installer menyalin dan merender. Tidak ada symlink, dan `--apply` tidak menghapus apa pun.
+
+1. `node install/install.cjs --dry-run` menampilkan apa yang akan berubah.
+2. `node install/install.cjs --apply` menulis. `settings.json` dicadangkan dulu.
+3. `node install/secret-scan.cjs` harus lulus sebelum push.
+
+## Dari mana tiap file berasal
+
+| Hasil di folder konfigurasi | Dirangkai dari |
+|---|---|
+| `CLAUDE.md` (Windows) | `claude/CLAUDE.common.md` lalu `claude/CLAUDE.windows.md` |
+| `CLAUDE.md` (Linux) | `claude/CLAUDE.common.md` lalu `claude/CLAUDE.linux.md` |
+| `AGENTS.md`, `RTK.md`, `DESIGN_THINKING.md`, `karpathy-principles.md` | Disalin apa adanya dari `claude/`, sama di dua OS |
+| `settings.json` | `settings/settings.base.json` ditambah overlay per OS |
+| Plugin | `plugins/plugins.json` |
+| MCP | `mcp/mcp.windows.json` atau `mcp/mcp.linux.json` |
+
+## Cara `CLAUDE.md` dipecah
+
+Pemecahan hanya memindahkan baris. Tidak ada kata yang diubah.
+
+| Bagian | Tempat | Alasan |
+|---|---|---|
+| "Delegation rules: agy-bridge" | `CLAUDE.windows.md` | Antigravity CLI hanya ada di laptop |
+| "Shell" (Git Bash, PowerShell) | `CLAUDE.windows.md` | Khusus Windows |
+| "RTK dulu, tool native belakangan", "Berlaku juga di subagent dan worker", `@RTK.md` | `CLAUDE.common.md` | Aturan rtk sama di dua mesin |
+| Shell bash, peta workspace, batas test, larangan giliran chat tanpa pengawasan | `CLAUDE.linux.md` | Baru; sumbernya rencana bagian 1.3, F, P.2, P.5 |
+
+Installer menaruh bagian umum di depan, jadi urutan `CLAUDE.md` Windows berubah: bagian rtk sekarang di atas, aturan delegasi dan Shell di bawah. Isinya tetap.
+
+`AGENTS.md` pribadi masih menyebut skrip Brain `.ps1` dan path `E:\`. File itu disalin sama di dua OS, jadi padanan Linux (`python3 ~/brain/scripts/brain.py`) ditulis di `CLAUDE.linux.md`.
+
+## Cek isi
+
+`node docs/check-content-split.cjs` membandingkan lima file sumber di laptop dengan hasil pecahan. Hasil yang diharapkan: tidak ada baris hilang, ganda, atau asing di file umum dan Windows.

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "marketplaces": {
+    "claude-plugins-official": { "source": "github", "repo": "anthropics/claude-plugins-official", "os": ["windows", "linux"], "note": "built in to Claude Code; no plugin from it is installed" },
+    "superpowers-marketplace": { "source": "github", "repo": "obra/superpowers-marketplace", "os": ["windows", "linux"] },
+    "caveman": { "source": "github", "repo": "JuliusBrussee/caveman", "os": ["windows", "linux"] },
+    "omc": { "source": "git", "url": "https://github.com/Yeachan-Heo/oh-my-claudecode.git", "os": ["windows", "linux"] },
+    "typesafe-ai": { "source": "github", "repo": "typesafe-ai/skills", "os": ["windows", "linux"] }
+  },
+  "plugins": [
+    { "name": "typesafe", "marketplace": "typesafe-ai", "version": "0.5.7", "os": ["windows", "linux"], "requiresSecret": "TYPESAFE_API_KEY" },
+    { "name": "caveman", "marketplace": "caveman", "version": "0d95a81d35a9", "versionKind": "commit", "os": ["windows", "linux"] },
+    { "name": "oh-my-claudecode", "marketplace": "omc", "version": "4.15.7", "os": ["windows", "linux"] },
+    { "name": "superpowers", "marketplace": "superpowers-marketplace", "version": "6.4.2", "os": ["windows", "linux"] }
+  ],
+  "install": {
+    "marketplaceAdd": "claude plugin marketplace add <source>",
+    "pluginInstall": "claude plugin install <name>@<marketplace>"
+  }
+}

@@ -1,0 +1,144 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push origin development:*)",
+      "Bash(git push origin main:*)",
+      "Bash(git push origin master:*)",
+      "Bash(git push -f:*)",
+      "Bash(git add .:*)",
+      "Bash(git add -A:*)",
+      "Bash(rtk git push origin development:*)",
+      "Bash(rtk git push origin main:*)",
+      "Bash(rtk git push origin master:*)",
+      "Bash(rtk git push -f:*)",
+      "Bash(rtk git add .:*)",
+      "Bash(rtk git add -A:*)"
+    ],
+    "ask": [
+      "Bash(git push --force:*)",
+      "Bash(rtk git push --force:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{kit:dock-push.cjs hook}}",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{kit:guard.cjs}}",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rtk hook claude"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{kit:dock-push.cjs hook}}",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{kit:dock-push.cjs hook}}",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{kit:dock-push.cjs hook}}",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{kit:dock-push.cjs hook}}",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{kit:status.cjs sync --hook}}",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "typesafe@typesafe-ai": true,
+    "caveman@caveman": true,
+    "oh-my-claudecode@omc": true,
+    "superpowers@superpowers-marketplace": true
+  },
+  "extraKnownMarketplaces": {
+    "caveman": {
+      "source": {
+        "source": "github",
+        "repo": "JuliusBrussee/caveman"
+      }
+    },
+    "typesafe-ai": {
+      "source": {
+        "source": "github",
+        "repo": "typesafe-ai/skills"
+      }
+    },
+    "superpowers-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "obra/superpowers-marketplace"
+      }
+    }
+  },
+  "switchModelsOnFlag": false,
+  "remoteControlAtStartup": false,
+  "agentPushNotifEnabled": true,
+  "model": "opus",
+  "statusLine": {
+    "type": "command",
+    "command": "{{kit:statusline.cjs}}"
+  }
+}

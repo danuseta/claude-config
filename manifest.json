@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "configDir": {
+    "windows": "{{home}}/.claude-kantor",
+    "linux": "{{home}}/.claude"
+  },
+  "secrets": {
+    "windows": { "file": "{{configDir}}/secrets.local.json", "format": "json" },
+    "linux": { "file": "{{home}}/.config/claude-config/secrets.env", "format": "env" }
+  },
+  "settings": {
+    "base": "settings/settings.base.json",
+    "overlay": {
+      "windows": "settings/settings.windows.json",
+      "linux": "settings/settings.linux.json"
+    },
+    "target": "settings.json",
+    "backupPrefix": "settings.json.bak-"
+  },
+  "claudeMd": {
+    "target": "CLAUDE.md",
+    "parts": {
+      "windows": ["claude/CLAUDE.common.md", "claude/CLAUDE.windows.md"],
+      "linux": ["claude/CLAUDE.common.md", "claude/CLAUDE.linux.md"]
+    }
+  },
+  "files": [
+    { "from": "claude/AGENTS.md", "to": "AGENTS.md", "os": ["windows", "linux"] },
+    { "from": "claude/RTK.md", "to": "RTK.md", "os": ["windows", "linux"] },
+    { "from": "claude/DESIGN_THINKING.md", "to": "DESIGN_THINKING.md", "os": ["windows", "linux"] },
+    { "from": "claude/karpathy-principles.md", "to": "karpathy-principles.md", "os": ["windows", "linux"] },
+    { "from": "windows/dock-chat-autostart.vbs", "to": "kit/dock-chat-autostart.vbs", "os": ["windows"] }
+  ],
+  "dirs": [
+    { "from": "kit", "to": "kit", "os": ["windows", "linux"], "exclude": ["tests", "dock-chat-autostart.vbs"] },
+    { "from": "agents", "to": "agents", "os": ["windows", "linux"] },
+    { "from": "commands", "to": "commands", "os": ["windows", "linux"] },
+    { "from": "skills", "to": "skills", "os": ["windows", "linux"], "excludeOs": { "linux": ["graphify", "playwright-cli"] } }
+  ],
+  "ownedByOtherWorkers": ["kit", "linux", "claude", "plugins", "mcp", "docs", "windows"],
+  "importSkip": [
+    "(^|/)\\.git(/|$)",
+    "(^|/)node_modules(/|$)",
+    "(^|/)__pycache__(/|$)",
+    "\\.pyc$",
+    "\\.bak($|-)",
+    "\\.log$",
+    "\\.lock$",
+    "\\.tmp\\.",
+    "(^|/)\\.DS_Store$"
+  ],
+  "neverTracked": [
+    "(^|/)settings\\.json$",
+    "(^|/)settings\\.local\\.json$",
+    "(^|/)mcp\\.json$",
+    "(^|/)\\.credentials\\.json$",
+    "(^|/)\\.claude\\.json",
+    "(^|/)mcp-needs-auth-cache\\.json$",
+    "(^|/)dock\\.json$",
+    "(^|/)elevenlabs-keys\\.json$",
+    "(^|/)secrets\\.local\\.json$",
+    "(^|/)secrets\\.env$",
+    "(^|/)dock-chat\\.json$",
+    "(^|/)dock-chat-sessions\\.json$",
+    "(^|/)dock-sessions-state\\.json$",
+    "(^|/)history\\.jsonl$",
+    "\\.bak($|-)",
+    "^kit/[^/]*\\.(log|lock)$",
+    "^(projects|sessions|file-history|backups|cache|downloads|paste-cache|shell-snapshots|session-env|telemetry|tmp|state|jobs|ide|feedback|hooks|skills-omx-archive|\\.omc)/",
+    "^plugins/(?!plugins\\.json$)",
+    "^\\.session-stats\\.json",
+    "^\\.caveman-",
+    "^\\.last-"
+  ]
+}

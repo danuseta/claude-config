@@ -1,0 +1,263 @@
+#!/usr/bin/env bash
+# ccfg: owner control of the Linux runtime (status, start, stop, restart, logs, doctor, update, secret, uninstall).
+# shellcheck disable=SC1091
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib.sh"
+
+D_PASS=0
+D_FAIL=0
+D_WARN=0
+
+usage() {
+  cat <<'EOF'
+usage: ccfg <command>
+  status                          services, binaries, secrets, last run
+  start|stop|restart [tailscale|bridge|all]
+  logs [personalize|tailscaled|bridge] [-f]
+  doctor [--strict]               acceptance checks (exit 0 unless --strict and something failed)
+  update                          git pull --ff-only, install.cjs --apply, restart bridge
+  secret set NAME                 value read from stdin (hidden on a terminal)
+  secret unset NAME
+  secret list                     names only
+  uninstall [--yes] [--keep-secrets]
+EOF
+}
+
+targets() {
+  case ${1:-all} in
+    all) printf 'tailscaled bridge' ;;
+    *) service_unit "$1" || { echo "unknown target: $1" >&2; return 1; } ;;
+  esac
+}
+
+cmd_start() { local u; bootstrap_dirs; for u in $(targets "${1:-all}"); do service_start "$u"; done; }
+
+cmd_stop() {
+  local u list
+  list=$(targets "${1:-all}") || return 1
+  [ "${1:-all}" != all ] || list="bridge tailscaled"
+  for u in $list; do service_stop "$u"; done
+}
+
+cmd_restart() { cmd_stop "${1:-all}"; cmd_start "${1:-all}"; }
+
+cmd_ensure() {
+  local u
+  bootstrap_dirs
+  for u in tailscaled bridge; do
+    service_pid "$u" >/dev/null && continue
+    [ "$u" = bridge ] && [ ! -d "$TS_STATE" ] && continue
+    service_start "$u" >/dev/null 2>&1
+  done
+  return 0
+}
+
+cmd_logs() {
+  local which=${1:-personalize} f
+  case $which in
+    personalize) f=$CCFG_STATE/personalize.log ;;
+    tailscale | tailscaled) f=$CCFG_STATE/tailscaled.log ;;
+    bridge) f=$CCFG_STATE/bridge.log ;;
+    *) echo "unknown log: $which" >&2; return 1 ;;
+  esac
+  [ -f "$f" ] || { echo "no log yet: $f"; return 0; }
+  if [ "${2:-}" = -f ]; then tail -n 50 -f "$f"; else tail -n 50 "$f"; fi
+}
+
+cmd_status() {
+  local u sp cp T v n
+  n=$(secret_names | wc -l | tr -d ' ')
+  printf 'secrets    : %s, mode %s, %s names\n' "$(secrets_state)" "$(file_mode "$CCFG_SECRETS" || echo -)" "$n"
+  for u in tailscaled bridge; do
+    sp=$(service_pid "$u") || sp=""
+    cp=$(cat "$CCFG_RUN/$u.child" 2>/dev/null)
+    if [ -n "$sp" ]; then
+      printf '%-11s: supervisor pid %s, child pid %s%s\n' "$u" "$sp" "${cp:--}" "$(is_alive "$cp" || echo ' (child not alive, restarting)')"
+    else
+      printf '%-11s: not running\n' "$u"
+    fi
+  done
+  if [ -x "$CCFG_BIN/tailscale" ]; then
+    printf 'tailnet    : backend %s, tag %s\n' "$(ts_backend_state || true)" "$(ts_cli status --json 2>/dev/null | json_get Self.Tags.0)"
+  fi
+  for T in $PIN_TOOLS; do
+    v=$(cat "$CCFG_STATE/bins/$(printf '%s' "$T" | tr 'A-Z' 'a-z').pin" 2>/dev/null | cut -d' ' -f1)
+    printf 'binary     : %-9s %s%s\n' "$T" "${v:-not installed}" "$(pin_ready "$T" || echo ' (pin missing)')"
+  done
+  if [ -f "$CCFG_STATE/last-run.json" ] && command -v node >/dev/null 2>&1; then
+    node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));console.log("last run   : "+j.at);for(const s of j.steps)console.log("  "+s.step.padEnd(10)+s.status.padEnd(5)+s.note)' "$(native_path "$CCFG_STATE/last-run.json")"
+  else
+    echo "last run   : none"
+  fi
+}
+
+chk() {
+  printf '%-6s %-22s %s\n' "$1" "$2" "$3"
+  case $1 in PASS) D_PASS=$((D_PASS + 1)) ;; FAIL) D_FAIL=$((D_FAIL + 1)) ;; WARN) D_WARN=$((D_WARN + 1)) ;; esac
+}
+
+cmd_doctor() {
+  local strict=0 st mode miss out cp sp tag c pre
+  [ "${1:-}" != --strict ] || strict=1
+  mode=$(file_mode "$CCFG_SECRETS")
+  if [ "$(secrets_state)" = ok ]; then chk PASS secrets-mode "$CCFG_SECRETS is mode 600"; else chk FAIL secrets-mode "secrets file $(secrets_state) (mode ${mode:--}), expected 600"; fi
+
+  miss=$(pins_missing)
+  if [ -z "$miss" ]; then chk PASS pins "all binaries pinned with version and sha256"; else chk WARN pins "not pinned yet (install refused): $miss"; fi
+
+  st=""
+  if [ -x "$CCFG_BIN/tailscale" ]; then st=$(ts_backend_state); tag=$(ts_cli status --json 2>/dev/null | json_get Self.Tags.0); fi
+  if [ "$st" = Running ] && [ "$tag" = "$TS_TAG" ]; then chk PASS tailscale "BackendState Running, tag $tag"
+  else chk FAIL tailscale "BackendState '${st:-unknown}', tag '${tag:-none}' (expected Running, $TS_TAG)"; fi
+  if secret_has TS_AUTHKEY 2>/dev/null; then
+    if [ "$st" = Running ]; then chk FAIL authkey-removed "TS_AUTHKEY still in the secrets file after join"; else chk WARN authkey-removed "TS_AUTHKEY waiting for the first join"; fi
+  else chk PASS authkey-removed "TS_AUTHKEY not in the secrets file"; fi
+
+  if [ -n "$ACL_PROBE_ADDR" ]; then
+    if curl -s -o /dev/null --max-time 8 -x "http://127.0.0.1:$TS_PROXY_PORT" "http://$ACL_PROBE_ADDR:445" 2>/dev/null; then chk FAIL acl-probe "$ACL_PROBE_ADDR:445 reachable, ACL not restricting"; else chk PASS acl-probe "$ACL_PROBE_ADDR:445 not reachable"; fi
+  else chk SKIP acl-probe "ACL_PROBE_ADDR not set in versions.env"; fi
+
+  if [ -f "$CCFG_CLAUDE_DIR/kit/dock-push.cjs" ] && [ "$(secrets_state)" = ok ] && command -v node >/dev/null 2>&1; then
+    out=$( (load_kit_env; cd "$CCFG_CLAUDE_DIR/kit" && timeout 20 node dock-push.cjs check) 2>&1)
+    if printf '%s\n' "$out" | grep -q '^token: set'; then chk PASS dock-config "$(printf '%s\n' "$out" | grep '^url:' | head -n 1)"; else chk FAIL dock-config "dock-push.cjs check: token not set or kit missing"; fi
+  else chk FAIL dock-config "kit, node or secrets not ready"; fi
+
+  sp=$(service_pid bridge) || sp=""
+  cp=$(cat "$CCFG_RUN/bridge.child" 2>/dev/null)
+  if [ -n "$sp" ] && is_alive "$cp"; then
+    chk PASS bridge "supervisor pid $sp, bridge pid $cp"
+    if [ -r "/proc/$cp/environ" ]; then
+      if tr '\0' '\n' <"/proc/$cp/environ" 2>/dev/null | grep -q '^CLAUDE_CODE_OAUTH_TOKEN='; then chk PASS bridge-auth "CLAUDE_CODE_OAUTH_TOKEN present in the bridge environment"; else chk FAIL bridge-auth "CLAUDE_CODE_OAUTH_TOKEN missing in the bridge environment"; fi
+    fi
+  else chk FAIL bridge "bridge is not running (ccfg start bridge)"; fi
+
+  if rtk --version >/dev/null 2>&1 && bd --version >/dev/null 2>&1; then chk PASS rtk-bd "rtk $(rtk --version 2>&1 | head -n 1), bd $(bd --version 2>&1 | head -n 1)"; else chk FAIL rtk-bd "rtk or bd not runnable"; fi
+
+  if [ -f "$CCFG_CLAUDE_DIR/settings.json" ] && command -v node >/dev/null 2>&1; then
+    out=$(node -e '
+const fs = require("fs");
+const rd = (f) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return {}; } };
+const cur = rd(process.argv[1]), orig = rd(process.argv[2]);
+const pre = ((cur.hooks || {}).PreToolUse || []).length;
+console.log([pre, cur.autoUpdatesChannel === orig.autoUpdatesChannel ? "same" : "changed", cur.autoUpdatesChannel].join(" "));
+' "$(native_path "$CCFG_CLAUDE_DIR/settings.json")" "$(native_path "$CCFG_STATE/orig/settings.json")")
+    pre=${out%% *}
+    if [ "$pre" = 3 ] && [ "$(printf '%s' "$out" | cut -d' ' -f2)" = same ]; then chk PASS settings "PreToolUse hooks $pre, autoUpdatesChannel kept"; else chk FAIL settings "PreToolUse hooks '$pre' (want 3), autoUpdatesChannel $(printf '%s' "$out" | cut -d' ' -f2)"; fi
+  else chk FAIL settings "$CCFG_CLAUDE_DIR/settings.json missing"; fi
+
+  if grep -qs '"mongodb"' "$HOME/.claude.json"; then chk PASS mongodb-mcp "template MCP mongodb still registered"; else chk WARN mongodb-mcp "mongodb MCP not found in ~/.claude.json"; fi
+
+  if [ "$ENABLE_QONFLO_COORD" = 1 ]; then
+    c=$(git -C "$PROJECTS_DIR" status --short 2>/dev/null | head -n 3)
+    if [ -f "$PROJECTS_DIR/AGENTS.md" ] && [ -z "$c" ]; then chk PASS qonflo-coord "AGENTS.md present, working tree clean"; else chk FAIL qonflo-coord "AGENTS.md missing or tree not clean in $PROJECTS_DIR"; fi
+    if [ -f "$CCFG_CLAUDE_DIR/skills/build-ticket/SKILL.md" ]; then chk PASS project-skills "build-ticket skill installed"; else chk FAIL project-skills "build-ticket skill not in $CCFG_CLAUDE_DIR/skills"; fi
+  else chk SKIP qonflo-coord "switch ENABLE_QONFLO_COORD is off"; fi
+  if [ "$ENABLE_BRAIN" = 1 ]; then
+    if [ -d "$HOME/brain/.git" ]; then chk PASS brain "vault at $(git -C "$HOME/brain" log -1 --format=%h 2>/dev/null)"; else chk FAIL brain "vault not cloned"; fi
+  else chk SKIP brain "switch ENABLE_BRAIN is off"; fi
+
+  if [ -f "$CCFG_STATE/last-run.json" ] && grep -q '"status": "FAIL"' "$CCFG_STATE/last-run.json"; then chk WARN last-run "a step failed in the last run (ccfg status)"; else chk PASS last-run "no failed step in the last run"; fi
+  chk MANUAL keep-awake "off (spike S4); a long chat turn can be cut at the 8 hour stop"
+  chk MANUAL chat-pong "from the phone: DOCK > Chat > machine workspace > 'Reply with the single word PONG'"
+  printf 'doctor: %s pass, %s fail, %s warn\n' "$D_PASS" "$D_FAIL" "$D_WARN"
+  [ "$strict" = 0 ] || [ "$D_FAIL" = 0 ]
+}
+
+cmd_update() {
+  local was=0
+  service_pid bridge >/dev/null && was=1
+  bash "$CCFG_LINUX_DIR/personalize.sh" --stdout --only=repo,install,plugins || return 1
+  if [ "$was" = 1 ]; then service_stop bridge; service_start bridge; fi
+}
+
+cmd_secret() {
+  local sub=${1:-} name=${2:-} val
+  case $sub in
+    list) secret_names ;;
+    set | unset)
+      [[ $name =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "usage: ccfg secret $sub NAME" >&2; return 2; }
+      if [ "$sub" = unset ]; then secret_unset "$name" && echo "$name removed"; return $?; fi
+      if [ -t 0 ]; then read -r -s -p "Value for $name (hidden): " val; echo >&2; else IFS= read -r val || [ -n "$val" ]; fi
+      val=${val%$'\r'}
+      [ -n "$val" ] || { echo "empty value, nothing written" >&2; return 1; }
+      secret_write "$name" "$val" && echo "$name saved ($CCFG_SECRETS, mode $(file_mode "$CCFG_SECRETS"))"
+      ;;
+    *) echo "usage: ccfg secret set|unset NAME | list" >&2; return 2 ;;
+  esac
+}
+
+safe_rm() {
+  local p
+  for p in "$@"; do
+    case $p in "" | "/" | "$HOME" | "$HOME/") continue ;; "$HOME"/*) rm -rf "$p" ;; esac
+  done
+}
+
+cmd_uninstall() {
+  local yes=0 keep=0 a orig=$CCFG_STATE/orig line f bak sf
+  for a in "$@"; do case $a in --yes) yes=1 ;; --keep-secrets) keep=1 ;; esac; done
+  cat <<EOF
+uninstall would:
+  1 stop the bridge and tailscaled
+  2 remove ~/personalize (only if it hands off to claude-config) and the ccfg link in $CCFG_BIN
+  3 remove installed files identical to the repo (install.cjs --uninstall), the kit directory and CLAUDE.md
+  4 restore settings.json from the copy taken before the first install
+  5 uninstall plugins and MCP servers this repo added, remove binaries it installed
+  6 remove the Tailscale state, the bashrc hook and $CCFG_STATE$([ "$keep" = 1 ] || echo " and $(dirname "$CCFG_SECRETS")")
+  left alone: template files (rules, graphify, playwright-cli, mongodb MCP), ~/projects, ~/brain, $CCFG_REPO
+EOF
+  [ "$yes" = 1 ] || { echo "dry listing only; re-run with --yes"; return 0; }
+  cmd_stop all
+  grep -qs 'claude-config' "$HOME/personalize" && rm -f "$HOME/personalize"
+  [ "$(readlink "$CCFG_BIN/ccfg" 2>/dev/null)" = "$CCFG_LINUX_DIR/ccfg" ] && rm -f "$CCFG_BIN/ccfg"
+  if [ -f "$CCFG_REPO/install/install.cjs" ] && command -v node >/dev/null 2>&1; then
+    sf=$CCFG_STATE/no-secrets.env
+    node "$(native_path "$CCFG_REPO/install/install.cjs")" --os linux --config-dir "$(native_path "$CCFG_CLAUDE_DIR")" --secrets-file "$(native_path "$sf")" --uninstall --yes | tail -n 2
+  fi
+  safe_rm "$CCFG_CLAUDE_DIR/kit"
+  if [ -f "$orig/CLAUDE.md" ]; then cp -p "$orig/CLAUDE.md" "$CCFG_CLAUDE_DIR/CLAUDE.md"; elif [ -f "$orig/.done" ]; then rm -f "$CCFG_CLAUDE_DIR/CLAUDE.md"; fi
+  if [ -f "$orig/settings.json" ]; then cp -p "$orig/settings.json" "$CCFG_CLAUDE_DIR/settings.json"; echo "settings.json restored"
+  elif [ -f "$orig/.done" ]; then rm -f "$CCFG_CLAUDE_DIR/settings.json"; fi
+  for bak in "$CCFG_CLAUDE_DIR"/settings.json.bak-*; do [ -f "$bak" ] && rm -f "$bak"; done
+  rm -f "$HOME/.claude.json.bak-ccfg"
+  if command -v claude >/dev/null 2>&1; then
+    while IFS= read -r line; do
+      case $line in
+        plugin:*) timeout 120 claude plugin uninstall "${line#plugin:}" ;;
+        marketplace:*) timeout 120 claude plugin marketplace remove "${line#marketplace:}" ;;
+      esac
+    done < <(tac "$CCFG_STATE/plugins-added.txt" 2>/dev/null)
+    while IFS= read -r line; do [ -n "$line" ] && timeout 60 claude mcp remove "$line" --scope user; done <"$CCFG_STATE/mcp-added.txt" 2>/dev/null
+  fi
+  for f in "$CCFG_STATE"/bins/*.files; do
+    [ -f "$f" ] || continue
+    while IFS= read -r line; do [ -n "$line" ] && rm -f "$line"; done <"$f"
+  done
+  sed -i '/claude-config-ensure-begin/,/claude-config-ensure-end/d' "$HOME/.bashrc" 2>/dev/null
+  safe_rm "$TS_STATE" "$(dirname "$TS_SOCK")"
+  [ "$keep" = 1 ] || safe_rm "$(dirname "$CCFG_SECRETS")"
+  safe_rm "$CCFG_STATE"
+  echo "uninstalled"
+}
+
+main() {
+  local cmd=${1:-}
+  setup_path
+  command -v node >/dev/null 2>&1 || load_template_env
+  shift 2>/dev/null
+  case $cmd in
+    status) cmd_status ;;
+    start) cmd_start "$@" ;;
+    stop) cmd_stop "$@" ;;
+    restart) cmd_restart "$@" ;;
+    ensure) cmd_ensure ;;
+    logs) cmd_logs "$@" ;;
+    doctor) cmd_doctor "$@" ;;
+    update) cmd_update ;;
+    secret) cmd_secret "$@" ;;
+    uninstall) cmd_uninstall "$@" ;;
+    "" | -h | --help | help) usage ;;
+    *) echo "unknown command: $cmd" >&2; usage >&2; return 2 ;;
+  esac
+}
+
+main "$@"; exit $?

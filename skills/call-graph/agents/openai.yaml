@@ -1,0 +1,26 @@
+name: call-graph
+description: >-
+  Answer flow, path, trace, caller, and architecture questions with a verified
+  plain-text call graph in a ts fence, with path:line evidence for every node.
+invocation: $call-graph
+triggers:
+  - call graph
+  - execution flow
+  - request path
+  - architecture trace
+  - function callers
+  - upstream or downstream behavior
+  - How does X work?
+  - What calls X?
+  - Where does X go?
+  - production versus test flow
+skip:
+  - trivial single facts
+  - port or version lookups
+  - simple definitions
+  - text edits
+  - rename-only changes
+  - unrelated visual diagrams
+entrypoint: SKILL.md
+references:
+  - references/output-format.md
