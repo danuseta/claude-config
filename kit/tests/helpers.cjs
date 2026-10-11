@@ -25,6 +25,7 @@ function startServer(respond = () => null) {
       const rec = { method: req.method, url: req.url, headers: req.headers, body };
       requests.push(rec);
       const out = respond(rec) || { status: 200, json: { ok: true, result: {} } };
+      if (out.hang) return;
       res.writeHead(out.status || 200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(out.json ?? {}));
     });

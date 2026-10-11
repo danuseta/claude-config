@@ -1,0 +1,31 @@
+{
+  "rules": [
+    { "match": "brain-retrieve\\.ps1[\"']?\\s+[\"']?([^\"']+)", "label": "Brain: retrieve '$1'" },
+    { "match": "brain-search\\.ps1[\"']?\\s+[\"']?([^\"']+)", "label": "Brain: search '$1'" },
+    { "match": "save_and_ingest\\.ps1|save-and-ingest\\.cmd", "label": "Brain: save raw note and ingest" },
+    { "match": "ingest_raw\\.py|ingest-now\\.cmd", "label": "Brain: ingest raw" },
+    { "match": "brain\\.py[\"']?\\s+(retrieve|search)\\s+[\"']?([^\"']+)", "label": "Brain: $1 '$2'" },
+    { "match": "brain\\.py[\"']?\\s+(\\w+)", "label": "Brain: $1" },
+    { "match": "brain-event\\.ps1", "label": "Brain: event" },
+    { "match": "kit/status\\.cjs\\s+(\\S+)\\s+(\\S+)", "label": "Ledger: $1 $2" },
+    { "match": "kit/wt\\.sh\\s+(\\S+)", "label": "Worktree: $1" },
+    { "match": "kit/stack\\.sh\\s+(\\S+)", "label": "Stack: $1" },
+    { "match": "graphify\\s+query\\s+[\"']?([^\"']+)", "label": "Graphify: query '$1'" },
+    { "match": "graphify\\s+(\\w+)", "label": "Graphify: $1" },
+    { "match": "playwright-cli\\s+(\\S+)\\s*(\\S*)", "label": "Playwright: $1 $2" },
+    { "match": "qonflo-dev\\s*(\\S*)\\s*(\\S*)", "label": "Qonflo dev: $1 $2" },
+    { "match": "^bd\\s+(\\S+)", "label": "Beads: $1" },
+    { "match": "^gh\\s+pr\\s+(\\S+)", "label": "PR: $1" },
+    { "match": "^gh\\s+(\\w+)\\s*(\\w*)", "label": "GitHub: $1 $2" },
+    { "match": "^git\\s+(?:(?:-C|-c)\\s+\\S+\\s+)*([a-z][\\w-]*)", "label": "Git: $1" },
+    { "match": "^(npm|pnpm|yarn|bun)\\s+(?:run\\s+)?(test\\S*|build\\S*|lint\\S*|typecheck\\S*|format\\S*)", "label": "$1 $2" },
+    { "match": "^(?:npx|pnpm dlx|pnpm exec|bunx)\\s+(vitest|jest|tsc|playwright|prettier|eslint)\\b", "label": "Run $1" },
+    { "match": "^(vitest|jest|tsc|playwright|prettier|eslint)\\b", "label": "Run $1" },
+    { "match": "^node\\s+--test\\b", "label": "Run node tests" },
+    { "match": "^read\\s+(?:\\S*/)?(\\S+)", "label": "Read $1" },
+    { "match": "^(?:rg|grep)\\s+(?:-\\S+\\s+)*[\"']?([^\"'\\s]+)", "label": "Search: $1" },
+    { "match": "^(?:ls|tree|find)\\b", "label": "List files" },
+    { "match": "claude-hook-autosave", "label": "Brain: autosave", "kind": "hook", "show": true },
+    { "match": "claude-hook-retrieval", "label": "Brain: retrieval", "kind": "hook", "show": true }
+  ]
+}

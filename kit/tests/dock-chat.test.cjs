@@ -198,3 +198,251 @@ test('a chat turn that overruns turnTimeoutMs is stopped and reported', async ()
     rmrf(dir);
   }
 });
+
+// ---------- activity feed (P2) ----------
+const STREAMS = path.join(KIT, 'tests', 'fixtures', 'stream');
+const FAKE_REPLAY = `
+const fs = require('fs');
+const args = process.argv.slice(2);
+if (args[0] === '--help') {
+  process.stdout.write('Usage: claude [options]\\n  --verbose  Override verbose mode\\n' + (process.env.FAKE_NO_FLAGS ? '' : '  --include-hook-events  Include hooks\\n  --forward-subagent-text  Forward text\\n'));
+  process.exit(0);
+}
+fs.writeFileSync(process.env.FAKE_ARGS_FILE, JSON.stringify(args));
+const lines = fs.readFileSync(process.env.FAKE_STREAM, 'utf8').split('\\n').filter(Boolean);
+const delay = Number(process.env.FAKE_DELAY_MS || 0);
+(async () => {
+  for (const l of lines) { process.stdout.write(l + '\\n'); if (delay) await new Promise((r) => setTimeout(r, delay)); }
+  if (process.env.FAKE_HANG) { setInterval(() => {}, 1000); return; }
+  process.exit(Number(process.env.FAKE_EXIT || 0));
+})();
+`;
+
+// Runs one whole turn through `dock-chat.cjs once` against a fake DOCK and a fake claude that replays `stream`.
+async function activityTurn({ stream, config = {}, respond = () => null, delay = 0, env = {}, labelsDir } = {}) {
+  const dir = tmp('chat-activity');
+  let dock;
+  try {
+    fs.writeFileSync(path.join(dir, 'fake-claude.cjs'), FAKE_REPLAY);
+    const cfg = { claudeBin: path.join(dir, 'fake-claude.cjs'), cwd: dir, turnTimeoutMs: 20000, retryBaseMs: 50, ...config };
+    if (labelsDir) cfg.activity = { ...(typeof cfg.activity === 'object' ? cfg.activity : {}), labelsDir };
+    fs.writeFileSync(path.join(dir, 'dock-chat.json'), JSON.stringify(cfg));
+    const streamFile = path.isAbsolute(stream) ? stream : path.join(STREAMS, stream);
+    let claimed = false;
+    dock = await startServer((req) => {
+      if (req.url.endsWith('/chat/claim')) {
+        if (claimed) return { json: { ok: true, result: { message: null } } };
+        claimed = true;
+        return { json: { ok: true, result: { message: { id: 12, sessionId: 'dock-act-1', text: 'hello', claudeSessionId: null } } } };
+      }
+      return req.url.endsWith('/chat/activity') ? respond(req) : null;
+    });
+    const started = Date.now();
+    const r = await runNode([path.join(KIT, 'dock-chat.cjs'), 'once', '--wait', '1'], {
+      env: { ...sandboxEnv(dir), DOCK_CHAT_CONFIG: path.join(dir, 'dock-chat.json'), DOCK_INGEST_URL: `${dock.url}/ingest/orchestrator`, DOCK_INGEST_TOKEN: 'dock_ing_test', FAKE_STREAM: streamFile, FAKE_ARGS_FILE: path.join(dir, 'args.json'), FAKE_DELAY_MS: String(delay), ...env },
+    });
+    const elapsed = Date.now() - started;
+    let args = null; try { args = JSON.parse(fs.readFileSync(path.join(dir, 'args.json'), 'utf8')); } catch {}
+    const requests = dock.requests.filter((q) => !q.url.endsWith('/chat/claim'));
+    const deltas = requests.filter((q) => q.url.endsWith('/chat/delta'));
+    const activity = requests.filter((q) => q.url.endsWith('/chat/activity'));
+    // The text the owner would read, independent of how the deltas were batched in time.
+    const items = deltas.flatMap((d) => d.body.items).map((i) => `${i.role}: ${i.text}`);
+    return { r, requests, deltas, activity, items, args, elapsed, last: deltas.at(-1) && deltas.at(-1).body };
+  } finally {
+    if (dock) await dock.close();
+    rmrf(dir);
+  }
+}
+const CLAUDE_TODAY = ['-p', 'hello', '--output-format', 'stream-json', '--verbose'];
+const rowsOf = (turn) => turn.activity.flatMap((q) => q.body.events);
+const finalRows = (turn) => { const m = new Map(); for (const e of rowsOf(turn)) m.set(e.id, e); return m; };
+
+test('settings: activity is on by default and switched off by "activity": false or enabled: false', () => {
+  assert.deepEqual(chat.settings({ platform: 'linux', paths: linuxPaths, file: {} }).activity, { enabled: true, hooks: true, subagentText: true, labelsDir: null });
+  assert.equal(chat.settings({ platform: 'linux', paths: linuxPaths, file: { activity: false } }).activity.enabled, false);
+  assert.equal(chat.settings({ platform: 'linux', paths: linuxPaths, file: { activity: { enabled: false } } }).activity.enabled, false);
+  const s = chat.settings({ platform: 'linux', paths: linuxPaths, file: { activity: { hooks: false, subagentText: false } } }).activity;
+  assert.deepEqual([s.enabled, s.hooks, s.subagentText], [true, false, false]);
+});
+
+test('an activity turn: the flags are added, /chat/activity arrives before the final delta, nothing is left running', async () => {
+  const t = await activityTurn({ stream: 'turn-2-subagent.jsonl' });
+  assert.equal(t.r.code, 0, t.r.stderr);
+  assert.deepEqual(t.args, [...CLAUDE_TODAY, '--include-hook-events', '--forward-subagent-text']);
+  assert.ok(t.activity.length >= 1);
+  const order = t.requests.map((q) => q.url.replace('/ingest/orchestrator', ''));
+  assert.equal(order.at(-1), '/chat/delta');
+  assert.ok(order.lastIndexOf('/chat/activity') < order.length - 1, 'the last activity post comes before the final delta');
+  assert.equal(t.last.done, true);
+  for (const q of t.activity) {
+    assert.deepEqual(Object.keys(q.body), ['v', 'sessionId', 'replyTo', 'events']);
+    assert.deepEqual([q.body.v, q.body.sessionId, q.body.replyTo], [1, 'dock-act-1', 12]);
+    assert.equal(q.headers.authorization, 'Bearer dock_ing_test');
+    assert.ok(q.body.events.length >= 1 && q.body.events.length <= 50);
+    assert.ok(!('machine' in q.body));
+  }
+  const rows = finalRows(t);
+  assert.deepEqual([...rows.values()].map((e) => [e.kind, e.status]), [['agent', 'ok'], ['tool', 'ok'], ['note', 'ok']]);
+  assert.equal([...rows.values()][1].parentId, [...rows.values()][0].id);
+});
+
+test('with activity on, the delta requests carry exactly the same text, session id and done flag as with it off', async () => {
+  const on = await activityTurn({ stream: 'turn-2-subagent.jsonl' });
+  const off = await activityTurn({ stream: 'turn-2-subagent.jsonl', config: { activity: false } });
+  assert.deepEqual(on.items, off.items);
+  assert.ok(on.items.length >= 3);
+  assert.deepEqual([on.last.done, on.last.error, on.last.claudeSessionId], [off.last.done, off.last.error, off.last.claudeSessionId]);
+  assert.ok(on.deltas.every((d) => Object.keys(d.body).every((k) => ['sessionId', 'replyTo', 'items', 'done', 'error', 'claudeSessionId', 'detail'].includes(k))));
+});
+
+test('activity switched off: today\'s claude arguments, today\'s requests, no activity route touched', async () => {
+  for (const config of [{ activity: false }, { activity: { enabled: false } }]) {
+    const t = await activityTurn({ stream: 'synthetic-denial.jsonl', config });
+    assert.equal(t.r.code, 0, t.r.stderr);
+    assert.deepEqual(t.args, CLAUDE_TODAY);
+    assert.equal(t.activity.length, 0);
+    assert.ok(t.requests.every((q) => q.url.endsWith('/chat/delta')));
+    assert.equal(t.last.done, true);
+    assert.ok(t.items.some((i) => i.startsWith('tool: Bash')), 'tool items are still sent as today');
+  }
+});
+
+test('text forwarded from a subagent is not a chat bubble when activity is on, and becomes the agent summary instead', async () => {
+  const on = await activityTurn({ stream: 'synthetic-nested-agents.jsonl' });
+  assert.ok(!on.items.some((i) => i.includes('Working on level two.')));
+  assert.ok(on.items.some((i) => i === 'assistant: Done.'));
+  assert.equal(finalRows(on).get('toolu_SYN_A2').summary, 'Working on level two.');
+  assert.ok(on.items.some((i) => i.startsWith('tool: Bash')), 'subagent tool calls stay tool items as today');
+});
+
+test('a claude whose --help lacks the two flags is started without them, and activity still works', async () => {
+  const t = await activityTurn({ stream: 'synthetic-denial.jsonl', env: { FAKE_NO_FLAGS: '1' } });
+  assert.deepEqual(t.args, CLAUDE_TODAY);
+  assert.ok(t.activity.length >= 1);
+  assert.equal(finalRows(t).get('toolu_SYN_D1').status, 'denied');
+  const partial = await activityTurn({ stream: 'synthetic-denial.jsonl', config: { activity: { hooks: false } } });
+  assert.deepEqual(partial.args, [...CLAUDE_TODAY, '--forward-subagent-text']);
+});
+
+test('an older DOCK answering 404 to /chat/activity: exactly one activity request, the turn still ends done with every delta', async () => {
+  const old = await activityTurn({ stream: 'synthetic-denial.jsonl', delay: 150, respond: () => ({ status: 404, json: { ok: false } }) });
+  const off = await activityTurn({ stream: 'synthetic-denial.jsonl', delay: 150, config: { activity: false } });
+  assert.equal(old.r.code, 0, old.r.stderr);
+  assert.equal(old.activity.length, 1);
+  assert.equal(old.last.done, true);
+  assert.deepEqual(old.items, off.items);
+  assert.match(old.r.stdout, /older server/);
+});
+
+test('an unknown session (404 "Unknown ticket") stops activity for the turn without being taken for an old server', async () => {
+  const t = await activityTurn({ stream: 'synthetic-denial.jsonl', delay: 150, respond: () => ({ status: 404, json: { error: 'Unknown ticket. Send its status first.' } }) });
+  assert.equal(t.activity.length, 1);
+  assert.doesNotMatch(t.r.stdout, /older server/);
+  assert.equal(t.last.done, true);
+});
+
+test('"closed": true from the server ends the activity posts for that turn', async () => {
+  const t = await activityTurn({ stream: 'synthetic-denial.jsonl', delay: 150, respond: () => ({ json: { ok: true, result: { accepted: 0, seq: 1, dropped: 0, closed: true } } }) });
+  assert.equal(t.activity.length, 1);
+  assert.equal(t.last.done, true);
+});
+
+test('an activity route answering 500: the turn finishes done with the same deltas, claude is not killed, one log line', async () => {
+  const bad = await activityTurn({ stream: 'synthetic-denial.jsonl', delay: 150, respond: () => ({ status: 500, json: { error: 'boom' } }) });
+  const off = await activityTurn({ stream: 'synthetic-denial.jsonl', delay: 150, config: { activity: false } });
+  assert.equal(bad.r.code, 0, bad.r.stderr);
+  assert.equal(bad.last.done, true);
+  assert.equal(bad.last.error, null);
+  assert.deepEqual(bad.items, off.items);
+  assert.equal((bad.r.stdout.match(/activity: /g) || []).length, 1, bad.r.stdout);
+  assert.ok(bad.activity.length >= 2, 'it retried');
+});
+
+test('an activity route that hangs: the turn finishes done with the same deltas and is not held up for long', async () => {
+  const hung = await activityTurn({ stream: 'synthetic-denial.jsonl', delay: 100, respond: () => ({ hang: true }) });
+  const off = await activityTurn({ stream: 'synthetic-denial.jsonl', delay: 100, config: { activity: false } });
+  assert.equal(hung.r.code, 0, hung.r.stderr);
+  assert.equal(hung.last.done, true);
+  assert.deepEqual(hung.items, off.items);
+  assert.ok(hung.deltas.length >= 1);
+});
+
+test('a failed post is retried with the same rows; the rows end with their final status', async () => {
+  let n = 0;
+  const t = await activityTurn({ stream: 'synthetic-nested-agents.jsonl', delay: 200, respond: () => (++n <= 2 ? { status: 503, json: {} } : null) });
+  assert.equal(t.r.code, 0, t.r.stderr);
+  const ids = new Set(['toolu_SYN_A1', 'toolu_SYN_A2', 'toolu_SYN_A3', 'toolu_SYN_A4', 'toolu_SYN_A5']);
+  const rows = finalRows(t);
+  for (const id of ids) assert.equal(rows.get(id).status, 'ok', id);
+  const firstSeen = t.activity[0].body.events.map((e) => e.id);
+  const okPosts = t.activity.slice(2).flatMap((q) => q.body.events.map((e) => e.id));
+  for (const id of firstSeen) assert.ok(okPosts.includes(id), `${id} was posted again after the failure`);
+});
+
+test('a stream cut off mid-turn (claude exits without a result): running rows are posted as stopped before the final delta', async () => {
+  const t = await activityTurn({ stream: 'synthetic-cutoff.jsonl' });
+  assert.equal(t.last.done, true);
+  const rows = finalRows(t);
+  assert.deepEqual(['toolu_SYN_C1', 'toolu_SYN_C2', 'toolu_SYN_C3', 'toolu_SYN_C4'].map((id) => rows.get(id).status), ['ok', 'stopped', 'stopped', 'stopped']);
+  const order = t.requests.map((q) => q.url.replace('/ingest/orchestrator', ''));
+  assert.ok(order.lastIndexOf('/chat/activity') < order.lastIndexOf('/chat/delta'));
+});
+
+test('a turn killed by the timeout also closes its rows as stopped, then reports the error', async () => {
+  const t = await activityTurn({ stream: 'synthetic-cutoff.jsonl', config: { turnTimeoutMs: 2500 }, env: { FAKE_HANG: '1' } });
+  assert.match(t.last.error, /ran longer than 3 seconds|ran longer than 2 seconds/);
+  assert.equal(finalRows(t).get('toolu_SYN_C2').status, 'stopped');
+  const order = t.requests.map((q) => q.url.replace('/ingest/orchestrator', ''));
+  assert.ok(order.lastIndexOf('/chat/activity') < order.lastIndexOf('/chat/delta'));
+});
+
+test('no secret reaches DOCK in an activity request: commands, output, a subagent report and hook output', async () => {
+  const dir = tmp('canary-stream');
+  try {
+    const S = 'sess-canary';
+    const canaries = [['dock', '_ing_CNRYaaaaaaaaaaaaaaaaaaaaaaaa'], ['sk', '-CNRYaaaaaaaaaaaaaaaaaaaa'], ['Bear', 'er CNRYaaaaaaaaaaaaaaaaaaaaaaaa'], ['pass', 'word=CNRYhunter2hunter2'], ['gh', 'p_CNRYaaaaaaaaaaaaaaaaaaaa']].map((p) => p.join(''));
+    const tu = (id, name, input, parent = null) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] }, parent_tool_use_id: parent, session_id: S });
+    const tr = (id, content, parent = null) => ({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content }] }, parent_tool_use_id: parent, session_id: S });
+    const events = [{ type: 'system', subtype: 'init', session_id: S }];
+    canaries.forEach((c, i) => {
+      events.push(tu(`k${i}`, 'Bash', { command: `curl -d '${c}' https://example.test`, description: `post ${c}` }), tr(`k${i}`, `ok ${c}\n${'x'.repeat(589)} ${c} ${'y'.repeat(3000)} ${c} ${'z'.repeat(380)}`));
+    });
+    events.push(tu('ag', 'Agent', { subagent_type: 'explore', description: `scan ${canaries[0]}`, prompt: `use ${canaries[1]}` }));
+    events.push({ type: 'assistant', message: { content: [{ type: 'text', text: `found ${canaries[2]}` }] }, parent_tool_use_id: 'ag', session_id: S });
+    events.push({ type: 'system', subtype: 'hook_response', hook_id: 'h', hook_name: 'PreToolUse:Bash', hook_event: 'PreToolUse', exit_code: 2, outcome: 'blocking', stdout: canaries[3], stderr: canaries[4], output: canaries[0], session_id: S });
+    events.push(tr('ag', [{ type: 'text', text: `report ${canaries.join(' ')} ${'r'.repeat(900)} ${canaries.join(' ')}` }]));
+    events.push(tu('pe', 'Bash', { command: 'printenv' }), tr('pe', 'DOCK_INGEST_TOKEN=CNRYenvvalue\nHOME=/x'));
+    events.push({ type: 'result', subtype: 'success', is_error: false, session_id: S });
+    const file = path.join(dir, 'canary.jsonl');
+    fs.writeFileSync(file, events.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    const t = await activityTurn({ stream: file });
+    assert.equal(t.r.code, 0, t.r.stderr);
+    assert.ok(t.activity.length >= 1 && rowsOf(t).length >= 7);
+    const body = JSON.stringify(t.activity.map((q) => q.body));
+    assert.ok(!body.includes('CNRY'), body.slice(body.indexOf('CNRY') - 80, body.indexOf('CNRY') + 80));
+    assert.match(finalRows(t).get('pe').detail, /\[output hidden: sensitive command\]$/);
+  } finally { rmrf(dir); }
+});
+
+test('a broken activity-labels.json: the turn is unaffected, built-in labels are used, the problem is logged once', async () => {
+  const dir = tmp('labels-turn');
+  try {
+    fs.writeFileSync(path.join(dir, 'activity-labels.json'), '{ not json');
+    const t = await activityTurn({ stream: 'synthetic-denial.jsonl', labelsDir: dir });
+    assert.equal(t.r.code, 0, t.r.stderr);
+    assert.equal(t.last.done, true);
+    assert.equal(finalRows(t).get('toolu_SYN_D1').label, 'Git: push');
+    assert.equal((t.r.stdout.match(/activity labels:/g) || []).length, 1, t.r.stdout);
+  } finally { rmrf(dir); }
+});
+
+test('dock-chat.cjs label prints the label for a command, and whether its output is hidden', async () => {
+  const run = (cmd) => runNode([path.join(KIT, 'dock-chat.cjs'), 'label', cmd]);
+  assert.equal((await run("python3 ~/brain/scripts/brain.py retrieve 'review PR verdict'")).stdout.trim(), "Brain: retrieve 'review PR verdict'");
+  assert.equal((await run('rtk powershell -NoProfile -File E:/obsidian/Brain/scripts/brain-retrieve.ps1 "review PR verdict"')).stdout.trim(), "Brain: retrieve 'review PR verdict'");
+  assert.equal((await run('cd E:/qonflo && git status')).stdout.trim(), 'Git: status');
+  assert.equal((await run('npx vitest run src/a.test.ts')).stdout.trim(), 'Run vitest');
+  assert.equal((await run('printenv')).stdout.trim(), 'Bash\noutput: hidden (sensitive command)\nno rule matched');
+  assert.equal((await run('cat .env')).stdout.split('\n')[1], 'output: hidden (sensitive command)');
+});

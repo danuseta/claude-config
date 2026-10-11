@@ -2,10 +2,12 @@
 //   node dock-chat.cjs run      loop forever: claim -> one turn -> deltas -> next
 //   node dock-chat.cjs once     handle at most one message and exit  [--wait seconds, default 5]
 //   node dock-chat.cjs check    show the configuration (never the token)
+//   node dock-chat.cjs label "<command>"   print the activity label a Bash command gets (rules: activity-labels.json)
 // Config: dock-chat.json next to this file, all optional:
 //   { "cwd": "E:/qonflo", "configDir": "C:/Users/danus/.claude-kantor", "permissionMode": null, "maxTurns": null, "extraArgs": [],
 //     "claudeBin": "claude", "turnTimeoutMs": 1800000, "retryBaseMs": 1000,
-//     "keepAwake": { "mechanism": "off | app-status | server", "appSlug": null } }
+//     "keepAwake": { "mechanism": "off | app-status | server", "appSlug": null },
+//     "activity": { "enabled": true, "hooks": true, "subagentText": true } }   "activity": false (or enabled: false) switches the activity feed off
 // Defaults come from paths.cjs. On Linux configDir is unset, so Claude Code keeps its own ~/.claude.
 // The DOCK url and token come from dock-push.cjs (dock.json or env).
 const fs = require("fs");
@@ -13,6 +15,7 @@ const path = require("path");
 const readline = require("readline");
 const { spawn, spawnSync } = require("child_process");
 const { maskString, config, send, toolLine, cut } = require("./dock-push.cjs");
+const activityLib = require("./activity.cjs");
 const PATHS = require("./paths.cjs").resolvePaths();
 
 const SESSIONS_FILE = path.join(process.env.DOCK_KIT_STATE_DIR || __dirname, "dock-chat-sessions.json");
@@ -21,6 +24,12 @@ const CLAIM_WAIT_S = 25;
 const MAX_BACKOFF_MS = 30000;
 const KEEP_AWAKE_EVERY_MS = 10 * 60 * 1000;
 const PROXY_VARS = /^(https?_proxy|all_proxy|node_use_env_proxy|dock_proxy)$/i;
+const ACTIVITY_INTERVAL_MS = DELTA_INTERVAL_MS;
+const ACTIVITY_TIMEOUT_MS = 5000;
+const ACTIVITY_FINAL_WAIT_MS = 1000;
+const ACTIVITY_SILENCE_MS = 10 * 60 * 1000;
+const ACTIVITY_PAUSE_MS = 60 * 1000;
+const HELP_TIMEOUT_MS = 5000;
 
 const log = (msg) => console.log(`${new Date().toISOString()} ${msg}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -40,6 +49,7 @@ function settings({ platform = process.platform, paths = PATHS, file: given } = 
 		turnTimeoutMs: file.turnTimeoutMs || 30 * 60 * 1000,
 		retryBaseMs: file.retryBaseMs || 1000,
 		keepAwake: { mechanism: ["app-status", "server"].includes(ka.mechanism) ? ka.mechanism : "off", appSlug: ka.appSlug || null },
+		activity: { enabled: file.activity !== false && !(file.activity && file.activity.enabled === false), hooks: !(file.activity && file.activity.hooks === false), subagentText: !(file.activity && file.activity.subagentText === false), labelsDir: (file.activity && file.activity.labelsDir) || null },
 	};
 }
 
@@ -157,6 +167,90 @@ async function sendDelta(body, retryBaseMs) {
 	return false;
 }
 
+// ---------- activity: best effort, never allowed to touch the turn ----------
+const activityMemo = { silencedUntil: 0, labels: null, helpFlags: new Map() };
+
+function activityLabels(opts) {
+	const dir = opts.activity.labelsDir || __dirname;
+	if (!activityMemo.labels || activityMemo.labels.dir !== dir) activityMemo.labels = activityLib.loadLabels(dir, (m) => log(`activity labels: ${m}`));
+	else activityMemo.labels.refresh();
+	return activityMemo.labels;
+}
+
+// Which of the two stream flags this claude lists in --help; asked once per process, and a claude that does not answer in time gets neither.
+function supportedFlags(claude, opts) {
+	const key = [claude.cmd, ...claude.prefix].join(" ");
+	if (!activityMemo.helpFlags.has(key)) {
+		activityMemo.helpFlags.set(key, new Promise((resolve) => {
+			let text = "";
+			const done = () => resolve({ hooks: text.includes("--include-hook-events"), subagentText: text.includes("--forward-subagent-text") });
+			try {
+				const child = spawn(claude.cmd, [...claude.prefix, "--help"], { cwd: opts.cwd, env: childEnv(opts), shell: false, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+				const timer = setTimeout(() => { killTree(child); done(); }, HELP_TIMEOUT_MS);
+				child.stdout.on("data", (c) => { if (text.length < 400000) text += c; });
+				child.on("error", () => { clearTimeout(timer); done(); });
+				child.on("close", () => { clearTimeout(timer); done(); });
+			} catch { done(); }
+		}));
+	}
+	return activityMemo.helpFlags.get(key);
+}
+
+// Feeds the stream into the tracker and posts what changed to /chat/activity on its own chain, once a second.
+// A failure is swallowed (logged once per turn); a 404 without "Unknown ticket" means an older DOCK and silences activity for 10 minutes.
+function startActivity(msg, mask, opts) {
+	const tracker = activityLib.createTracker({ mask, labels: activityLabels(opts), hooks: opts.activity.hooks });
+	const st = { chain: Promise.resolve(), timer: null, last: 0, closed: false, done: false, abandoned: false, failures: 0, pausedUntil: 0, logged: false };
+	const warn = (m) => { if (!st.logged) { st.logged = true; log(`activity: ${m}`); } };
+	const post = async (events) => {
+		const body = { v: 1, sessionId: msg.sessionId, replyTo: msg.id, events };
+		for (let attempt = 0; attempt < 2 && !st.abandoned; attempt++) {
+			try {
+				const r = await call("/chat/activity", body, ACTIVITY_TIMEOUT_MS);
+				if (r.skipped) return "ok";
+				if (r.status === 404) return r.error && /Unknown ticket/i.test(r.error) ? "gone" : "old";
+				if (r.status >= 200 && r.status < 300) return r.result && r.result.closed ? "closed" : "ok";
+				if (r.status >= 400 && r.status < 500 && r.status !== 401 && r.status !== 429) { warn(`refused: ${r.status}${r.error ? " " + r.error : ""}`); return "refused"; }
+				warn(`answered ${r.status}`);
+			} catch (e) { warn(e.message); }
+		}
+		return "failed";
+	};
+	const step = async (final) => {
+		if (st.closed || st.abandoned || Date.now() < activityMemo.silencedUntil) return;
+		if (!final && Date.now() < st.pausedUntil) return;
+		const events = tracker.drain(50, 100 * 1024);
+		if (!events.length) return;
+		st.last = Date.now();
+		const res = await post(events);
+		if (res === "ok") st.failures = 0;
+		else if (res === "closed" || res === "gone") st.closed = true;
+		else if (res === "old") { st.closed = true; activityMemo.silencedUntil = Date.now() + ACTIVITY_SILENCE_MS; log("activity: DOCK has no /chat/activity route (older server); activity is off for 10 minutes"); }
+		else if (res === "failed") { tracker.requeue(events); if (++st.failures >= 3) { st.failures = 0; st.pausedUntil = Date.now() + ACTIVITY_PAUSE_MS; } }
+	};
+	const schedule = () => {
+		if (st.timer || st.closed || st.done) return;
+		st.timer = setTimeout(() => {
+			st.timer = null;
+			st.chain = st.chain.then(() => step(false)).catch(() => {}).then(() => { if (tracker.stats().pending) schedule(); });
+		}, Math.max(0, st.last + ACTIVITY_INTERVAL_MS - Date.now()));
+	};
+	return {
+		feed(o) { try { tracker.feed(o); if (tracker.stats().pending) schedule(); } catch {} },
+		// Closes every running row as stopped and sends what is left, waiting at most ACTIVITY_FINAL_WAIT_MS; anything slower is abandoned.
+		async settle(wait = ACTIVITY_FINAL_WAIT_MS) {
+			st.done = true;
+			if (st.timer) { clearTimeout(st.timer); st.timer = null; }
+			tracker.closeAll("stopped");
+			st.chain = st.chain.then(async () => { for (let i = 0; i < 10 && tracker.stats().pending && !st.closed; i++) await step(true); }).catch(() => {});
+			let t;
+			await Promise.race([st.chain, new Promise((r) => { t = setTimeout(r, wait); })]);
+			clearTimeout(t);
+			st.abandoned = true;
+		},
+	};
+}
+
 async function runTurn(msg, cfg, opts) {
 	const mask = (s) => maskString(String(s), { masked: 0, blobs: 0 }, cfg.extra);
 	const out = (text) => cut(mask(text));
@@ -193,7 +287,13 @@ async function runTurn(msg, cfg, opts) {
 		await post({ done: false, error });
 		return;
 	}
+	const act = opts.activity.enabled && Date.now() >= activityMemo.silencedUntil ? startActivity(msg, mask, opts) : null;
 	const args = [...claude.prefix, "-p", msg.text.startsWith("-") ? " " + msg.text : msg.text, "--output-format", "stream-json", "--verbose"];
+	if (act) {
+		const flags = await supportedFlags(claude, opts);
+		if (flags.hooks && opts.activity.hooks && !opts.extraArgs.includes("--include-hook-events")) args.push("--include-hook-events");
+		if (flags.subagentText && opts.activity.subagentText && !opts.extraArgs.includes("--forward-subagent-text")) args.push("--forward-subagent-text");
+	}
 	if (msg.claudeSessionId) args.push("--resume", msg.claudeSessionId);
 	else if (msg.forkFrom) args.push("--resume", msg.forkFrom, "--fork-session");
 	if (opts.permissionMode) args.push("--permission-mode", opts.permissionMode);
@@ -205,6 +305,9 @@ async function runTurn(msg, cfg, opts) {
 	child = spawn(claude.cmd, args, { cwd: opts.cwd, env, shell: false, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
 	child.on("error", (e) => { spawnError = e; });
 	child.stderr.on("data", (c) => { stderrTail = (stderrTail + c).slice(-2000); });
+	// Bridge shutdown mid-turn: close the open rows with one last best-effort post, then go.
+	const onSignal = (sig) => { act.settle(2000).then(() => process.exit(sig === "SIGINT" ? 130 : 143)); };
+	if (act) { process.once("SIGINT", onSignal); process.once("SIGTERM", onSignal); }
 	const killer = setTimeout(() => { timedOut = true; killTree(child); }, opts.turnTimeoutMs);
 	void keepAwake("working", opts);
 	const awake = setInterval(() => { void keepAwake("working", opts, { force: true }); }, KEEP_AWAKE_EVERY_MS);
@@ -216,13 +319,14 @@ async function runTurn(msg, cfg, opts) {
 	lines.on("line", (line) => {
 		let o; try { o = JSON.parse(line); } catch { return; }
 		if (!o || typeof o !== "object") return;
+		if (act) act.feed(o);
 		if (o.type === "system" && o.subtype === "init") learn(o.session_id);
 		else if (o.type === "assistant" && o.message && Array.isArray(o.message.content)) {
 			learn(o.session_id);
 			const at = new Date().toISOString();
 			for (const b of o.message.content) {
 				if (!b) continue;
-				if (b.type === "text" && typeof b.text === "string" && b.text.trim()) state.pending.push({ role: "assistant", text: out(b.text), at });
+				if (b.type === "text" && typeof b.text === "string" && b.text.trim() && !(act && o.parent_tool_use_id)) state.pending.push({ role: "assistant", text: out(b.text), at });
 				else if (b.type === "tool_use") { state.pending.push({ role: "tool", text: out(toolLine(b.name, b.input)), at }); state.detail = mask(String(b.name)); }
 			}
 			schedule();
@@ -242,7 +346,9 @@ async function runTurn(msg, cfg, opts) {
 	else if (result && result.is_error) error = String(result.result || result.subtype || "Claude Code reported an error");
 	else if (code !== 0) error = `Claude Code exited with code ${code}${stderrTail.trim() ? ": " + stderrTail.trim().split("\n").at(-1) : ""}`;
 	state.detail = null;
-	await sleep(Math.max(0, state.lastSent + DELTA_INTERVAL_MS - Date.now()));
+	const pace = sleep(Math.max(0, state.lastSent + DELTA_INTERVAL_MS - Date.now()));
+	if (act) { process.removeListener("SIGINT", onSignal); process.removeListener("SIGTERM", onSignal); await Promise.all([pace, act.settle()]); }
+	else await pace;
 	await post(error ? { done: false, error: mask(error).slice(0, 300) } : { done: true, error: null });
 	await chain;
 }
@@ -260,7 +366,14 @@ async function main(cmd, args) {
 		console.log(`claude: ${c ? [c.cmd, ...c.prefix].join(" ") : "NOT FOUND (" + s.claudeBin + ")"}\ncwd: ${s.cwd}\nconfigDir: ${s.configDir || "(unset: Claude Code default)"}\nkeepAwake: ${s.keepAwake.mechanism}${s.keepAwake.mechanism === "server" ? " (not configured: DOCK-side keep-awake has no client part)" : ""}\npermissionMode: ${s.permissionMode || "(user settings)"}\nmaxTurns: ${s.maxTurns || "(none)"}\nextraArgs: ${s.extraArgs.join(" ") || "(none)"}`);
 		return;
 	}
-	if (cmd !== "run" && cmd !== "once") return console.log("usage: dock-chat.cjs run | once [--wait seconds] | check");
+	if (cmd === "label") {
+		const info = activityLib.commandInfo(args.join(" "), activityLabels(settings()));
+		console.log(info.label || "Bash");
+		if (info.hide) console.log("output: hidden (sensitive command)");
+		if (!info.label) console.log("no rule matched");
+		return;
+	}
+	if (cmd !== "run" && cmd !== "once") return console.log('usage: dock-chat.cjs run | once [--wait seconds] | check | label "<command>"');
 	const cfg = config();
 	if (!cfg) return console.log("dock chat: DOCK not configured, nothing to do");
 	const opts = settings();
