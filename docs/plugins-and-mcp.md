@@ -7,9 +7,9 @@ Daftar lengkap ada di `plugins/plugins.json`. Empat plugin, versi sama di dua OS
 | Plugin | Marketplace | Versi | Catatan |
 |---|---|---|---|
 | typesafe | typesafe-ai | 0.5.7 | Butuh `TYPESAFE_API_KEY` |
-| caveman | caveman | 0d95a81d35a9 | Versinya hash commit |
-| oh-my-claudecode | omc | 4.15.7 | Marketplace lewat URL git |
-| superpowers | superpowers-marketplace | 6.4.2 | - |
+| caveman | caveman | 3.2.0 | Mati di sesi headless tanpa `CAVEMAN_DEFAULT_MODE`; bridge yang menyetelnya |
+| oh-my-claudecode | omc | 5.6.2 | Marketplace lewat URL git |
+| superpowers | superpowers-marketplace | 7.0.0 | - |
 
 Perintahnya: `claude plugin marketplace add <sumber>`, lalu `claude plugin install <nama>@<marketplace>`.
 

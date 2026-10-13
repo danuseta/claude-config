@@ -132,6 +132,22 @@ cmd_doctor() {
 
   if rtk --version >/dev/null 2>&1 && bd --version >/dev/null 2>&1; then chk PASS rtk-bd "rtk $(rtk --version 2>&1 | head -n 1), bd $(bd --version 2>&1 | head -n 1)"; else chk FAIL rtk-bd "rtk or bd not runnable"; fi
 
+  if out=$(CLAUDE_CONFIG_DIR="$CCFG_CLAUDE_DIR" node "$(native_path "$CCFG_CLAUDE_DIR/kit/dock-chat-preflight.cjs")" 2>&1); then chk PASS chat-preflight "rtk hook and caveman ready for chat turns"; else chk FAIL chat-preflight "$(printf '%s' "$out" | tr '
+' ';')"; fi
+
+  out=$(node -e '
+const fs = require("fs");
+const rd = (f) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return {}; } };
+const have = rd(process.argv[2]).plugins || {};
+for (const p of rd(process.argv[1]).plugins || []) {
+  if (!(p.os || []).includes("linux")) continue;
+  const got = ((have[p.name + "@" + p.marketplace] || [])[0] || {}).version || "missing";
+  if (got !== p.version) console.log(p.name + " " + got + " (pinned " + p.version + ")");
+}
+' "$(native_path "$CCFG_REPO/plugins/plugins.json")" "$(native_path "$CCFG_CLAUDE_DIR/plugins/installed_plugins.json")" 2>&1)
+  if [ -z "$out" ]; then chk PASS plugin-pins "installed plugins match plugins.json"; else chk FAIL plugin-pins "$(printf '%s' "$out" | tr '
+' ';') fix: claude plugin update <name>@<marketplace>"; fi
+
   if [ -f "$CCFG_CLAUDE_DIR/settings.json" ] && command -v node >/dev/null 2>&1; then
     out=$(node -e '
 const fs = require("fs");
