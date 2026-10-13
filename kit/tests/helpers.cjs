@@ -58,8 +58,9 @@ async function waitFor(check, ms = 8000) {
   return check();
 }
 
-// A bare sandbox env for a child: temp dirs for tmp/home so nothing of the real machine is read or written.
-const sandboxEnv = (dir) => ({ TEMP: dir, TMP: dir, TMPDIR: dir, HOME: dir, USERPROFILE: dir, CLAUDE_CONFIG_DIR: path.join(dir, 'cfg'), DOCK_KIT_STATE_DIR: dir });
+// A bare sandbox env for a child: temp dirs for tmp/home so nothing of the real machine is read or written. The profile is empty, so the
+// rtk and caveman preflight of the chat bridge is off.
+const sandboxEnv = (dir) => ({ TEMP: dir, TMP: dir, TMPDIR: dir, HOME: dir, USERPROFILE: dir, CLAUDE_CONFIG_DIR: path.join(dir, 'cfg'), DOCK_KIT_STATE_DIR: dir, DOCK_CHAT_PREFLIGHT: 'off' });
 
 module.exports = { KIT, SOURCE_KIT, hasSource, tmp, rmrf, startServer, runNode, waitFor, sandboxEnv };
 

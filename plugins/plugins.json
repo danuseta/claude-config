@@ -9,9 +9,9 @@
   },
   "plugins": [
     { "name": "typesafe", "marketplace": "typesafe-ai", "version": "0.5.7", "os": ["windows", "linux"], "requiresSecret": "TYPESAFE_API_KEY" },
-    { "name": "caveman", "marketplace": "caveman", "version": "0d95a81d35a9", "versionKind": "commit", "os": ["windows", "linux"] },
-    { "name": "oh-my-claudecode", "marketplace": "omc", "version": "4.15.7", "os": ["windows", "linux"] },
-    { "name": "superpowers", "marketplace": "superpowers-marketplace", "version": "6.4.2", "os": ["windows", "linux"] }
+    { "name": "caveman", "marketplace": "caveman", "version": "3.2.0", "os": ["windows", "linux"] },
+    { "name": "oh-my-claudecode", "marketplace": "omc", "version": "5.6.2", "os": ["windows", "linux"] },
+    { "name": "superpowers", "marketplace": "superpowers-marketplace", "version": "7.0.0", "os": ["windows", "linux"] }
   ],
   "install": {
     "marketplaceAdd": "claude plugin marketplace add <source>",

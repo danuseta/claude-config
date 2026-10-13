@@ -22,6 +22,7 @@ const catalogLib = require("./dock-chat-catalog.cjs");
 const { pruneFiles } = require("./dock-chat-files.cjs");
 const guardLib = require("./guard.cjs");
 const procLib = require("./dock-chat-proc.cjs");
+const preflight = require("./dock-chat-preflight.cjs");
 const PATHS = require("./paths.cjs").resolvePaths();
 
 const STATE_DIR = process.env.DOCK_KIT_STATE_DIR || __dirname;
@@ -84,10 +85,11 @@ function settings({ platform = process.platform, paths = PATHS, file: given } = 
 	};
 }
 
-// The environment claude runs in. DOCK_CHAT_TURN=1 switches guard.cjs to its unattended profile; CLAUDE_CONFIG_DIR is set only when
-// configDir is; the proxy variables kit-node sets to reach DOCK are removed so Anthropic traffic does not go through tailscaled.
+// The environment claude runs in. DOCK_CHAT_TURN=1 switches guard.cjs to its unattended profile; CAVEMAN_DEFAULT_MODE switches caveman on,
+// which stays off in a headless session without it; CLAUDE_CONFIG_DIR is set only when configDir is; the proxy variables kit-node sets to
+// reach DOCK are removed so Anthropic traffic does not go through tailscaled.
 function childEnv(opts, base = process.env) {
-	const env = { ...base, DOCK_CHAT_TURN: "1" };
+	const env = { ...base, DOCK_CHAT_TURN: "1", CAVEMAN_DEFAULT_MODE: "caveman" };
 	const keep = new Set(Array.isArray(opts.passEnv) ? opts.passEnv : []);
 	for (const k of Object.keys(env)) if (BRIDGE_SECRET.test(k) && !keep.has(k)) delete env[k];
 	if (opts.configDir) env.CLAUDE_CONFIG_DIR = opts.configDir;
@@ -435,7 +437,15 @@ async function precheckWait(msg, caps, gapMs) {
 	return "go";
 }
 
+// A turn without rtk or caveman is refused: the answer in DOCK says what is missing on this machine. DOCK_CHAT_PREFLIGHT=off is for the tests.
 async function runTurn(msg, cfg, opts) {
+	const missing = process.env.DOCK_CHAT_PREFLIGHT === "off" ? [] : preflight.problems(childEnv(opts));
+	if (missing.length) {
+		const core = turnCore(msg, cfg, opts, () => {});
+		log(`turn refused: ${missing.join("; ")}`);
+		await core.post({ done: false, error: core.out(`This machine is not ready for a chat turn: ${missing.join("; ")}`) });
+		return;
+	}
 	const claude = resolveClaude(opts.claudeBin);
 	if (claude && !legacyOnly(opts)) {
 		const flags = await supportedFlags(claude, opts);

@@ -13,7 +13,7 @@ Yang paling sering terlewat karena Claude Code punya tool sendiri:
 - baca file: `rtk read <path>`, bukan tool Read
 - nama file: `rtk find` atau `rtk ls`, bukan tool Glob
 
-Tool Read/Grep/Glob native tidak lewat shell sama sekali, jadi hook rtk tidak pernah kena dan outputnya keluar utuh tanpa dimampatkan.
+Tool Read/Grep/Glob native tidak lewat shell sama sekali, jadi hook rtk tidak pernah kena dan outputnya keluar utuh tanpa dimampatkan. `Grep` dan `Glob` ditolak lewat `permissions.deny` di `settings.json`, jadi dua-duanya memang tidak bisa dipakai.
 
 Dua pengecualian yang wajar, bukan alasan malas:
 
