@@ -46,28 +46,38 @@ function viaProxy(target, proxy, init) {
 		const finish = (tunnel) => {
 			const lib = secure ? require("https") : require("http");
 			const req = lib.request({ host: t.hostname, port, path: t.pathname + t.search, method: init.method, headers: init.headers, createConnection: () => (secure ? require("tls").connect({ socket: tunnel, servername: t.hostname }) : tunnel), timeout: init.timeoutMs }, (res) => {
-				let text = "";
-				res.setEncoding("utf8");
-				res.on("data", (c) => { text += c; });
-				res.on("end", () => resolve({ status: res.statusCode, text }));
+				const chunks = [];
+				let size = 0, tooLarge = false;
+				res.on("data", (c) => {
+					size += c.length;
+					if (init.maxBytes && size > init.maxBytes) { tooLarge = true; return req.destroy(new Error("response too large")); }
+					chunks.push(c);
+				});
+				res.on("end", () => { if (tooLarge) return reject(new Error("response too large")); const buffer = Buffer.concat(chunks); resolve({ status: res.statusCode, text: buffer.toString("utf8"), buffer, headers: res.headers }); });
+				res.on("error", reject);
 			});
 			req.on("timeout", () => req.destroy(new Error("timeout")));
 			req.on("error", reject);
+			if (init.signal) init.signal.addEventListener("abort", () => req.destroy(new Error("aborted")), { once: true });
 			req.end(init.body);
 		};
 		const connect = require("http").request({ host: p.hostname, port: p.port || 80, method: "CONNECT", path: `${t.hostname}:${port}`, timeout: init.timeoutMs });
 		connect.on("connect", (res, socket) => (res.statusCode === 200 ? finish(socket) : (socket.destroy(), reject(new Error(`proxy answered ${res.statusCode}`)))));
 		connect.on("timeout", () => connect.destroy(new Error("timeout")));
 		connect.on("error", reject);
+		if (init.signal) {
+			if (init.signal.aborted) return reject(new Error("aborted"));
+			init.signal.addEventListener("abort", () => connect.destroy(new Error("aborted")), { once: true });
+		}
 		connect.end();
 	});
 }
 
-async function send(route, body, timeoutMs) {
+async function send(route, body, timeoutMs, signal) {
 	const cfg = config();
 	if (!cfg) return { skipped: true };
 	if (process.env.DOCK_PROXY) {
-		const r = await viaProxy(cfg.url + route, process.env.DOCK_PROXY, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${cfg.token}` }, body: JSON.stringify(body), timeoutMs });
+		const r = await viaProxy(cfg.url + route, process.env.DOCK_PROXY, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${cfg.token}` }, body: JSON.stringify(body), timeoutMs, signal });
 		let json = {}; try { json = JSON.parse(r.text); } catch {}
 		return { status: r.status, ...json };
 	}
@@ -75,10 +85,31 @@ async function send(route, body, timeoutMs) {
 		method: "POST",
 		headers: { "content-type": "application/json", authorization: `Bearer ${cfg.token}` },
 		body: JSON.stringify(body),
-		signal: AbortSignal.timeout(timeoutMs),
+		signal: signal ? AbortSignal.any([AbortSignal.timeout(timeoutMs), signal]) : AbortSignal.timeout(timeoutMs),
 	});
 	const json = await res.json().catch(() => ({}));
 	return { status: res.status, ...json };
+}
+
+async function sendBinary(route, body, timeoutMs, maxBytes = 9 * 1024 * 1024) {
+	const cfg = config();
+	if (!cfg) return { skipped: true };
+	const headers = { "content-type": "application/json", authorization: `Bearer ${cfg.token}` };
+	if (process.env.DOCK_PROXY) {
+		const r = await viaProxy(cfg.url + route, process.env.DOCK_PROXY, { method: "POST", headers, body: JSON.stringify(body), timeoutMs, maxBytes });
+		return { status: r.status, buffer: r.buffer, headers: r.headers };
+	}
+	const res = await fetch(cfg.url + route, { method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
+	const chunks = [];
+	let size = 0;
+	if (res.body) {
+		for await (const chunk of res.body) {
+			size += chunk.length;
+			if (size > maxBytes) { await res.body.cancel().catch(() => {}); throw new Error("response too large"); }
+			chunks.push(Buffer.from(chunk));
+		}
+	}
+	return { status: res.status, buffer: Buffer.concat(chunks), headers: Object.fromEntries(res.headers) };
 }
 
 const ledgerFile = (key) => path.join(LEDGER_ROOT, key, "status.json");
@@ -433,7 +464,7 @@ async function syncSessions(args, cfg) {
 	console.log(`sessions: ${sent} sent, ${skipped} unchanged or skipped, ${failed} failed`);
 }
 
-module.exports = { pushStatusDetached, maskString, config, send, toolLine, cut, ledger };
+module.exports = { pushStatusDetached, maskString, config, send, sendBinary, toolLine, cut, ledger };
 
 if (require.main === module) {
 	const [cmd, ...args] = process.argv.slice(2);
@@ -470,7 +501,7 @@ if (require.main === module) {
 			process.stdin.on("end", () => { try { hook(raw); } catch {} });
 		} else if (cmd === "check") {
 			const cfg = config();
-			console.log(cfg ? `url: ${cfg.url}\ntoken: set (${cfg.token.slice(0, 15)}…)\nextra mask words: ${cfg.extra.length}\nledgers: ${ledgerKeys().join(", ") || "none"}` : `not configured: set DOCK_INGEST_URL and DOCK_INGEST_TOKEN, or write ${CONFIG_FILE}`);
+			console.log(cfg ? `url: ${cfg.url}\ntoken: set\nextra mask words: ${cfg.extra.length}\nledgers: ${ledgerKeys().join(", ") || "none"}` : `not configured: set DOCK_INGEST_URL and DOCK_INGEST_TOKEN, or write ${CONFIG_FILE}`);
 		} else console.log("usage: dock-push.cjs status KEY | all | event KEY EVENT [detail] | transcript KEY <session.jsonl> [--from marker] [--agents a,b] | sessions [--all] [--id uuid] | statusline <payload.json> | ledger list|get|handover|accept [json] | hook | check");
 	})().catch((e) => { if (cmd !== "event" && cmd !== "hook" && cmd !== "statusline" && !String(cmd).startsWith("flush")) console.log(`dock push failed: ${e.message}`); });
 }
