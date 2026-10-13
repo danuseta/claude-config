@@ -29,6 +29,7 @@
     { "from": "claude/RTK.md", "to": "RTK.md", "os": ["windows", "linux"] },
     { "from": "claude/DESIGN_THINKING.md", "to": "DESIGN_THINKING.md", "os": ["windows", "linux"] },
     { "from": "claude/karpathy-principles.md", "to": "karpathy-principles.md", "os": ["windows", "linux"] },
+    { "from": "claude/statusline-account.cjs", "to": "statusline-account.cjs", "os": ["windows"] },
     { "from": "windows/dock-chat-autostart.vbs", "to": "kit/dock-chat-autostart.vbs", "os": ["windows"] }
   ],
   "dirs": [
