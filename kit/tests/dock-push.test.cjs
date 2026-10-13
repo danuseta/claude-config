@@ -115,3 +115,65 @@ test('statusline: prints a line with no theme file and with unusable input', asy
     assert.equal(bad.stdout, '\n');
   } finally { rmrf(dir); }
 });
+
+function startBinaryServer(payload, extraHeaders = {}) {
+  const requests = [];
+  const server = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c) => { raw += c; });
+    req.on('end', () => {
+      requests.push({ method: req.method, url: req.url, headers: req.headers, body: raw });
+      res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': payload.length, ...extraHeaders });
+      res.end(payload);
+    });
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ url: `http://127.0.0.1:${server.address().port}`, requests, close: () => new Promise((r) => { server.closeAllConnections?.(); server.close(r); }) })));
+}
+
+const BINARY_SCRIPT = "require(process.argv[1]).sendBinary('/chat/attachment', { id: 'a1' }, 5000, Number(process.argv[2] || 0) || undefined).then((r) => console.log(JSON.stringify({ status: r.status, hex: r.buffer.toString('hex'), type: r.headers['content-type'], sha: r.headers['x-dock-sha256'] }))).catch((e) => console.log(JSON.stringify({ error: e.message })))";
+
+test('sendBinary() returns the raw bytes and headers, direct and through DOCK_PROXY', async () => {
+  const dir = tmp('push-binary');
+  const bytes = Buffer.from([0, 255, 1, 254, 128, 10, 13, 0]);
+  const dock = await startBinaryServer(bytes, { 'x-dock-sha256': 'abc' });
+  const proxy = await startProxy();
+  try {
+    const env = { ...sandboxEnv(dir), DOCK_INGEST_URL: `${dock.url}/ingest/orchestrator`, DOCK_INGEST_TOKEN: 'dock_ing_test' };
+    const direct = await runNode(['-e', BINARY_SCRIPT, path.join(KIT, 'dock-push.cjs')], { env: { ...env, DOCK_PROXY: '' } });
+    const tunneled = await runNode(['-e', BINARY_SCRIPT, path.join(KIT, 'dock-push.cjs')], { env: { ...env, DOCK_PROXY: proxy.url } });
+    for (const r of [direct, tunneled]) {
+      assert.deepEqual(JSON.parse(r.stdout), { status: 200, hex: bytes.toString('hex'), type: 'application/octet-stream', sha: 'abc' });
+    }
+    assert.deepEqual(proxy.targets, [`127.0.0.1:${new URL(dock.url).port}`]);
+    assert.equal(dock.requests.length, 2);
+    for (const q of dock.requests) {
+      assert.equal(q.method, 'POST');
+      assert.equal(q.url, '/ingest/orchestrator/chat/attachment');
+      assert.equal(q.headers.authorization, 'Bearer dock_ing_test');
+      assert.deepEqual(JSON.parse(q.body), { id: 'a1' });
+    }
+  } finally { await proxy.close(); await dock.close(); rmrf(dir); }
+});
+
+test('sendBinary() stops reading past maxBytes, direct and through DOCK_PROXY', async () => {
+  const dir = tmp('push-binary-cap');
+  const dock = await startBinaryServer(Buffer.alloc(5000, 7));
+  const proxy = await startProxy();
+  try {
+    const env = { ...sandboxEnv(dir), DOCK_INGEST_URL: `${dock.url}/ingest/orchestrator`, DOCK_INGEST_TOKEN: 'dock_ing_test' };
+    for (const via of ['', proxy.url]) {
+      const r = await runNode(['-e', BINARY_SCRIPT, path.join(KIT, 'dock-push.cjs'), '1000'], { env: { ...env, DOCK_PROXY: via } });
+      assert.match(JSON.parse(r.stdout).error, /too large/);
+      const ok = await runNode(['-e', BINARY_SCRIPT, path.join(KIT, 'dock-push.cjs'), '5000'], { env: { ...env, DOCK_PROXY: via } });
+      assert.equal(JSON.parse(ok.stdout).status, 200);
+    }
+  } finally { await proxy.close(); await dock.close(); rmrf(dir); }
+});
+
+test('sendBinary() with DOCK not configured is a silent skip', async () => {
+  const dir = tmp('push-binary-unset');
+  try {
+    const r = await runNode(['-e', "require(process.argv[1]).sendBinary('/x', {}, 1000).then((v) => console.log(JSON.stringify(v)))", path.join(KIT, 'dock-push.cjs')], { env: { ...sandboxEnv(dir), DOCK_INGEST_URL: '', DOCK_INGEST_TOKEN: '' } });
+    assert.deepEqual(JSON.parse(r.stdout), { skipped: true });
+  } finally { rmrf(dir); }
+});

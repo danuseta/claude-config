@@ -220,6 +220,18 @@ function errorSummary(text) {
 }
 const DENIAL_RE = /permission|denied|not allowed|blocked|refus|forbidden|disallow/i;
 
+const HEADER = /\b(authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-auth-token|x-access-token)(["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\r\n"']+)/gi;
+function createSafe(mask = (s) => s) {
+	const safe = (s) => {
+		let t = String(s == null ? '' : s).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\0/g, '');
+		t = mask(t);
+		t = t.replace(HEADER, (_m, k, sep) => k + sep + '***');
+		return mask(t);
+	};
+	const fit = (s, n) => { const t = safe(s); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
+	return { safe, fit };
+}
+
 // ---------- the tracker ----------
 function createTracker({ mask = (s) => s, labels = null, now = Date.now, limits = {}, hooks = true } = {}) {
 	const L = { ...LIMITS, ...limits };
@@ -231,14 +243,7 @@ function createTracker({ mask = (s) => s, labels = null, now = Date.now, limits 
 	let seq = 0, hookSeq = 0, noteSeq = 0, lastThinking = null;
 	const iso = (ms) => new Date(ms == null ? now() : ms).toISOString();
 
-	const HEADER = /\b(authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-auth-token|x-access-token)(["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\r\n"']+)/gi;
-	const safe = (s) => {
-		let t = String(s == null ? '' : s).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\0/g, '');
-		t = mask(t);
-		t = t.replace(HEADER, (_m, k, sep) => k + sep + '***');
-		return mask(t);
-	};
-	const fit = (s, n) => { const t = safe(s); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
+	const { safe, fit } = createSafe(mask);
 	const joinCut = (head, tail, lines) => `${head}\n… [${lines} lines cut] …\n${tail}`;
 	// Masks first, then cuts, so a secret that straddles a cut point is gone before the cut; the pieces are masked once more.
 	const clip = (text, head, tail) => {
@@ -477,4 +482,4 @@ function createTracker({ mask = (s) => s, labels = null, now = Date.now, limits 
 	return { feed, drain, requeue, closeAll, stats: summary, snapshot };
 }
 
-module.exports = { createTracker, loadLabels, builtinLabels, commandInfo, normalizeCommand, labelFor, summaryFor, detailFor, resultFor: resultText, isSensitiveCommand, isSensitivePath, describeUse, errorSummary, LIMITS, HIDDEN_NOTE, BUILTIN_RULES };
+module.exports = { createTracker, loadLabels, builtinLabels, commandInfo, normalizeCommand, labelFor, summaryFor, detailFor, resultFor: resultText, isSensitiveCommand, isSensitivePath, describeUse, createSafe, errorSummary, LIMITS, HIDDEN_NOTE, BUILTIN_RULES };
