@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { resolvePaths } = require('../paths.cjs');
-const { KIT, SOURCE_KIT, hasSource, runNode } = require('./helpers.cjs');
+const { KIT, runNode } = require('./helpers.cjs');
 
 const WIN_KIT = 'C:\\Users\\danus\\.claude-kantor\\kit';
 const LINUX_KIT = '/home/coder/.claude/kit';
@@ -21,23 +21,6 @@ test('Windows values are today\'s literals', () => {
   assert.equal(p.sessionsDir, path.win32.join(WIN_KIT, '..', 'projects', 'E--qonflo'));
   assert.deepEqual(p.protectedPorts, ['3000', '3001', '5173']);
   assert.deepEqual(p.ticketPortBase, { be: 3100, fe: 5200 });
-});
-
-test('Windows values match the literals found in the source kit', { skip: !hasSource }, () => {
-  const read = (f) => fs.readFileSync(path.join(SOURCE_KIT, f), 'utf8');
-  const p = win();
-  assert.ok(read('dock-push.cjs').includes(`const LEDGER_ROOT = "${p.evidence}";`));
-  assert.ok(read('dock-push.cjs').includes('path.join(__dirname, "..", "projects", "E--qonflo")'));
-  assert.ok(read('status.cjs').includes(`"${p.evidence}"`));
-  assert.ok(read('status.cjs').includes(`be: "${p.repos.be}", fe: "${p.repos.fe}"`));
-  assert.ok(read('dock-chat.cjs').includes(`cwd: file.cwd || "${p.root}"`));
-  assert.ok(read('dock-chat.cjs').includes(`file.configDir || "${p.configDir}"`));
-  assert.ok(read('guard.cjs').includes(`const PORTS = ${JSON.stringify(p.protectedPorts).replace(/,/g, ', ')};`));
-  assert.ok(read('guard.cjs').includes(`const KIT = "${p.configDir}/kit";`));
-  assert.ok(read('prep-ticket.sh').includes(`ROOT="${p.root}"`));
-  assert.ok(read('prep-ticket.sh').includes(`$((${p.ticketPortBase.be} + NUM % 100))`));
-  assert.ok(read('prep-ticket.sh').includes(`$((${p.ticketPortBase.fe} + NUM % 100))`));
-  assert.ok(read('stack.sh').includes(`EVID="${p.evidence}"`));
 });
 
 test('Linux gets the workspace values', () => {

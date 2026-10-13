@@ -446,3 +446,19 @@ test('dock-chat.cjs label prints the label for a command, and whether its output
   assert.equal((await run('printenv')).stdout.trim(), 'Bash\noutput: hidden (sensitive command)\nno rule matched');
   assert.equal((await run('cat .env')).stdout.split('\n')[1], 'output: hidden (sensitive command)');
 });
+
+test('limitsOf: the windows of a rate_limit_event become status line limits in percent', () => {
+  const event = { type: 'rate_limit_event', rate_limit_info: { unifiedWindows: { five_hour: { utilization: 0.25, resetsAt: 1791913800 }, seven_day: { utilization: 0.5, resetsAt: 1792407600 } } } };
+  assert.deepEqual(chat.limitsOf(event), { fiveHour: { usedPercentage: 25, resetsAt: 1791913800 }, sevenDay: { usedPercentage: 50, resetsAt: 1792407600 } });
+  assert.deepEqual(chat.limitsOf({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed' } }), { fiveHour: undefined, sevenDay: undefined });
+  assert.deepEqual(chat.limitsOf({ type: 'rate_limit_event' }), { fiveHour: undefined, sevenDay: undefined });
+});
+
+test('a chat turn posts the usage limits claude reports to /chat/status, under the DOCK session', async () => {
+  const t = await activityTurn({ stream: 'synthetic-rate-limit.jsonl' });
+  assert.equal(t.r.code, 0, t.r.stderr);
+  const status = t.requests.filter((q) => q.url.endsWith('/chat/status'));
+  assert.equal(status.length, 1);
+  assert.deepEqual(status[0].body, { sessionId: 'dock-act-1', fiveHour: { usedPercentage: 25, resetsAt: 1791913800 }, sevenDay: { usedPercentage: 50, resetsAt: 1792407600 } });
+  assert.equal(t.last.done, true);
+});

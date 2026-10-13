@@ -317,6 +317,14 @@ function startActivity(msg, mask, opts) {
 	};
 }
 
+// The 5 hour and 7 day windows of a rate_limit_event, in the shape of the status line snapshot DOCK accepts on /chat/status.
+// A headless turn has no status line, so this is the only way DOCK learns the usage of a chat turn.
+function limitsOf(event) {
+	const windows = (event.rate_limit_info || {}).unifiedWindows || {};
+	const limit = (w) => (w && typeof w.utilization === "number" ? { usedPercentage: w.utilization * 100, resetsAt: w.resetsAt } : undefined);
+	return { fiveHour: limit(windows.five_hour), sevenDay: limit(windows.seven_day) };
+}
+
 function turnCore(msg, cfg, opts, onAbort) {
 	const mask = (s) => maskString(String(s), { masked: 0, blobs: 0 }, cfg.extra);
 	const out = (text) => cut(mask(text));
@@ -348,6 +356,10 @@ function turnCore(msg, cfg, opts, onAbort) {
 	};
 	const onEvent = (o) => {
 		if (o.type === "system" && o.subtype === "init") learn(o.session_id);
+		else if (o.type === "rate_limit_event") {
+			const limits = limitsOf(o);
+			if (limits.fiveHour || limits.sevenDay) call("/chat/status", { sessionId: msg.sessionId, ...limits }, 5000).catch(() => {});
+		}
 		else if (o.type === "assistant" && o.message && Array.isArray(o.message.content)) {
 			learn(o.session_id);
 			const at = new Date().toISOString();
@@ -646,7 +658,7 @@ async function main(cmd, args) {
 	}
 }
 
-module.exports = { resolveClaude, killTree, childEnv, settings, keepAwake, track, snapshotTree, reap, killAllSync };
+module.exports = { resolveClaude, killTree, childEnv, limitsOf, settings, keepAwake, track, snapshotTree, reap, killAllSync };
 
 if (require.main === module) {
 	const [cmd, ...args] = process.argv.slice(2);
