@@ -25,7 +25,8 @@
     { "match": "^read\\s+(?:\\S*/)?(\\S+)", "label": "Read $1" },
     { "match": "^(?:rg|grep)\\s+(?:-\\S+\\s+)*[\"']?([^\"'\\s]+)", "label": "Search: $1" },
     { "match": "^(?:ls|tree|find)\\b", "label": "List files" },
-    { "match": "claude-hook-autosave", "label": "Brain: autosave", "kind": "hook", "show": true },
-    { "match": "claude-hook-retrieval", "label": "Brain: retrieval", "kind": "hook", "show": true }
+    { "match": "^Stop Stop \\[obsidian-brain\\]", "label": "Brain: autosave reminder", "kind": "hook", "show": true },
+    { "match": "^UserPromptSubmit UserPromptSubmit \\[obsidian-brain\\] Retrieval", "label": "Brain: retrieval", "kind": "hook", "show": true },
+    { "match": "^PreToolUse:\\S+ PreToolUse rtk ", "label": "RTK: rewrote the command", "kind": "hook", "show": true }
   ]
 }
