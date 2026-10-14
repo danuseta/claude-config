@@ -50,6 +50,7 @@ async function runInteractiveTurn(msg, cfg, opts, d) {
 	if (opts.maxTurns) args.push('--max-turns', String(opts.maxTurns));
 	args.push(...chosen.args);
 	if (att.files.length && att.dir) args.push('--add-dir', att.dir);
+	if (opts.appendSystemPrompt) args.push('--append-system-prompt', opts.appendSystemPrompt);
 	args.push(...opts.extraArgs);
 
 	const env = d.childEnv(opts);
