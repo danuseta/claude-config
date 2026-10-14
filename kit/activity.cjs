@@ -392,12 +392,11 @@ function createTracker({ mask = (s) => s, labels = null, now = Date.now, limits 
 			else if (b.type === 'text' && parentRaw) {
 				const p = rows.get(cleanId(parentRaw));
 				if (p && p.kind === 'agent' && p.status === 'running' && oneLine(b.text)) set(p, 'summary', fit(oneLine(b.text), L.summary));
-			} else if (b.type === 'thinking') thinking(parentRaw, Number(o.thinking_duration_ms) || 0, at, str(b.thinking).trim());
+			} else if (b.type === 'thinking') thinking(parentRaw, Number(o.thinking_duration_ms) || 0, at);
 		}
 		makeRoom();
 	}
-	// The thought itself goes into the detail when the stream carries it; often it is empty and only the duration is known.
-	function thinking(parentRaw, ms, at, text) {
+	function thinking(parentRaw, ms, at) {
 		const parentId = attach(parentRaw);
 		const fmt = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)} s` : `${n} ms`);
 		if (lastThinking && rows.has(lastThinking.id) && lastThinking.parentId === parentId) {
@@ -405,11 +404,9 @@ function createTracker({ mask = (s) => s, labels = null, now = Date.now, limits 
 			lastThinking.ms += ms;
 			set(r, 'summary', `thought for ${fmt(lastThinking.ms)}`);
 			set(r, 'endedAt', at);
-			if (text) { r.x.in = fit(r.x.in ? `${r.x.in}\n${text}` : text, L.detail); compose(r); }
 			return;
 		}
 		const r = add({ id: `note-${++noteSeq}`, parentId, kind: 'note', name: 'thinking', agent: agentOf(parentId), label: 'Thinking', summary: `thought for ${fmt(ms)}`, status: 'ok', startedAt: at, endedAt: at });
-		if (text) { r.x.in = fit(text, L.detail); compose(r); }
 		lastThinking = { id: r.id, parentId, ms };
 	}
 	function onUser(o) {
@@ -450,6 +447,19 @@ function createTracker({ mask = (s) => s, labels = null, now = Date.now, limits 
 			set(tool, 'summary', fit(oneLine(effect.text), L.summary));
 			compose(tool);
 			stats.hooksOk++;
+			return;
+		}
+		// SessionStart hooks run again on every resumed turn; what they added is one row, not one per hook.
+		if (effect && !rule && event === 'SessionStart') {
+			let g = rows.get('hook-session-start');
+			if (!g) { g = add({ id: 'hook-session-start', kind: 'hook', name: 'SessionStart', label: 'Session start: added context', summary: '', startedAt: open.at }); g.x.count = 0; }
+			g.x.count++;
+			g.x.out = [g.x.out, clip(effect.text, 400, 150)].filter(Boolean).join('\n---\n');
+			set(g, 'summary', g.x.count === 1 ? fit(oneLine(effect.text), L.summary) : `${g.x.count} hooks added context`);
+			set(g, 'status', 'ok');
+			set(g, 'endedAt', iso());
+			compose(g);
+			makeRoom();
 			return;
 		}
 		const blocked = failed && code === 2 && event === 'PreToolUse';

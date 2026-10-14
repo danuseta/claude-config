@@ -30,8 +30,8 @@ const toolResult = (id, content, extra = {}) => ({ type: 'user', message: { cont
 test('recorded turn 1: the SessionStart context, one Bash row and a thinking note; hooks that only continue are counted; init is never a row', () => {
   const t = replay('turn-1-bash.jsonl');
   const rows = t.snapshot();
-  assert.deepEqual(rows.map((r) => [r.kind, r.name, r.status]), [['hook', 'SessionStart:startup', 'ok'], ['tool', 'Bash', 'ok'], ['note', 'thinking', 'ok']]);
-  assert.equal(rows[0].label, 'Hook SessionStart:startup: added context');
+  assert.deepEqual(rows.map((r) => [r.kind, r.name, r.status]), [['hook', 'SessionStart', 'ok'], ['tool', 'Bash', 'ok'], ['note', 'thinking', 'ok']]);
+  assert.equal(rows[0].label, 'Session start: added context');
   assert.equal(rows[1].parentId, null);
   assert.equal(rows[1].agent, 'main');
   assert.ok(Date.parse(rows[1].endedAt) > Date.parse(rows[1].startedAt), 'duration present');
@@ -615,10 +615,12 @@ test('a PowerShell call gets the same labels as Bash', () => {
   assert.deepEqual(t.snapshot().map((r) => r.label), ['Brain: save raw note and ingest', 'PowerShell: Read OS info']);
 });
 
-test('thinking text, when the stream carries it, goes into the note detail', () => {
+test('the SessionStart hooks of a turn are one row with every context in its detail', () => {
   const t = tracker();
-  t.feed({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'Skill candidates: call-graph, debugging.' }] }, thinking_duration_ms: 20 });
-  t.feed({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'Pick call-graph.' }] }, thinking_duration_ms: 20 });
-  const [note] = t.snapshot();
-  assert.equal(note.detail, 'Skill candidates: call-graph, debugging.\nPick call-graph.');
+  t.feed(hookResponse('s1', 'SessionStart:resume', 'CAVEMAN MODE ACTIVE'));
+  t.feed(hookResponse('s2', 'SessionStart:resume', JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: '<project-memory-context>' } })));
+  t.feed(hookResponse('s3', 'SessionStart:resume', '{"continue":true,"suppressOutput":true}'));
+  const rows = t.snapshot();
+  assert.deepEqual(rows.map((r) => [r.kind, r.label, r.summary]), [['hook', 'Session start: added context', '2 hooks added context']]);
+  assert.match(rows[0].detail, /CAVEMAN MODE ACTIVE\n---\n<project-memory-context>/);
 });

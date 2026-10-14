@@ -21,6 +21,9 @@ test('settings: Windows defaults are today\'s values', () => {
   assert.equal(s.turnTimeoutMs, 1800000);
   assert.equal(s.permissionMode, null);
   assert.deepEqual(s.keepAwake, { mechanism: 'off', appSlug: null });
+  assert.match(s.appendSystemPrompt, /^This turn runs from DOCK chat.*Skills: /);
+  assert.ok(!/[\r\n"]/.test(s.appendSystemPrompt), 'one line, no quotes: safe as a single argument');
+  assert.equal(chat.settings({ platform: 'win32', paths: winPaths, file: { appendSystemPrompt: '' } }).appendSystemPrompt, '', 'the owner can switch it off');
 });
 
 test('settings: on Linux cwd is the projects root and configDir is unset', () => {
@@ -255,6 +258,7 @@ async function activityTurn({ stream, config = {}, respond = () => null, delay =
   }
 }
 const CLAUDE_TODAY = ['-p', 'hello', '--output-format', 'stream-json', '--verbose'];
+const SKILL_LINE = ['--append-system-prompt', chat.settings({ platform: 'win32', paths: winPaths, file: {} }).appendSystemPrompt];
 const rowsOf = (turn) => turn.activity.flatMap((q) => q.body.events);
 const finalRows = (turn) => { const m = new Map(); for (const e of rowsOf(turn)) m.set(e.id, e); return m; };
 
@@ -269,7 +273,7 @@ test('settings: activity is on by default and switched off by "activity": false 
 test('an activity turn: the flags are added, /chat/activity arrives before the final delta, nothing is left running', async () => {
   const t = await activityTurn({ stream: 'turn-2-subagent.jsonl' });
   assert.equal(t.r.code, 0, t.r.stderr);
-  assert.deepEqual(t.args, [...CLAUDE_TODAY, '--include-hook-events', '--forward-subagent-text']);
+  assert.deepEqual(t.args, [...CLAUDE_TODAY, '--include-hook-events', '--forward-subagent-text', ...SKILL_LINE]);
   assert.ok(t.activity.length >= 1);
   const order = t.requests.map((q) => q.url.replace('/ingest/orchestrator', ''));
   assert.equal(order.at(-1), '/chat/delta');
@@ -300,7 +304,7 @@ test('activity switched off: today\'s claude arguments, today\'s requests, no ac
   for (const config of [{ activity: false }, { activity: { enabled: false } }]) {
     const t = await activityTurn({ stream: 'synthetic-denial.jsonl', config });
     assert.equal(t.r.code, 0, t.r.stderr);
-    assert.deepEqual(t.args, CLAUDE_TODAY);
+    assert.deepEqual(t.args, [...CLAUDE_TODAY, ...SKILL_LINE]);
     assert.equal(t.activity.length, 0);
     assert.ok(t.requests.every((q) => q.url.endsWith('/chat/delta')));
     assert.equal(t.last.done, true);
@@ -318,11 +322,11 @@ test('text forwarded from a subagent is not a chat bubble when activity is on, a
 
 test('a claude whose --help lacks the two flags is started without them, and activity still works', async () => {
   const t = await activityTurn({ stream: 'synthetic-denial.jsonl', env: { FAKE_NO_FLAGS: '1' } });
-  assert.deepEqual(t.args, CLAUDE_TODAY);
+  assert.deepEqual(t.args, [...CLAUDE_TODAY, ...SKILL_LINE]);
   assert.ok(t.activity.length >= 1);
   assert.equal(finalRows(t).get('toolu_SYN_D1').status, 'denied');
   const partial = await activityTurn({ stream: 'synthetic-denial.jsonl', config: { activity: { hooks: false } } });
-  assert.deepEqual(partial.args, [...CLAUDE_TODAY, '--forward-subagent-text']);
+  assert.deepEqual(partial.args, [...CLAUDE_TODAY, '--forward-subagent-text', ...SKILL_LINE]);
 });
 
 test('an older DOCK answering 404 to /chat/activity: exactly one activity request, the turn still ends done with every delta', async () => {

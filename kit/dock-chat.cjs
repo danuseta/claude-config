@@ -45,6 +45,8 @@ const ACTIVITY_FINAL_WAIT_MS = 1000;
 const ACTIVITY_SILENCE_MS = 10 * 60 * 1000;
 const ACTIVITY_PAUSE_MS = 60 * 1000;
 const HELP_TIMEOUT_MS = 5000;
+// Thinking text never reaches the stream, so the skill choice is made visible by having Claude write it in the reply DOCK shows.
+const SKILL_LINE_PROMPT = "This turn runs from DOCK chat, where the person follows your steps on a phone and cannot see your thinking. Before your first tool call of each task, write one plain line in your reply: Skills: <2-4 keywords from the task> / candidates: <matching skills from the available-skills list, or none> / using: <the skill you invoke, or none>. Then work as usual.";
 
 const log = (msg) => console.log(`${new Date().toISOString()} ${String(msg).replace(/[\u0000-\u001f\u007f]+/g, " ")}`);
 const safeId = (v) => String(v).replace(/[^A-Za-z0-9._-]/g, "?").slice(0, 64);
@@ -76,6 +78,7 @@ function settings({ platform = process.platform, paths = PATHS, file: given } = 
 		permissionMode: file.permissionMode || null,
 		maxTurns: file.maxTurns || null,
 		extraArgs: Array.isArray(file.extraArgs) ? file.extraArgs.map(String) : [],
+		appendSystemPrompt: typeof file.appendSystemPrompt === "string" ? file.appendSystemPrompt : SKILL_LINE_PROMPT,
 			passEnv: Array.isArray(file.passEnv) ? file.passEnv.map(String).filter((k) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) : [],
 		claudeBin: file.claudeBin || "claude",
 		turnTimeoutMs: file.turnTimeoutMs || 30 * 60 * 1000,
@@ -530,6 +533,7 @@ async function runLegacy(msg, cfg, opts, claude) {
 	else if (forkId) args.push("--resume", forkId, "--fork-session");
 	if (opts.permissionMode) args.push("--permission-mode", opts.permissionMode);
 	if (opts.maxTurns) args.push("--max-turns", String(opts.maxTurns));
+	if (opts.appendSystemPrompt) args.push("--append-system-prompt", opts.appendSystemPrompt);
 	args.push(...opts.extraArgs);
 
 	const env = childEnv(opts);
