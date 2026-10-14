@@ -153,7 +153,7 @@ function commandInfo(command, labels, ctx = IDENT) {
 }
 
 // ---------- what leaves, per tool (plan 8.2) ----------
-const ERROR_TEXT_TOOLS = new Set(['Bash', 'Read', 'Edit', 'Write', 'NotebookEdit', 'Grep', 'Glob', 'Agent', 'Task', 'Skill', 'WebFetch', 'WebSearch']);
+const ERROR_TEXT_TOOLS = new Set(['Bash', 'PowerShell', 'Read', 'Edit', 'Write', 'NotebookEdit', 'Grep', 'Glob', 'Agent', 'Task', 'Skill', 'WebFetch', 'WebSearch']);
 
 function urlParts(u) {
 	try { const p = new URL(u); return { host: p.host, shown: p.host + p.pathname }; } catch { const s = String(u).split(/[?#]/)[0]; return { host: s.replace(/^[a-z]+:\/\//i, '').split('/')[0], shown: s.replace(/^[a-z]+:\/\//i, '') }; }
@@ -166,9 +166,9 @@ function describeUse(name, input, labels, ctx = IDENT) {
 	const head = (text, lines, chars) => firstLines(ctx.safe(text), lines).slice(0, chars);
 	const range = i.offset != null || i.limit != null ? ` (lines ${Number(i.offset) || 0}-${(Number(i.offset) || 0) + (Number(i.limit) || 0)})` : '';
 	switch (name) {
-		case 'Bash': {
+		case 'Bash': case 'PowerShell': {
 			const cmd = str(i.command), info = commandInfo(cmd, labels, ctx), desc = oneLine(str(i.description));
-			return { kind: 'tool', name, label: info.label || (desc ? `Bash: ${desc}` : 'Bash'), summary: oneLine(cmd), input: cmd ? `$ ${cmd}` : '', out: 'bash', hide: info.hide };
+			return { kind: 'tool', name, label: info.label || (desc ? `${name}: ${desc}` : name), summary: oneLine(cmd), input: cmd ? `$ ${cmd}` : '', out: 'bash', hide: info.hide };
 		}
 		case 'Read': {
 			const p = str(i.file_path);
@@ -207,6 +207,23 @@ function describeUse(name, input, labels, ctx = IDENT) {
 const labelFor = (name, input, labels) => describeUse(name, input, labels).label;
 const summaryFor = (name, input, labels) => describeUse(name, input, labels).summary;
 const detailFor = (name, input, labels) => describeUse(name, input, labels).input;
+
+// What a successful hook handed to Claude: context it added, input it rewrote, a block, or a message. null when it only said "continue".
+// Plain stdout reaches Claude only from SessionStart and UserPromptSubmit; elsewhere it is ignored, so it is not shown.
+function hookEffect(o, event) {
+	const raw = String(o.stdout || o.output || '').trim();
+	if (!raw) return null;
+	let j = null;
+	if (raw.startsWith('{')) { try { j = JSON.parse(raw); } catch {} }
+	if (!j || typeof j !== 'object') return /^(?:SessionStart|UserPromptSubmit)/.test(event) ? { what: 'context', text: raw } : null;
+	const h = j.hookSpecificOutput && typeof j.hookSpecificOutput === 'object' ? j.hookSpecificOutput : {};
+	if (h.updatedInput && typeof h.updatedInput === 'object') return { what: 'rewrite', text: str(h.updatedInput.command) || JSON.stringify(h.updatedInput) };
+	if (j.decision === 'block' || h.permissionDecision === 'deny') return { what: 'block', text: str(j.reason) || str(h.permissionDecisionReason) };
+	if (str(h.additionalContext).trim()) return { what: 'context', text: h.additionalContext };
+	if (str(j.systemMessage).trim()) return { what: 'message', text: j.systemMessage };
+	return null;
+}
+const HOOK_EFFECT_LABEL = { context: 'added context', rewrite: 'rewrote the input', block: 'blocked', message: 'message' };
 
 function resultText(content) {
 	if (typeof content === 'string') return content;
@@ -375,11 +392,12 @@ function createTracker({ mask = (s) => s, labels = null, now = Date.now, limits 
 			else if (b.type === 'text' && parentRaw) {
 				const p = rows.get(cleanId(parentRaw));
 				if (p && p.kind === 'agent' && p.status === 'running' && oneLine(b.text)) set(p, 'summary', fit(oneLine(b.text), L.summary));
-			} else if (b.type === 'thinking') thinking(parentRaw, Number(o.thinking_duration_ms) || 0, at);
+			} else if (b.type === 'thinking') thinking(parentRaw, Number(o.thinking_duration_ms) || 0, at, str(b.thinking).trim());
 		}
 		makeRoom();
 	}
-	function thinking(parentRaw, ms, at) {
+	// The thought itself goes into the detail when the stream carries it; often it is empty and only the duration is known.
+	function thinking(parentRaw, ms, at, text) {
 		const parentId = attach(parentRaw);
 		const fmt = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)} s` : `${n} ms`);
 		if (lastThinking && rows.has(lastThinking.id) && lastThinking.parentId === parentId) {
@@ -387,9 +405,11 @@ function createTracker({ mask = (s) => s, labels = null, now = Date.now, limits 
 			lastThinking.ms += ms;
 			set(r, 'summary', `thought for ${fmt(lastThinking.ms)}`);
 			set(r, 'endedAt', at);
+			if (text) { r.x.in = fit(r.x.in ? `${r.x.in}\n${text}` : text, L.detail); compose(r); }
 			return;
 		}
 		const r = add({ id: `note-${++noteSeq}`, parentId, kind: 'note', name: 'thinking', agent: agentOf(parentId), label: 'Thinking', summary: `thought for ${fmt(ms)}`, status: 'ok', startedAt: at, endedAt: at });
+		if (text) { r.x.in = fit(text, L.detail); compose(r); }
 		lastThinking = { id: r.id, parentId, ms };
 	}
 	function onUser(o) {
@@ -413,18 +433,31 @@ function createTracker({ mask = (s) => s, labels = null, now = Date.now, limits 
 		const name = open.name || str(o.hook_name), event = open.event || str(o.hook_event);
 		const code = Number.isFinite(o.exit_code) ? o.exit_code : 0;
 		const failed = code !== 0 || (o.outcome != null && o.outcome !== 'success');
-		const rule = lab.hookRules.find((r) => r.show && r.re.test(`${name} ${event}`));
-		if (!failed && !rule) { stats.hooksOk++; return; }
+		const effect = failed ? null : hookEffect(o, event);
+		const rule = lab.hookRules.find((r) => r.show && r.re.test(`${name} ${event}${effect ? ` ${oneLine(effect.text).slice(0, 300)}` : ''}`));
+		if (!failed && !rule && !effect) { stats.hooksOk++; return; }
 		if (failed) stats.hooksFailed++;
 		const matcher = name.includes(':') ? name.slice(name.indexOf(':') + 1) : '';
-		let parentId = null;
+		let parentId = null, same = [];
 		if (matcher && /^(?:Pre|Post)ToolUse/.test(event)) {
-			const same = [...rows.values()].filter((r) => r.status === 'running' && r.kind !== 'note' && r.x.tool === matcher);
+			same = [...rows.values()].filter((r) => r.status === 'running' && r.kind !== 'note' && r.x.tool === matcher);
 			if (same.length === 1) parentId = same[0].parentId;
 		}
+		// A rewrite (rtk) belongs to the call it changed: the row shows the command that really runs instead of a row of its own.
+		if (effect && effect.what === 'rewrite' && same.length === 1) {
+			const tool = same[0];
+			tool.x.in = fit(`${tool.x.in}\n→ ${effect.text}`, L.input);
+			set(tool, 'summary', fit(oneLine(effect.text), L.summary));
+			compose(tool);
+			stats.hooksOk++;
+			return;
+		}
 		const blocked = failed && code === 2 && event === 'PreToolUse';
-		const r = add({ id: `hook-${++hookSeq}`, parentId, kind: 'hook', name, agent: agentOf(parentId), label: rule && !failed ? fill(rule.label, [name]) : `Hook ${name} ${blocked ? 'blocked the call' : 'failed'}`, summary: failed ? `exit ${code}${o.outcome ? `, ${o.outcome}` : ''}` : 'ok', status: failed ? (blocked ? 'denied' : 'error') : 'ok', startedAt: open.at, endedAt: iso() });
+		const label = rule && !failed ? fill(rule.label, [name]) : failed ? `Hook ${name} ${blocked ? 'blocked the call' : 'failed'}` : `Hook ${name}: ${HOOK_EFFECT_LABEL[effect.what]}`;
+		const summary = failed ? `exit ${code}${o.outcome ? `, ${o.outcome}` : ''}` : effect ? oneLine(effect.text) : 'ok';
+		const r = add({ id: `hook-${++hookSeq}`, parentId, kind: 'hook', name, agent: agentOf(parentId), label, summary, status: failed ? (blocked ? 'denied' : 'error') : 'ok', startedAt: open.at, endedAt: iso() });
 		r.x.in = '';
+		if (effect) { r.x.out = clip(effect.text, 1200, 600); compose(r); }
 		makeRoom();
 	}
 	function onTaskDone(o) {

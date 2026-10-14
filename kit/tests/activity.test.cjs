@@ -27,15 +27,16 @@ const toolUse = (id, name, input, parent = null) => ({ type: 'assistant', messag
 const toolResult = (id, content, extra = {}) => ({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content, ...extra }] }, parent_tool_use_id: null });
 
 // ---------- the recorded streams ----------
-test('recorded turn 1: one Bash row and a thinking note; hooks that succeed are only counted; init is never a row', () => {
+test('recorded turn 1: the SessionStart context, one Bash row and a thinking note; hooks that only continue are counted; init is never a row', () => {
   const t = replay('turn-1-bash.jsonl');
   const rows = t.snapshot();
-  assert.deepEqual(rows.map((r) => [r.kind, r.name, r.status]), [['tool', 'Bash', 'ok'], ['note', 'thinking', 'ok']]);
-  assert.equal(rows[0].parentId, null);
-  assert.equal(rows[0].agent, 'main');
-  assert.ok(Date.parse(rows[0].endedAt) > Date.parse(rows[0].startedAt), 'duration present');
-  assert.match(rows[1].summary, /^thought for 351 ms$/);
-  assert.equal(t.stats().hooksOk, 6);
+  assert.deepEqual(rows.map((r) => [r.kind, r.name, r.status]), [['hook', 'SessionStart:startup', 'ok'], ['tool', 'Bash', 'ok'], ['note', 'thinking', 'ok']]);
+  assert.equal(rows[0].label, 'Hook SessionStart:startup: added context');
+  assert.equal(rows[1].parentId, null);
+  assert.equal(rows[1].agent, 'main');
+  assert.ok(Date.parse(rows[1].endedAt) > Date.parse(rows[1].startedAt), 'duration present');
+  assert.match(rows[2].summary, /^thought for 351 ms$/);
+  assert.equal(t.stats().hooksOk, 5);
   assert.equal(t.stats().hooksFailed, 0);
   assert.ok(!dump(t.snapshot()).includes('model-fixture'), 'nothing of system/init leaks into a row');
 });
@@ -124,13 +125,13 @@ test('synthetic nested agents: the tree is capped at three levels, the plugin pr
   assert.match(rows.toolu_SYN_A1.detail, /Top level report\./);
 });
 
-test('synthetic hook with a non-zero exit: only failing hooks become rows, linked by matcher, never with stdout', () => {
+test('synthetic hook with a non-zero exit: failing hooks become rows, linked by matcher, never with stdout', () => {
   const t = replay('synthetic-hook-nonzero.jsonl');
-  const hooks = t.snapshot().filter((r) => r.kind === 'hook');
+  const hooks = t.snapshot().filter((r) => r.kind === 'hook' && r.status !== 'ok');
   assert.equal(hooks.length, 2);
   assert.deepEqual(hooks.map((r) => [r.name, r.status, r.summary]), [['PreToolUse:Bash', 'denied', 'exit 2, blocking'], ['PostToolUse:Bash', 'error', 'exit 1, error']]);
   assert.ok(hooks.every((r) => r.parentId === null && r.detail === null));
-  assert.equal(t.stats().hooksOk, 3);
+  assert.equal(t.stats().hooksOk, 2);
   assert.ok(!dump(t.snapshot()).includes('stdout reason') && !dump(t.snapshot()).includes('hook crashed'));
   const off = replay('synthetic-hook-nonzero.jsonl', { tracker: { hooks: false } });
   assert.equal(off.snapshot().filter((r) => r.kind === 'hook').length, 0);
@@ -560,12 +561,64 @@ test('the shipped activity-labels.json loads without a single problem', () => {
   const problems = [];
   const labels = act.loadLabels(KIT, (m) => problems.push(m));
   assert.deepEqual(problems, []);
-  assert.ok(labels.rules.length >= 20 && labels.hookRules.length === 2);
+  assert.ok(labels.rules.length >= 20 && labels.hookRules.length === 3);
 });
 
-test('a hook rule with show:true makes a successful hook visible', () => {
-  const labels = act.loadLabels(KIT);
-  const t = tracker({ labels });
-  t.feed({ type: 'system', subtype: 'hook_response', hook_id: 'h', hook_name: 'claude-hook-autosave', hook_event: 'Stop', exit_code: 0, outcome: 'success' });
-  assert.deepEqual(t.snapshot().map((r) => [r.kind, r.label, r.status]), [['hook', 'Brain: autosave', 'ok']]);
+// Shapes as Claude Code really sends them: hook_name is the event (plus matcher), never the script name.
+const hookResponse = (id, name, stdout) => ({ type: 'system', subtype: 'hook_response', hook_id: id, hook_name: name, hook_event: name.split(':')[0], output: stdout, stdout, stderr: '', exit_code: 0, outcome: 'success' });
+
+test('a successful hook that hands Claude something is a row with the text in its detail; one that only continues is counted', () => {
+  const t = tracker();
+  t.feed(hookResponse('h1', 'UserPromptSubmit', '[obsidian-brain] Retrieval otomatis dari vault.\r\n- wiki/sources/a.md  [rtk]'));
+  t.feed(hookResponse('h2', 'Stop', JSON.stringify({ decision: 'block', reason: '[obsidian-brain] Ada perubahan file baru' })));
+  t.feed(hookResponse('h3', 'PreToolUse:Bash', JSON.stringify({ continue: true, hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: 'Use parallel execution.' } })));
+  t.feed(hookResponse('h4', 'Stop', '{"continue":true,"suppressOutput":true}'));
+  t.feed(hookResponse('h5', 'PostToolUse:Bash', 'plain stdout that Claude never sees'));
+  const rows = t.snapshot();
+  assert.deepEqual(rows.map((r) => [r.kind, r.label, r.status]), [
+    ['hook', 'Brain: retrieval', 'ok'],
+    ['hook', 'Brain: autosave reminder', 'ok'],
+    ['hook', 'Hook PreToolUse:Bash: added context', 'ok'],
+  ]);
+  assert.match(rows[0].detail, /wiki\/sources\/a\.md/);
+  assert.match(rows[1].summary, /^\[obsidian-brain\] Ada perubahan/);
+  assert.equal(t.stats().hooksOk, 2);
+});
+
+test('an rtk rewrite is shown on the call it changed; with two candidate calls it is a row of its own', () => {
+  const rewrite = (id) => hookResponse(id, 'PreToolUse:Bash', JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecisionReason: 'RTK auto-rewrite', updatedInput: { command: 'rtk git status' } } }));
+  const t = tracker();
+  t.feed(toolUse('b1', 'Bash', { command: 'git status' }));
+  t.feed(rewrite('h1'));
+  const [bash] = t.snapshot();
+  assert.deepEqual([bash.label, bash.summary], ['Git: status', 'rtk git status']);
+  assert.match(bash.detail, /^\$ git status\n→ rtk git status/);
+  const two = tracker();
+  two.feed(toolUse('b1', 'Bash', { command: 'git status' }));
+  two.feed(toolUse('b2', 'Bash', { command: 'git status' }));
+  two.feed(rewrite('h1'));
+  assert.deepEqual(two.snapshot().filter((r) => r.kind === 'hook').map((r) => [r.label, r.summary]), [['RTK: rewrote the command', 'rtk git status']]);
+});
+
+test('a secret in a hook context is masked before it leaves', () => {
+  for (const [, canary] of CANARIES) {
+    const t = tracker();
+    t.feed(hookResponse('h1', 'SessionStart:startup', `context with ${canary}`));
+    assert.ok(!dump(t.snapshot()).includes(leakOf(canary)), canary);
+  }
+});
+
+test('a PowerShell call gets the same labels as Bash', () => {
+  const t = tracker();
+  t.feed(toolUse('p1', 'PowerShell', { command: "& 'E:\\obsidian\\Brain\\scripts\\save_and_ingest.ps1' -NoIngest -Project 'x'" }));
+  t.feed(toolUse('p2', 'PowerShell', { command: 'Get-CimInstance Win32_OS', description: 'Read OS info' }));
+  assert.deepEqual(t.snapshot().map((r) => r.label), ['Brain: save raw note and ingest', 'PowerShell: Read OS info']);
+});
+
+test('thinking text, when the stream carries it, goes into the note detail', () => {
+  const t = tracker();
+  t.feed({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'Skill candidates: call-graph, debugging.' }] }, thinking_duration_ms: 20 });
+  t.feed({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'Pick call-graph.' }] }, thinking_duration_ms: 20 });
+  const [note] = t.snapshot();
+  assert.equal(note.detail, 'Skill candidates: call-graph, debugging.\nPick call-graph.');
 });
