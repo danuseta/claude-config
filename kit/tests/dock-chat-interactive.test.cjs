@@ -149,7 +149,7 @@ test('the claim carries the capabilities, /chat/wait carries them too, and the p
   const claim = t.state.requests.find((q) => q.route === '/chat/claim').body;
   assert.equal(claim.wait, 1);
   assert.equal(claim.caps.v, 2);
-  assert.deepEqual(claim.caps.modes, ['default', 'acceptEdits', 'plan']);
+  assert.deepEqual(claim.caps.modes, ['default', 'acceptEdits', 'plan', 'auto']);
   for (const f of ['interactive', 'questions', 'plan', 'stop', 'attachments', 'commands', 'model', 'effort']) assert.ok(claim.caps.features.includes(f), f);
   assert.ok(claim.caps.features.length <= 16);
   assert.ok(claim.caps.kit.length <= 40 && claim.caps.claude.length <= 40);
@@ -605,6 +605,8 @@ test('options: model, effort and mode become flags after validation against the 
   assert.equal(fast.argv[fast.argv.indexOf('--settings') + 1], '{"fastMode":true}');
   const unavailable = await turn({ script: SAY, dock: { message: { options: { ...options, fast: true } } } });
   assert.ok(!unavailable.argv.includes('--settings'));
+  const auto = await turn({ script: SAY, dock: { message: { options: { ...options, permissionMode: 'auto' } } } });
+  assert.equal(auto.argv[auto.argv.indexOf('--permission-mode') + 1], 'auto', 'the cron starts tickets in auto mode');
 });
 
 test('options: an unknown model, a value starting with "-", an effort the model lacks and a mode the phone may not pick are dropped', async () => {
