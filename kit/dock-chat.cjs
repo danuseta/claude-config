@@ -46,7 +46,7 @@ const ACTIVITY_SILENCE_MS = 10 * 60 * 1000;
 const ACTIVITY_PAUSE_MS = 60 * 1000;
 const HELP_TIMEOUT_MS = 5000;
 // Thinking text never reaches the stream, so the skill choice is made visible by having Claude write it in the reply DOCK shows.
-const SKILL_LINE_PROMPT = "This turn runs from DOCK chat, where the person follows your steps on a phone and cannot see your thinking. Before your first tool call of each task, write one plain line in your reply: Skills: <2-4 keywords from the task> / candidates: <matching skills from the available-skills list, or none> / using: <the skill you invoke, or none>. Then work as usual.";
+const SKILL_LINE_PROMPT = "This turn runs from DOCK chat, where the person follows your steps on a phone and cannot see your thinking. Before your first tool call of each task, write one plain line in your reply: Skills: <2-4 keywords from the task> / candidates: <matching skills from the available-skills list, or none> / using: <the skill you invoke, or none>. Then work as usual. A DOCK session works on one ticket only: when asked about another ticket, say it belongs in its own DOCK session instead of starting it here.";
 
 const log = (msg) => console.log(`${new Date().toISOString()} ${String(msg).replace(/[\u0000-\u001f\u007f]+/g, " ")}`);
 const safeId = (v) => String(v).replace(/[^A-Za-z0-9._-]/g, "?").slice(0, 64);
