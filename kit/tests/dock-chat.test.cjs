@@ -466,3 +466,105 @@ test('a chat turn posts the usage limits claude reports to /chat/status, under t
   assert.deepEqual(status[0].body, { sessionId: 'dock-act-1', fiveHour: { usedPercentage: 25, resetsAt: 1791913800 }, sevenDay: { usedPercentage: 50, resetsAt: 1792407600 } });
   assert.equal(t.last.done, true);
 });
+
+test('settings: parallelTurns defaults to 3 and never drops below 1', () => {
+  const at = (file) => chat.settings({ platform: 'linux', paths: linuxPaths, file }).parallelTurns;
+  assert.equal(at({}), 3);
+  assert.equal(at({ parallelTurns: 2 }), 2);
+  assert.equal(at({ parallelTurns: 0 }), 3);
+  assert.equal(at({ parallelTurns: -4 }), 1);
+  assert.equal(at({ parallelTurns: 'x' }), 3);
+  assert.equal(at({ maxTurns: 9 }), 3, 'maxTurns stays claude\'s --max-turns');
+});
+
+const gate = () => { let open; const p = new Promise((r) => { open = r; }); return { p, open }; };
+
+test('turn pool: with a limit of 2 the second turn starts before the first finishes', async () => {
+  const pool = chat.createTurnPool(2);
+  const first = gate(), events = [];
+  pool.start(async () => { events.push('start1'); await first.p; events.push('end1'); }, () => {});
+  await pool.slot();
+  pool.start(async () => { events.push('start2'); }, () => {});
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(events, ['start1', 'start2']);
+  first.open();
+});
+
+test('turn pool: with a limit of 1 turns run one after the other', async () => {
+  const pool = chat.createTurnPool(1);
+  const first = gate(), events = [];
+  pool.start(async () => { events.push('start1'); await first.p; events.push('end1'); }, () => {});
+  let admitted = false;
+  const next = pool.slot().then(() => { admitted = true; pool.start(async () => { events.push('start2'); }, () => {}); });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(admitted, false);
+  first.open();
+  await next;
+  assert.deepEqual(events, ['start1', 'end1', 'start2']);
+});
+
+test('turn pool: at capacity slot() waits and frees as soon as any turn settles', async () => {
+  const pool = chat.createTurnPool(2);
+  const a = gate(), b = gate();
+  pool.start(() => a.p, () => {});
+  pool.start(() => b.p, () => {});
+  let free = false;
+  const waiting = pool.slot().then(() => { free = true; });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(free, false);
+  b.open();
+  await waiting;
+  assert.equal(free, true);
+  a.open();
+});
+
+test('turn pool: a turn that throws is reported, frees its slot and does not stop the others', async () => {
+  const pool = chat.createTurnPool(1);
+  const errors = [];
+  await pool.start(async () => { throw new Error('boom'); }, (e) => errors.push(e.message));
+  await pool.slot();
+  let ran = false;
+  await pool.start(async () => { ran = true; }, (e) => errors.push(e.message));
+  assert.deepEqual(errors, ['boom']);
+  assert.equal(ran, true);
+  await Promise.race([pool.slot(), new Promise((_, rej) => setTimeout(() => rej(new Error('slot leaked')), 500))]);
+  await pool.start(async () => { throw new Error('x'); }, () => { throw new Error('handler failed too'); });
+  await pool.slot();
+});
+
+test('bridge run: two claimed messages run at the same time with parallelTurns 2, one after the other with 1', async () => {
+  for (const [parallel, overlap] of [[2, true], [1, false]]) {
+    const dir = tmp(`chat-par${parallel}`);
+    let dock, bridge;
+    try {
+      fs.writeFileSync(path.join(dir, 'par-claude.cjs'), `
+const fs = require('fs'), path = require('path');
+if (process.argv.includes('--help')) process.exit(0);
+const id = process.argv[process.argv.indexOf('-p') + 1];
+fs.appendFileSync(path.join(${JSON.stringify(dir)}, 'order.log'), 'start-' + id + '\\n');
+setTimeout(() => {
+  fs.appendFileSync(path.join(${JSON.stringify(dir)}, 'order.log'), 'end-' + id + '\\n');
+  console.log(JSON.stringify({ type: 'result', session_id: 's-' + id, is_error: false }));
+}, 1200);
+`);
+      fs.writeFileSync(path.join(dir, 'dock-chat.json'), JSON.stringify({ claudeBin: path.join(dir, 'par-claude.cjs'), cwd: dir, turnTimeoutMs: 20000, retryBaseMs: 50, parallelTurns: parallel, interactive: false, activity: false }));
+      const queue = [1, 2];
+      dock = await startServer((req) => {
+        if (!req.url.endsWith('/chat/claim')) return null;
+        const n = queue.shift();
+        return { json: { ok: true, result: { message: n ? { id: n, sessionId: `dock-par-${n}`, text: String(n) } : null } } };
+      });
+      bridge = spawn(process.execPath, [path.join(KIT, 'dock-chat.cjs'), 'run'], { env: { ...process.env, ...sandboxEnv(dir), DOCK_CHAT_CONFIG: path.join(dir, 'dock-chat.json'), DOCK_INGEST_URL: `${dock.url}/ingest/orchestrator`, DOCK_INGEST_TOKEN: 'dock_ing_test', DOCK_CHAT_TUNING: JSON.stringify({ waitGapMs: 0 }) }, cwd: KIT, stdio: 'ignore', windowsHide: true });
+      const log = () => { try { return fs.readFileSync(path.join(dir, 'order.log'), 'utf8').trim().split('\n'); } catch { return []; } };
+      assert.ok(await waitFor(() => log().filter((l) => l.startsWith('end-')).length === 2, 15000), `both turns finished: ${log()}`);
+      const lines = log();
+      if (overlap) assert.deepEqual(lines.slice(0, 2).sort(), ['start-1', 'start-2'], `both started before any ended: ${lines}`);
+      else assert.deepEqual(lines, ['start-1', 'end-1', 'start-2', 'end-2']);
+      assert.ok(await waitFor(() => dock.requests.filter((q) => q.url.endsWith('/chat/delta') && q.body.done === true).length === 2), 'both turns reported done');
+    } finally {
+      if (bridge) bridge.kill('SIGKILL');
+      if (dock) await dock.close();
+      rmrf(dir);
+    }
+  }
+});

@@ -1,10 +1,11 @@
 // Laptop bridge for DOCK chat: claims queued browser messages, runs them through Claude Code, streams the answer back.
-//   node dock-chat.cjs run      loop forever: claim -> one turn -> deltas -> next
+//   node dock-chat.cjs run      loop forever: claim -> start a turn (up to parallelTurns at once) -> deltas -> next
 //   node dock-chat.cjs once     handle at most one message and exit  [--wait seconds, default 5]
 //   node dock-chat.cjs check    show the configuration (never the token)
 //   node dock-chat.cjs label "<command>"   print the activity label a Bash command gets (rules: activity-labels.json)
 // Config: dock-chat.json next to this file, all optional:
 //   { "cwd": "E:/qonflo", "configDir": "C:/Users/danus/.claude-kantor", "permissionMode": null, "maxTurns": null, "extraArgs": [],
+//     "parallelTurns": 3,   how many chat turns run at once (min 1); maxTurns is claude's own --max-turns, not this
 //     "claudeBin": "claude", "turnTimeoutMs": 1800000, "retryBaseMs": 1000,
 //     "interactive": true, "askTtlSeconds": 600,   interactive: false keeps every turn on the one-shot path; askTtlSeconds is how long a phone prompt waits (30..1800)
 //     "keepAwake": { "mechanism": "off | app-status | server", "appSlug": null },
@@ -77,6 +78,7 @@ function settings({ platform = process.platform, paths = PATHS, file: given } = 
 		configDir: file.configDir || (platform === "win32" ? paths.configDir : null),
 		permissionMode: file.permissionMode || null,
 		maxTurns: file.maxTurns || null,
+		parallelTurns: Math.max(1, Math.floor(Number(file.parallelTurns)) || 3),
 		extraArgs: Array.isArray(file.extraArgs) ? file.extraArgs.map(String) : [],
 		appendSystemPrompt: typeof file.appendSystemPrompt === "string" ? file.appendSystemPrompt : SKILL_LINE_PROMPT,
 			passEnv: Array.isArray(file.passEnv) ? file.passEnv.map(String).filter((k) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) : [],
@@ -106,11 +108,13 @@ function childEnv(opts, base = process.env) {
 //   server      DOCK extends the deadline itself, nothing to do here (keepAwakeServerSide)
 // Resolves "sent" | "throttled" | "off" | "not-configured" | "failed".
 const keepAwakeState = { last: 0, failLoggedAt: 0 };
+let activeTurns = 0;
 const keepAwakeServerSide = async () => "not-configured";
 async function keepAwake(state, cfg = {}, { force = false, env = process.env, fetchImpl = fetch, now = Date.now, memo = keepAwakeState } = {}) {
 	const ka = cfg.keepAwake || { mechanism: "off" };
 	if (ka.mechanism === "off") return "off";
 	if (ka.mechanism === "server") return keepAwakeServerSide();
+	if (state === "idle" && activeTurns > 1) return "throttled";
 	if (!env.CODER_AGENT_URL || !env.CODER_AGENT_TOKEN || !ka.appSlug) return "not-configured";
 	if (state === "working" && !force && now() - memo.last < KEEP_AWAKE_EVERY_MS) return "throttled";
 	memo.last = now();
@@ -207,6 +211,19 @@ function track(child) {
 		process.on("uncaughtException", (e) => { log(`bridge crashed: ${e && e.message}`); killAllSync(); process.exit(1); });
 	}
 	return () => { liveChildren.delete(child); seenBelow.delete(child); };
+}
+
+// Runs up to `limit` turns at once; slot() resolves when one is free, start() never rejects.
+function createTurnPool(limit) {
+	const running = new Set();
+	return {
+		slot: async () => { while (running.size >= limit) await Promise.race(running); },
+		start(run, onError) {
+			const p = Promise.resolve().then(run).catch(onError).catch(() => {}).finally(() => running.delete(p));
+			running.add(p);
+			return p;
+		},
+	};
 }
 
 let authLogged = false;
@@ -481,11 +498,14 @@ async function runTurn(msg, cfg, opts) {
 	return runLegacy(msg, cfg, opts, claude);
 }
 
+let sharedAllow = null;
+const allowStore = () => sharedAllow || (sharedAllow = interact.createAllowStore(ALLOW_FILE, { log }));
+
 async function runInteractive(msg, cfg, opts, claude, flags) {
 	const core = turnCore(msg, cfg, opts, (c) => killTree(c));
 	const act = opts.activity.enabled && Date.now() >= activityMemo.silencedUntil ? startActivity(msg, core.mask, opts) : null;
 	core.setActivity(act);
-	const store = interact.createAllowStore(ALLOW_FILE, { log });
+	const store = allowStore();
 	const { fit } = activityLib.createSafe(core.mask);
 	try {
 		await session.runInteractiveTurn(msg, cfg, opts, {
@@ -610,7 +630,7 @@ async function main(cmd, args) {
 	if (cmd === "check") {
 		const cfg = config(), s = settings(), c = resolveClaude(s.claudeBin);
 		console.log(cfg ? `url: ${cfg.url}\ntoken: set` : "dock: not configured (set DOCK_INGEST_URL and DOCK_INGEST_TOKEN, or write dock.json)");
-		console.log(`claude: ${c ? [c.cmd, ...c.prefix].join(" ") : "NOT FOUND (" + s.claudeBin + ")"}\ncwd: ${s.cwd}\nconfigDir: ${s.configDir || "(unset: Claude Code default)"}\nkeepAwake: ${s.keepAwake.mechanism}${s.keepAwake.mechanism === "server" ? " (not configured: DOCK-side keep-awake has no client part)" : ""}\npermissionMode: ${s.permissionMode || "(user settings)"}\nmaxTurns: ${s.maxTurns || "(none)"}\nextraArgs: ${s.extraArgs.join(" ") || "(none)"}`);
+		console.log(`claude: ${c ? [c.cmd, ...c.prefix].join(" ") : "NOT FOUND (" + s.claudeBin + ")"}\ncwd: ${s.cwd}\nconfigDir: ${s.configDir || "(unset: Claude Code default)"}\nkeepAwake: ${s.keepAwake.mechanism}${s.keepAwake.mechanism === "server" ? " (not configured: DOCK-side keep-awake has no client part)" : ""}\npermissionMode: ${s.permissionMode || "(user settings)"}\nmaxTurns: ${s.maxTurns || "(none)"}\nparallelTurns: ${s.parallelTurns}\nextraArgs:${s.extraArgs.join(" ") || "(none)"}`);
 		let flags = null;
 		if (c && s.interactive) { flags = await supportedFlags(c, s); await ensureCatalog(c, s, flags); }
 		const caps = buildCaps(s, flags), cat = bridgeMemo.catalog;
@@ -631,10 +651,17 @@ async function main(cmd, args) {
 	const w = args.indexOf("--wait");
 	const wait = cmd === "once" ? Math.min(CLAIM_WAIT_S, w >= 0 ? Number(args[w + 1]) || 0 : 5) : CLAIM_WAIT_S;
 	let backoff = 0, paceUntil = 0;
+	const pool = createTurnPool(opts.parallelTurns);
+	const handle = async (message) => {
+		activeTurns++;
+		try { await runTurn(message, config() || cfg, opts); } finally { activeTurns--; }
+		log(`message ${safeId(message.id)} finished`);
+	};
 	log(`bridge ${cmd}: ${cfg.url}`);
-	try { pruneFiles(STATE_DIR, Date.now()); interact.createAllowStore(ALLOW_FILE, { log }).prune(); } catch {}
+	try { pruneFiles(STATE_DIR, Date.now()); allowStore().prune(); } catch {}
 	for (;;) {
 		try {
+			await pool.slot();
 			const claude = resolveClaude(opts.claudeBin);
 			const flags = claude && opts.interactive ? await supportedFlags(claude, opts) : null;
 			if (flags) await ensureCatalog(claude, opts, flags);
@@ -649,8 +676,8 @@ async function main(cmd, args) {
 			if (r.wantCatalog && bridgeMemo.catalog) await catalogLib.publishCatalog(bridgeMemo.catalog, call);
 			if (r.message && r.message.id != null) {
 				log(`message ${safeId(r.message.id)} for session ${safeId(r.message.sessionId)}`);
-				await runTurn(r.message, config() || cfg, opts);
-				log(`message ${safeId(r.message.id)} finished`);
+				if (cmd === "once") await handle(r.message);
+				else pool.start(() => handle(r.message), (e) => log(`bridge error: message ${safeId(r.message.id)}: ${e.message}`));
 			}
 			if (cmd === "once") return;
 		} catch (e) {
@@ -662,7 +689,7 @@ async function main(cmd, args) {
 	}
 }
 
-module.exports = { resolveClaude, killTree, childEnv, limitsOf, settings, keepAwake, track, snapshotTree, reap, killAllSync };
+module.exports = { resolveClaude, killTree, childEnv, limitsOf, settings, createTurnPool, keepAwake, track, snapshotTree, reap, killAllSync };
 
 if (require.main === module) {
 	const [cmd, ...args] = process.argv.slice(2);
