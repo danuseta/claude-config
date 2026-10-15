@@ -551,8 +551,11 @@ async function runLegacy(msg, cfg, opts, claude) {
 	if ((msg.claudeSessionId && !resumeId) || (msg.forkFrom && !forkId)) log("a session id from DOCK is not a UUID; it was dropped");
 	if (resumeId) args.push("--resume", resumeId);
 	else if (forkId) args.push("--resume", forkId, "--fork-session");
-	if (opts.permissionMode) args.push("--permission-mode", opts.permissionMode);
+	const chosen = interact.optionArgs(msg.options, { catalog: bridgeMemo.catalog, log });
+	const mode = chosen.mode || opts.permissionMode;
+	if (mode) args.push("--permission-mode", mode);
 	if (opts.maxTurns) args.push("--max-turns", String(opts.maxTurns));
+	args.push(...chosen.args);
 	if (opts.appendSystemPrompt) args.push("--append-system-prompt", opts.appendSystemPrompt);
 	args.push(...opts.extraArgs);
 
