@@ -12,15 +12,16 @@
 //     "activity": { "enabled": true, "hooks": true, "subagentText": true } }   "activity": false (or enabled: false) switches the activity feed off
 // Defaults come from paths.cjs. On Linux configDir is unset, so Claude Code keeps its own ~/.claude.
 // The DOCK url and token come from dock-push.cjs (dock.json or env).
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
-const { maskString, config, send, toolLine, cut } = require("./dock-push.cjs");
+const { maskString, config, send, sendFile, toolLine, cut } = require("./dock-push.cjs");
 const activityLib = require("./activity.cjs");
 const interact = require("./dock-chat-interact.cjs");
 const session = require("./dock-chat-session.cjs");
 const catalogLib = require("./dock-chat-catalog.cjs");
-const { pruneFiles } = require("./dock-chat-files.cjs");
+const { pruneFiles, resolveAttach, ATTACH_BYTES } = require("./dock-chat-files.cjs");
 const guardLib = require("./guard.cjs");
 const procLib = require("./dock-chat-proc.cjs");
 const preflight = require("./dock-chat-preflight.cjs");
@@ -40,6 +41,10 @@ const MAX_BACKOFF_MS = 30000;
 const KEEP_AWAKE_EVERY_MS = 10 * 60 * 1000;
 const BRIDGE_SECRET = /^(DOCK_INGEST_TOKEN|DOCK_MASK_EXTRA|BRAIN_TOKEN|CODER_AGENT_TOKEN|CODER_SESSION_TOKEN|(DOCK|BRAIN|CODER)_[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|KEY|PIN))$/;
 const PROXY_VARS = /^(https?_proxy|all_proxy|node_use_env_proxy|dock_proxy)$/i;
+const UPLOAD_TIMEOUT_MS = 30000;
+const MAX_UPLOADS_PER_TURN = 20;
+const IMAGE_EXT = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
+const ATTACH_LINE = /^[ \t]*DOCK_ATTACH:[ \t]*(.+?)[ \t]*\r?$/gm;
 const ACTIVITY_INTERVAL_MS = DELTA_INTERVAL_MS;
 const ACTIVITY_TIMEOUT_MS = 5000;
 const ACTIVITY_FINAL_WAIT_MS = 1000;
@@ -47,7 +52,7 @@ const ACTIVITY_SILENCE_MS = 10 * 60 * 1000;
 const ACTIVITY_PAUSE_MS = 60 * 1000;
 const HELP_TIMEOUT_MS = 5000;
 // Thinking text never reaches the stream, so the skill choice is made visible by having Claude write it in the reply DOCK shows.
-const SKILL_LINE_PROMPT = "This turn runs from DOCK chat, where the person follows your steps on a phone and cannot see your thinking. Before your first tool call of each task, write one plain line in your reply: Skills: <2-4 keywords from the task> / candidates: <matching skills from the available-skills list, or none> / using: <the skill you invoke, or none>. Then work as usual. A DOCK session works on one ticket only: when asked about another ticket, say it belongs in its own DOCK session instead of starting it here.";
+const SKILL_LINE_PROMPT = "This turn runs from DOCK chat, where the person follows your steps on a phone and cannot see your thinking. Before your first tool call of each task, write one plain line in your reply: Skills: <2-4 keywords from the task> / candidates: <matching skills from the available-skills list, or none> / using: <the skill you invoke, or none>. Then work as usual. A DOCK session works on one ticket only: when asked about another ticket, say it belongs in its own DOCK session instead of starting it here. To send a file to the owner, write a line DOCK_ATTACH: <absolute path> in your reply (a file inside the working folder, up to 10 MB); screenshots from your tools are shown automatically.";
 
 const log = (msg) => console.log(`${new Date().toISOString()} ${String(msg).replace(/[\u0000-\u001f\u007f]+/g, " ")}`);
 const safeId = (v) => String(v).replace(/[^A-Za-z0-9._-]/g, "?").slice(0, 64);
@@ -254,7 +259,7 @@ async function sendDelta(body, retryBaseMs, attempts = 6) {
 
 // ---------- activity: best effort, never allowed to touch the turn ----------
 const activityMemo = { silencedUntil: 0, labels: null, helpFlags: new Map() };
-const bridgeMemo = { legacyUntil: 0, interrupt: null, catalog: null, catalogAt: 0, catalogRun: null, terminal: TERMINAL_COMMANDS, claudeVersion: "", caps: null, guard: null, waitAt: 0 };
+const bridgeMemo = { legacyUntil: 0, interrupt: null, catalog: null, catalogAt: 0, catalogRun: null, uploadOff: false, terminal: TERMINAL_COMMANDS, claudeVersion: "", caps: null, guard: null, waitAt: 0 };
 
 function activityLabels(opts) {
 	const dir = opts.activity.labelsDir || __dirname;
@@ -345,51 +350,131 @@ function limitsOf(event) {
 	return { fiveHour: limit(windows.five_hour), sevenDay: limit(windows.seven_day) };
 }
 
+// Sends the files a turn collected. A 404 means an older DOCK without /chat/upload: uploads stay off for the life of this process.
+async function uploadFiles(msg, files) {
+	for (const f of files) {
+		if (bridgeMemo.uploadOff) return;
+		try {
+			const r = await sendFile("/chat/upload", { sessionId: msg.sessionId, replyTo: msg.id, name: f.name }, f.bytes, f.mime, UPLOAD_TIMEOUT_MS);
+			if (r.skipped || r.status === 200) continue;
+			if (r.status === 404) { bridgeMemo.uploadOff = true; log("DOCK has no /chat/upload route (older server); files from the agent are skipped"); return; }
+			log(`upload refused: ${r.status}${r.error ? " " + r.error : ""}`);
+		} catch (e) { log(`upload failed: ${e.message}`); }
+	}
+}
+
+const tokensOf = (u) => (u && typeof u === "object" ? [u.input_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens].reduce((n, v) => n + (Number.isFinite(v) ? v : 0), 0) : 0);
+
+// What /chat/status gets after a turn. Context is the last main-thread API call of the turn (input plus both cache counts), because the
+// result event's own usage adds up every call of the turn; that sum is the fallback when no assistant event carried usage.
+function statusOf(msg, result, state) {
+	const body = { sessionId: msg.sessionId };
+	if (state.model) body.model = state.model;
+	const defaults = bridgeMemo.catalog && bridgeMemo.catalog.defaults;
+	const effort = (msg.options && typeof msg.options.effort === "string" && msg.options.effort) || (defaults && defaults.effort);
+	if (effort) body.effort = effort;
+	const tokens = tokensOf(state.usage) || tokensOf(result.usage);
+	if (tokens > 0) body.contextTokens = tokens;
+	const byModel = result.modelUsage && typeof result.modelUsage === "object" ? result.modelUsage : {};
+	const key = Object.keys(byModel).find((k) => k === state.model) || Object.keys(byModel).find((k) => state.model && (k.includes(state.model) || state.model.includes(k)));
+	const size = key && byModel[key] ? byModel[key].contextWindow : undefined;
+	if (Number.isFinite(size) && size > 0) {
+		body.contextSize = size;
+		if (tokens > 0) body.contextPercentage = Math.round((tokens / size) * 1000) / 10;
+	}
+	if (Number.isFinite(result.total_cost_usd)) body.turnCostUsd = result.total_cost_usd;
+	return body;
+}
+
 function turnCore(msg, cfg, opts, onAbort) {
 	const mask = (s) => maskString(String(s), { masked: 0, blobs: 0 }, cfg.extra);
 	const out = (text) => cut(mask(text));
-	const state = { claudeSessionId: interact.uuidOf(msg.claudeSessionId), pending: [], detail: null, lastSent: 0, aborted: false };
+	const state = { claudeSessionId: interact.uuidOf(msg.claudeSessionId), pending: [], detail: null, lastSent: 0, aborted: false, model: null, usage: null, uploads: [], seen: new Set(), images: 0, queued: 0, statusLogged: false };
 	let chain = Promise.resolve();
 	let timer = null, child, result = null, act = null;
 
 	const post = (extra, attempts) => {
 		const items = state.pending; state.pending = [];
+		const files = state.uploads; state.uploads = [];
 		const body = { sessionId: msg.sessionId, replyTo: msg.id, items, ...extra };
 		if (state.claudeSessionId) body.claudeSessionId = state.claudeSessionId;
 		if (state.detail) body.detail = state.detail;
 		state.lastSent = Date.now();
 		chain = chain.then(async () => {
 			if (state.aborted) return;
-			if (!(await sendDelta(body, opts.retryBaseMs, attempts))) { state.aborted = true; log(`dropping turn for message ${msg.id}: DOCK unreachable`); onAbort(child); }
+			if (extra && extra.done) await uploadFiles(msg, files);
+			if (!(await sendDelta(body, opts.retryBaseMs, attempts))) { state.aborted = true; log(`dropping turn for message ${msg.id}: DOCK unreachable`); onAbort(child); return; }
+			if (!(extra && extra.done)) await uploadFiles(msg, files);
 		});
 		return chain;
 	};
 	const schedule = () => {
 		if (timer || state.aborted) return;
 		const wait = Math.max(0, state.lastSent + DELTA_INTERVAL_MS - Date.now());
-		timer = setTimeout(() => { timer = null; if (state.pending.length || state.detail) post({ done: false, error: null }); }, wait);
+		timer = setTimeout(() => { timer = null; if (state.pending.length || state.detail || state.uploads.length) post({ done: false, error: null }); }, wait);
 	};
 	const learn = (id) => {
 		if (typeof id !== "string" || !id || id === state.claudeSessionId) return;
 		state.claudeSessionId = id;
 		rememberSession(id);
 	};
+	const queueUpload = (file) => {
+		if (state.queued >= MAX_UPLOADS_PER_TURN) return;
+		state.queued++;
+		state.uploads.push(file);
+	};
+	const collectImages = (content) => {
+		for (const b of content) {
+			if (!b || b.type !== "tool_result" || !Array.isArray(b.content)) continue;
+			for (const c of b.content) {
+				const src = c && c.type === "image" && c.source;
+				const ext = src && src.type === "base64" && typeof src.data === "string" ? IMAGE_EXT[src.media_type] : null;
+				if (!ext) continue;
+				const bytes = Buffer.from(src.data, "base64");
+				const hash = crypto.createHash("sha256").update(bytes).digest("hex");
+				if (!bytes.length || bytes.length > ATTACH_BYTES || state.seen.has(hash)) continue;
+				state.seen.add(hash);
+				queueUpload({ name: `image-${++state.images}.${ext}`, mime: src.media_type, bytes });
+			}
+		}
+		schedule();
+	};
+	const stripAttach = (text) => {
+		const found = [];
+		const rest = text.replace(ATTACH_LINE, (_, p) => { found.push(p); return ""; });
+		if (!found.length) return text;
+		for (const p of found) {
+			const r = resolveAttach(p, opts.cwd);
+			if (r.error) { log(`DOCK_ATTACH refused: ${r.error}`); continue; }
+			try { queueUpload({ name: r.name, mime: r.mime, bytes: fs.readFileSync(r.file) }); } catch (e) { log(`DOCK_ATTACH not read: ${e.message}`); }
+		}
+		return rest.replace(/\n{3,}/g, "\n\n").trim();
+	};
 	const onEvent = (o) => {
-		if (o.type === "system" && o.subtype === "init") learn(o.session_id);
+		if (o.type === "system" && o.subtype === "init") { learn(o.session_id); if (typeof o.model === "string" && o.model) state.model = o.model; }
+		else if (o.type === "user" && o.message && Array.isArray(o.message.content)) collectImages(o.message.content);
 		else if (o.type === "rate_limit_event") {
 			const limits = limitsOf(o);
 			if (limits.fiveHour || limits.sevenDay) call("/chat/status", { sessionId: msg.sessionId, ...limits }, 5000).catch(() => {});
 		}
 		else if (o.type === "assistant" && o.message && Array.isArray(o.message.content)) {
 			learn(o.session_id);
+			if (!o.parent_tool_use_id && o.message.usage) state.usage = o.message.usage;
 			const at = new Date().toISOString();
 			for (const b of o.message.content) {
 				if (!b) continue;
-				if (b.type === "text" && typeof b.text === "string" && b.text.trim() && !(act && o.parent_tool_use_id)) state.pending.push({ role: "assistant", text: out(b.text), at });
+				if (b.type === "text" && typeof b.text === "string" && b.text.trim() && !(act && o.parent_tool_use_id)) {
+					const text = stripAttach(b.text);
+					if (text.trim()) state.pending.push({ role: "assistant", text: out(text), at });
+				}
 				else if (b.type === "tool_use") { state.pending.push({ role: "tool", text: out(toolLine(b.name, b.input)), at }); state.detail = mask(String(b.name)); }
 			}
 			schedule();
-		} else if (o.type === "result") { learn(o.session_id); result = o; }
+		} else if (o.type === "result") {
+			learn(o.session_id);
+			result = o;
+			call("/chat/status", statusOf(msg, o, state), 5000).catch((e) => { if (!state.statusLogged) { state.statusLogged = true; log(`status not sent: ${e.message}`); } });
+		}
 	};
 	return {
 		mask, out, state, post, schedule, onEvent,
@@ -406,12 +491,12 @@ const guardCheck = (cwd) => (command) => {
 	return bridgeMemo.guard.check(command, cwd);
 };
 
-function adoptCatalog(response, initEvent, extra = []) {
+function adoptCatalog(response, initEvent, extra = [], defaults = null) {
 	try {
 		if (initEvent && Array.isArray(initEvent.terminal_slash_commands)) bridgeMemo.terminal = initEvent.terminal_slash_commands.map(String);
 		const before = bridgeMemo.catalog;
 		const raw = before ? { ...response, fast_mode_state: before.fast.available ? "on" : "off", fast_mode_disabled_reason: before.fast.reason } : response;
-		bridgeMemo.catalog = catalogLib.compactCatalog(raw, bridgeMemo.terminal, { extra });
+		bridgeMemo.catalog = catalogLib.compactCatalog(raw, bridgeMemo.terminal, { extra, defaults });
 		bridgeMemo.catalogAt = Date.now();
 		if (typeof response.claude_code_version === "string") bridgeMemo.claudeVersion = response.claude_code_version.slice(0, 40);
 	} catch (e) { log(`catalogue not updated: ${e.message}`); }
@@ -428,7 +513,7 @@ async function ensureCatalog(claude, opts, flags) {
 			if (!base) { bridgeMemo.catalogAt = Date.now() - CATALOG_EVERY_MS + CATALOG_RETRY_MS; log("catalogue probe got no answer; trying again later"); return; }
 			const fast = await catalogLib.probeCatalog(claude, { cwd: opts.cwd, fast: true }, { env });
 			bridgeMemo.catalog = null;
-			adoptCatalog(fast ? { ...base, fast_mode_state: fast.fast_mode_state, fast_mode_disabled_reason: fast.fast_mode_disabled_reason } : base, null, config() ? config().extra : []);
+			adoptCatalog(fast ? { ...base, fast_mode_state: fast.fast_mode_state, fast_mode_disabled_reason: fast.fast_mode_disabled_reason } : base, null, config() ? config().extra : [], catalogLib.machineDefaults(opts));
 		} catch (e) { log(`catalogue probe failed: ${e.message}`); }
 		finally { bridgeMemo.catalogRun = null; }
 	})();
@@ -522,7 +607,7 @@ async function runInteractive(msg, cfg, opts, claude, flags) {
 				if (!has && bridgeMemo.interrupt !== false) log("claude does not advertise interrupt_receipt_v1; stop is not offered from now on");
 				bridgeMemo.interrupt = has;
 			},
-			adoptCatalog: (response, initEvent) => adoptCatalog(response, initEvent, cfg.extra),
+			adoptCatalog: (response, initEvent) => adoptCatalog(response, initEvent, cfg.extra, catalogLib.machineDefaults(opts)),
 		});
 	} finally {
 		try { pruneFiles(STATE_DIR, Date.now()); } catch {}

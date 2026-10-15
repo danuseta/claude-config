@@ -1,5 +1,8 @@
 'use strict';
 const crypto = require('crypto');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { spawn: nodeSpawn } = require('child_process');
 const { maskString } = require('./dock-push.cjs');
 
@@ -30,7 +33,21 @@ const serverKeeps = (value, max, extra) => {
   return masked === value;
 };
 
-function compactCatalog(initializeResponse, terminalCommands, { extra = [] } = {}) {
+// The model, effort and permission mode a session gets when nobody picks one. Reads the same settings.json Claude Code reads;
+// ANTHROPIC_MODEL and CLAUDE_CODE_EFFORT_LEVEL win over it, as they do in Claude Code.
+function machineDefaults(opts = {}, env = process.env) {
+  let file = {};
+  try { file = JSON.parse(fs.readFileSync(path.join(opts.configDir || env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json'), 'utf8')); } catch {}
+  const text = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const permissions = file.permissions && typeof file.permissions === 'object' ? file.permissions : {};
+  return {
+    model: text(env.ANTHROPIC_MODEL) || text(file.model),
+    effort: text(env.CLAUDE_CODE_EFFORT_LEVEL) || text(file.effortLevel),
+    permissionMode: text(opts.permissionMode) || text(permissions.defaultMode) || 'default',
+  };
+}
+
+function compactCatalog(initializeResponse, terminalCommands, { extra = [], defaults = null } = {}) {
   const raw = initializeResponse && typeof initializeResponse === 'object' ? initializeResponse : {};
   const hidden = new Set([...OPTIONS_BAR_COMMANDS, ...(Array.isArray(terminalCommands) ? terminalCommands.map(String) : [])]);
   const seen = new Set();
@@ -57,8 +74,11 @@ function compactCatalog(initializeResponse, terminalCommands, { extra = [] } = {
   commands.length = Math.min(commands.length, MAX_COMMANDS);
   const size = () => Buffer.byteLength(JSON.stringify({ commands, models, fast }));
   while (commands.length && size() > MAX_BYTES) commands.length = Math.floor(commands.length * 0.9);
-  const hash = crypto.createHash('sha256').update(JSON.stringify({ commands, models, fast })).digest('hex');
-  return { hash, commands, models, fast };
+  const given = defaults && typeof defaults === 'object' ? defaults : {};
+  const pick = (v) => clean(v, VALUE_MAX, extra) || null;
+  const machine = { model: pick(given.model), effort: pick(given.effort), permissionMode: pick(given.permissionMode) };
+  const hash = crypto.createHash('sha256').update(JSON.stringify({ commands, models, fast, defaults: machine })).digest('hex');
+  return { hash, commands, models, fast, defaults: machine };
 }
 
 function stop(child) {
@@ -124,7 +144,7 @@ function probeCatalog(claude, opts = {}, { spawn = nodeSpawn, env = process.env 
 
 async function publishCatalog(catalog, call) {
   if (!catalog || typeof catalog.hash !== 'string') return false;
-  const body = { hash: catalog.hash, commands: catalog.commands, models: catalog.models, fast: catalog.fast };
+  const body = { hash: catalog.hash, commands: catalog.commands, models: catalog.models, fast: catalog.fast, defaults: catalog.defaults };
   if (Buffer.byteLength(JSON.stringify(body)) > POST_BYTES) return false;
   try {
     const r = await call('/chat/catalog', body, 15000);
@@ -134,4 +154,4 @@ async function publishCatalog(catalog, call) {
   }
 }
 
-module.exports = { compactCatalog, probeCatalog, publishCatalog };
+module.exports = { machineDefaults, compactCatalog, probeCatalog, publishCatalog };

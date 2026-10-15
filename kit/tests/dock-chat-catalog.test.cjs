@@ -41,7 +41,7 @@ test('compactCatalog copies only the listed fields and drops terminal-only and o
     { value: 'haiku', label: 'Haiku', efforts: [], fast: false },
   ]);
   assert.deepEqual(c.fast, { available: false, reason: 'extra_usage_disabled' });
-  assert.deepEqual(Object.keys(c).sort(), ['commands', 'fast', 'hash', 'models']);
+  assert.deepEqual(Object.keys(c).sort(), ['commands', 'defaults', 'fast', 'hash', 'models']);
   const json = JSON.stringify(c);
   for (const leak of ['owner@example.com', 'dock_ing_should', 'C:/secret', 'explore', '2.1.296', 'long text']) assert.ok(!json.includes(leak), leak);
 });
@@ -187,7 +187,7 @@ test('publishCatalog posts {hash, commands, models, fast} to /chat/catalog and r
   const ok = await catalog.publishCatalog(c, async (route, body, timeout) => { calls.push({ route, body, timeout }); return { status: 200, ok: true, result: { hash: c.hash } }; });
   assert.equal(ok, true);
   assert.equal(calls[0].route, '/chat/catalog');
-  assert.deepEqual(calls[0].body, { hash: c.hash, commands: c.commands, models: c.models, fast: c.fast });
+  assert.deepEqual(calls[0].body, { hash: c.hash, commands: c.commands, models: c.models, fast: c.fast, defaults: c.defaults });
   assert.ok(calls[0].timeout >= 1000);
   assert.equal(await catalog.publishCatalog(c, async () => ({ status: 404, ok: false })), false);
   assert.equal(await catalog.publishCatalog(c, async () => ({ status: 200, ok: false })), false);

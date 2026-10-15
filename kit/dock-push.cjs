@@ -112,6 +112,22 @@ async function sendBinary(route, body, timeoutMs, maxBytes = 9 * 1024 * 1024) {
 	return { status: res.status, buffer: Buffer.concat(chunks), headers: Object.fromEntries(res.headers) };
 }
 
+// Uploads raw bytes (not JSON) to a DOCK route; `query` goes into the URL. Resolves { status, ...json }.
+async function sendFile(route, query, bytes, mime, timeoutMs) {
+	const cfg = config();
+	if (!cfg) return { skipped: true };
+	const url = `${cfg.url}${route}?${new URLSearchParams(query)}`;
+	const headers = { "content-type": mime, authorization: `Bearer ${cfg.token}` };
+	if (process.env.DOCK_PROXY) {
+		const r = await viaProxy(url, process.env.DOCK_PROXY, { method: "POST", headers, body: bytes, timeoutMs });
+		let json = {}; try { json = JSON.parse(r.text); } catch {}
+		return { status: r.status, ...json };
+	}
+	const res = await fetch(url, { method: "POST", headers, body: bytes, signal: AbortSignal.timeout(timeoutMs) });
+	const json = await res.json().catch(() => ({}));
+	return { status: res.status, ...json };
+}
+
 const ledgerFile = (key) => path.join(LEDGER_ROOT, key, "status.json");
 const readLedger = (key) => JSON.parse(fs.readFileSync(ledgerFile(key), "utf8"));
 const ledgerKeys = () => (fs.existsSync(LEDGER_ROOT) ? fs.readdirSync(LEDGER_ROOT).filter((k) => fs.existsSync(ledgerFile(k))) : []);
@@ -464,7 +480,7 @@ async function syncSessions(args, cfg) {
 	console.log(`sessions: ${sent} sent, ${skipped} unchanged or skipped, ${failed} failed`);
 }
 
-module.exports = { pushStatusDetached, maskString, config, send, sendBinary, toolLine, cut, ledger };
+module.exports = { pushStatusDetached, maskString, config, send, sendBinary, sendFile, toolLine, cut, ledger };
 
 if (require.main === module) {
 	const [cmd, ...args] = process.argv.slice(2);
