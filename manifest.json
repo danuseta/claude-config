@@ -24,11 +24,15 @@
       "linux": ["claude/CLAUDE.common.md", "claude/CLAUDE.linux.md"]
     }
   },
+  "mcp": {
+    "windows": { "file": "mcp/mcp.windows.json", "target": "{{configDir}}/.claude.json", "servers": ["atlassian"] }
+  },
   "files": [
     { "from": "claude/AGENTS.md", "to": "AGENTS.md", "os": ["windows", "linux"] },
     { "from": "claude/RTK.md", "to": "RTK.md", "os": ["windows", "linux"] },
     { "from": "claude/DESIGN_THINKING.md", "to": "DESIGN_THINKING.md", "os": ["windows", "linux"] },
     { "from": "claude/karpathy-principles.md", "to": "karpathy-principles.md", "os": ["windows", "linux"] },
+    { "from": "claude/rules/ticket-contract.md", "to": "rules/ticket-contract.md", "os": ["windows", "linux"] },
     { "from": "claude/statusline-account.cjs", "to": "statusline-account.cjs", "os": ["windows"] },
     { "from": "windows/dock-chat-autostart.vbs", "to": "kit/dock-chat-autostart.vbs", "os": ["windows"] }
   ],

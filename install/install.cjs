@@ -214,6 +214,35 @@ function planClaudeMd() {
   return { target, content, state: !exists(target) ? 'new' : same ? 'same' : 'changed' };
 }
 
+function planMcp(secrets) {
+  const cfg = manifest.mcp && manifest.mcp[OS];
+  if (!cfg) return { none: true };
+  const src = path.join(REPO, cfg.file);
+  if (!exists(src)) return { error: `${cfg.file} not in the repo` };
+  const all = readJson(src).mcpServers || {};
+  const target = expand(cfg.target, configDir);
+  const current = exists(target) ? readJson(target) : {};
+  const have = current.mcpServers || {};
+  const items = [];
+  for (const name of cfg.servers) {
+    if (!all[name]) {
+      items.push({ name, state: 'absent' });
+      continue;
+    }
+    const fills = [];
+    const value = render(all[name], secrets, fills, name);
+    const missing = fills.filter((f) => !f.available).map((f) => f.name);
+    if (missing.length) {
+      items.push({ name, state: 'skipped', missing });
+      continue;
+    }
+    const differs = have[name] && Object.keys(value).some((k) => JSON.stringify(have[name][k]) !== JSON.stringify(value[k]));
+    const state = !have[name] ? 'new' : differs ? 'changed' : 'same';
+    items.push({ name, state, value });
+  }
+  return { target, current, items };
+}
+
 function stamp() {
   const d = new Date();
   const p = (n) => String(n).padStart(2, '0');
@@ -256,6 +285,7 @@ function main() {
   const st = planSettings(secrets);
   const cp = copyPlan();
   const md = planClaudeMd();
+  const mcp = planMcp(secrets);
   let pending = 0;
 
   if (flag('--uninstall')) {
@@ -308,6 +338,29 @@ function main() {
     log(`  ${md.state}`);
     if (md.state !== 'same') pending++;
     if (apply && md.state !== 'same') fs.writeFileSync(md.target, md.content);
+  }
+  log();
+
+  log('MCP servers (user scope)');
+  if (mcp.none) log('  not managed here on this OS (linux/personalize.sh registers mcp/mcp.linux.json)');
+  else if (mcp.error) log(`  skipped: ${mcp.error}`);
+  else {
+    log(`  target  ${mcp.target.replace(/\\/g, '/')}`);
+    for (const i of mcp.items) {
+      const why = i.state === 'skipped' ? ` (secret not available: ${i.missing.join(', ')})` : i.state === 'absent' ? ' (not in the MCP file)' : '';
+      log(`  ${i.state.padEnd(7)} ${i.name}${why}`);
+    }
+    const write = mcp.items.filter((i) => i.state === 'new' || i.state === 'changed');
+    pending += write.length;
+    if (apply && write.length) {
+      const next = { ...mcp.current, mcpServers: { ...(mcp.current.mcpServers || {}) } };
+      for (const i of write) next.mcpServers[i.name] = i.value;
+      if (exists(mcp.target)) fs.copyFileSync(mcp.target, `${mcp.target}.bak-${stamp()}`);
+      const tmp = `${mcp.target}.ccfg-tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(next, null, 2) + '\n', { mode: 0o600 });
+      fs.renameSync(tmp, mcp.target);
+      log('  applied (backup written next to it); log in once with /mcp');
+    }
   }
   log();
 
