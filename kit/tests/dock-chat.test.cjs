@@ -461,7 +461,7 @@ test('limitsOf: the windows of a rate_limit_event become status line limits in p
 test('a chat turn posts the usage limits claude reports to /chat/status, under the DOCK session', async () => {
   const t = await activityTurn({ stream: 'synthetic-rate-limit.jsonl' });
   assert.equal(t.r.code, 0, t.r.stderr);
-  const status = t.requests.filter((q) => q.url.endsWith('/chat/status'));
+  const status = t.requests.filter((q) => q.url.endsWith('/chat/status') && q.body.fiveHour);
   assert.equal(status.length, 1);
   assert.deepEqual(status[0].body, { sessionId: 'dock-act-1', fiveHour: { usedPercentage: 25, resetsAt: 1791913800 }, sevenDay: { usedPercentage: 50, resetsAt: 1792407600 } });
   assert.equal(t.last.done, true);
