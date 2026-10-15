@@ -27,4 +27,8 @@ Dua pengecualian yang wajar, bukan alasan malas:
 
 Cek hasilnya berkala dengan `rtk gain`.
 
+## Kontrak tiket
+
+Sesi yang mengerjakan atau me-review tiket Jira wajib menjalankan `rules/ticket-contract.md` di folder konfigurasi ini sebelum membaca blackboard atau menulis kode.
+
 @RTK.md

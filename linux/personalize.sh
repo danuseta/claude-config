@@ -292,7 +292,8 @@ try { cj = JSON.parse(fs.readFileSync(claudeJson, "utf8")); } catch {}
 const have = (n) => Boolean((cj.mcpServers || {})[n]);
 const needs = (v) => { const s = JSON.stringify(v), out = []; s.replace(/\{\{secret:([A-Za-z0-9_]+)\}\}/g, (_, n) => { out.push(n); return ""; }); return out; };
 if (mode === "list") {
-  for (const [n, v] of Object.entries(cfg)) console.log([n, have(n) ? "have" : "missing", needs(v).join(",") || "-"].join("\t"));
+  const stale = (n, v) => !needs(v).length && Object.keys(v).some((k) => JSON.stringify(cj.mcpServers[n][k]) !== JSON.stringify(v[k]));
+  for (const [n, v] of Object.entries(cfg)) console.log([n, have(n) ? (stale(n, v) ? "stale" : "have") : "missing", needs(v).join(",") || "-"].join("\t"));
 } else if (mode === "json") {
   console.log(JSON.stringify(cfg[only]));
 } else if (mode === "write") {
@@ -334,6 +335,11 @@ s_plugins() {
   while IFS=$'\t' read -r n state sec; do
     [ -n "$n" ] || continue
     if [ "$state" = have ]; then mcp_have=$((mcp_have + 1)); continue; fi
+    if [ "$state" = stale ]; then
+      if [ "$DRY" = 1 ]; then say INFO "mcp $n: would update to the repo definition"; continue; fi
+      if node -e "$MCP_JS" write "$cfg" "$(native_path "$sf")" "$(native_path "$cj")" "$n" >/dev/null; then mcp_added=$((mcp_added + 1)); say INFO "mcp $n: updated; log in again with /mcp"; else say ERROR "mcp $n: update failed"; failed=$((failed + 1)); fi
+      continue
+    fi
     if [ "$DRY" = 1 ]; then say INFO "mcp $n: would register at user scope"; continue; fi
     if [ "$sec" = - ]; then
       json=$(node -e "$MCP_JS" json "$cfg" "$(native_path "$sf")" "$(native_path "$cj")" "$n")

@@ -29,6 +29,8 @@ Nilai kunci selalu berbentuk `{{secret:NAMA}}`. Tidak ada nilai asli di file.
 | figma | ya | ya | OAuth | Login ulang dari workspace (lihat `workspace-runbook.md`) |
 | firecrawl | ya | ya | `FIRECRAWL_API_KEY` | Opsional di workspace |
 | serena (uvx) | ya | ya | - | - |
-| atlassian | ya | ya | OAuth | Login ulang dari workspace |
+| atlassian | ya | ya | OAuth | Endpoint `v2/mcp`. Login sekali per mesin lewat `/mcp`; dari workspace lihat `workspace-runbook.md` |
 
 Yang tidak dibawa sama sekali: `agy-bridge` (Antigravity hanya di laptop) dan konektor claude.ai (tidak ikut token kantor). Server `mongodb` di workspace datang dari template Coder dan tidak diurus repo ini.
+
+Cara pasang: di workspace `linux/personalize.sh` mendaftarkan `mcp/mcp.linux.json` dan memperbarui server tanpa kunci yang definisinya berubah. Di laptop `install/install.cjs` menulis server yang terdaftar di `manifest.json` `mcp.windows.servers` (sekarang hanya `atlassian`) ke `<configDir>/.claude.json`; server lain di `mcp.windows.json` belum dipasang otomatis.
