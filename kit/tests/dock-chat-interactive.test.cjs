@@ -638,7 +638,7 @@ test('wantCatalog: the catalogue is posted once, compact, without the account', 
   const t = await turn({ script: SAY, dock: { wantCatalog: true } });
   assert.equal(t.state.catalogs.length, 1);
   const c = t.state.catalogs[0];
-  assert.deepEqual(Object.keys(c).sort(), ['commands', 'fast', 'hash', 'models']);
+  assert.deepEqual(Object.keys(c).sort(), ['commands', 'defaults', 'fast', 'hash', 'models']);
   assert.deepEqual(c.commands.map((x) => x.name), ['context', 'review']);
   assert.ok(!JSON.stringify(c).includes('CNRY') && !JSON.stringify(c).includes('canary-account'));
   const claims = t.state.requests.filter((q) => q.route === '/chat/claim');
