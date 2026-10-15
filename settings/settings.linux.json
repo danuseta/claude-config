@@ -1,15 +1,5 @@
 {
-  "hooks": {
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"{{home}}/brain/scripts/brain.py\" hook-retrieval",
-            "timeout": 15
-          }
-        ]
-      }
-    ]
+  "env": {
+    "BRAIN_MODE": "remote"
   }
 }

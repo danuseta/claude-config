@@ -10,7 +10,7 @@
 |---|---|
 | Akar kerja | `~/projects`. Repo aplikasi ada di bawahnya: `ms-admin-worker-backend`, `ms-client-dashboard-frontend`, `qonflo-chat-widget`, `ms-landing-page`, `wastaging`. Jangan pakai path `E:/` atau `C:/` |
 | Peta perintah | Bagian "Machine map" di `AGENTS.md` akar `~/projects` memetakan tiap perintah Windows ke padanan workspace. Kalau sebuah instruksi menyebut `.ps1` atau path Windows, pakai padanan dari tabel itu |
-| Brain | Vault di `~/brain`. Pemanggilan `brain-search.ps1`, `brain-retrieve.ps1`, dan `save-and-ingest.ps1` di `AGENTS.md` diganti `python3 ~/brain/scripts/brain.py <subperintah>` (`search`, `retrieve`, `save`) |
+| Brain | Vault tidak ada di workspace; `~/brain` tidak boleh ada. Pemanggilan `brain-search.ps1`, `brain-retrieve.ps1`, dan `save-and-ingest.ps1` di `AGENTS.md` diganti `python3 ~/.claude/kit/brain.py <subperintah>` (`retrieve`, `search`, `read`, `save`, `status`) dengan `BRAIN_MODE=remote`: semua operasi lewat server Brain. Baca note vault dengan `brain.py read <path>`, bukan tool Read |
 | Port resmi | 3000, 5173, 5174, 5000, 3100, serta 13337 (code-server), 13339 (filebrowser), 8099 (code executor). Jangan mematikan atau memindahkan port ini. Stack per tiket memakai be 3200 dan fe 5300 ke atas |
 | Docker | Tidak ada. Jangan mencoba `docker` atau `docker compose` |
 | Layanan latar | Tidak ada systemd, cron, dan tmux. Proses yang harus tetap hidup dijalankan lewat `setsid nohup ... &` dengan penjaga di `~/claude-config/linux/supervise.sh` |

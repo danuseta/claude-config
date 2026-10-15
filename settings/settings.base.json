@@ -132,6 +132,11 @@
             "type": "command",
             "command": "{{kit:dock-push.cjs hook}}",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "{{python}} \"{{configDir}}/kit/brain.py\" hook-autosave",
+            "timeout": 15
           }
         ]
       }
@@ -165,6 +170,11 @@
             "type": "command",
             "command": "{{kit:dock-push.cjs hook}}",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "{{python}} \"{{configDir}}/kit/brain.py\" hook-retrieval",
+            "timeout": 15
           }
         ]
       }

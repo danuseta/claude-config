@@ -44,7 +44,18 @@ Pemecahan hanya memindahkan baris. Tidak ada kata yang diubah.
 
 Installer menaruh bagian umum di depan, jadi urutan `CLAUDE.md` Windows berubah: bagian rtk sekarang di atas, aturan delegasi dan Shell di bawah. Isinya tetap.
 
-`AGENTS.md` pribadi masih menyebut skrip Brain `.ps1` dan path `E:\`. File itu disalin sama di dua OS, jadi padanan Linux (`python3 ~/brain/scripts/brain.py`) ditulis di `CLAUDE.linux.md`.
+`AGENTS.md` pribadi masih menyebut skrip Brain `.ps1` dan path `E:\`. File itu disalin sama di dua OS, jadi padanan Linux (`python3 ~/.claude/kit/brain.py`) ditulis di `CLAUDE.linux.md`.
+
+## Klien Brain di kit
+
+`kit/brain.py` adalah salinan byte-identik `scripts/brain.py` dari repo `danuseta/brain`. Workspace tidak punya vault, jadi klien dikirim lewat kit. Hook retrieval (`UserPromptSubmit`) dan autosave (`Stop`) di `settings.base.json` memanggil salinan ini di dua OS; macro `{{python}}` menjadi `python` di Windows dan `python3` di Linux. Mode diatur overlay: Windows `BRAIN_MODE=hybrid` dengan `BRAIN_ROOT=E:/obsidian/Brain`, Linux `BRAIN_MODE=remote`.
+
+`kit/tests/brain-copy.test.cjs` gagal kalau salinan bergeser dari hash yang dicatat, atau dari `E:/obsidian/Brain/scripts/brain.py` kalau vault ada di mesin itu. Cara memperbarui setelah `brain.py` berubah di repo vault:
+
+1. `git -C E:/obsidian/Brain fetch origin`
+2. `git -C E:/obsidian/Brain show origin/main:scripts/brain.py > kit/brain.py`
+3. `sha256sum kit/brain.py`, lalu salin hasilnya ke `RECORDED_SHA256` dan hash commit sumber ke `SOURCE_COMMIT` di `kit/tests/brain-copy.test.cjs`.
+4. `node --test kit/tests`, lalu `ccfg update` di workspace dan `install.cjs --apply` di laptop.
 
 ## Cek isi
 

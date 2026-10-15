@@ -1,10 +1,10 @@
 ---
-description: Antre catatan sesi ini ke raw/ Obsidian Brain (watcher yang ingest)
+description: Antre catatan sesi ini ke Obsidian Brain (server Brain yang ingest)
 argument-hint: [topik atau catatan tambahan]
-allowed-tools: Bash(powershell -NoProfile -ExecutionPolicy Bypass -File E:/obsidian/Brain/scripts/save_and_ingest.ps1:*), Bash(python3 ~/brain/scripts/brain.py save:*)
+allowed-tools: Bash(powershell -NoProfile -ExecutionPolicy Bypass -File E:/obsidian/Brain/scripts/save_and_ingest.ps1:*), Bash(python3 ~/.claude/kit/brain.py save:*)
 ---
 
-Antre catatan dari kerjaan sesi ini ke `raw/`. Arahan tambahan dari user: $ARGUMENTS
+Antre catatan dari kerjaan sesi ini ke Brain. Arahan tambahan dari user: $ARGUMENTS
 
 Langkah:
 
@@ -17,12 +17,12 @@ Laptop Windows:
 powershell -NoProfile -ExecutionPolicy Bypass -File E:/obsidian/Brain/scripts/save_and_ingest.ps1 -NoIngest -Project "<project>" -Topic "<topic>" -Title "<judul>" -Context "<konteks>" -Point "<poin 1>","<poin 2>" -Decision "<keputusan>"
 ```
 
-Workspace Linux (vault di `~/brain`):
+Workspace Linux (tanpa vault, `BRAIN_MODE=remote`):
 
 ```
-python3 ~/brain/scripts/brain.py save --no-ingest --project "<project>" --topic "<topic>" --title "<judul>" --context "<konteks>" --point "<poin 1>" --point "<poin 2>" --decision "<keputusan>"
+python3 ~/.claude/kit/brain.py save --no-ingest --project "<project>" --topic "<topic>" --title "<judul>" --context "<konteks>" --point "<poin 1>" --point "<poin 2>" --decision "<keputusan>"
 ```
 
-3. `-NoIngest` / `--no-ingest` wajib. Watcher di laptop yang menjalankan ingest, jangan panggil `ingest_raw.py`.
-4. Di workspace Linux perintah itu menulis satu file baru `raw/<UTC yyyymmdd-HHMMSS>-ws-<slug>.md`, lalu `git add` file itu saja, commit, `git pull --rebase`, dan `git push` (maksimal 3 percobaan). Kalau keluarannya menyebut git gagal, laporkan pesan persisnya; file catatannya tetap ada di `raw/`.
-5. Laporkan path file raw yang terbentuk, plus isi metadata yang dipakai (1 baris per field) supaya user bisa koreksi.
+3. Ingest dijalankan server Brain, bukan mesin ini. Jangan panggil `ingest_raw.py`.
+4. Hasilnya satu baris: `Saved raw note: <path>` (terkirim ke server) atau `Spooled (offline): <id>` (server tidak terjangkau; catatan dikirim ulang otomatis lewat hook atau `brain.py flush`). Kode keluar 1 berarti server menolak catatan atau spool penuh; laporkan pesannya persis.
+5. Laporkan baris hasil itu, plus isi metadata yang dipakai (1 baris per field) supaya user bisa koreksi.
