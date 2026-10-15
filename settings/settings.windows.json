@@ -4,7 +4,10 @@
     "command": "node \"{{configDir}}/statusline-account.cjs\""
   },
   "env": {
-    "TYPESAFE_API_KEY": "{{secret:TYPESAFE_API_KEY}}"
+    "TYPESAFE_API_KEY": "{{secret:TYPESAFE_API_KEY}}",
+    "BRAIN_MODE": "local",
+    "BRAIN_MACHINE": "laptop",
+    "BRAIN_ROOT": "E:/obsidian/Brain"
   },
   "autoMode": {
     "environment": [
@@ -33,19 +36,6 @@
       "**Trusted repo**: E:\\qonflo (the working directory) — no git remotes configured, so treat as local-only; visibility assumed private per shipped default",
       "**Org-specific CLIs**: None configured (project uses bd/beads for issue tracking, gh for PR review, and Atlassian/Figma MCP integrations per repo skill docs, but no org-specific CLI wrapper was corroborated)",
       "**routine under <user>/ prefix**: not applicable — no per-user path convention found"
-    ]
-  },
-  "hooks": {
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File E:/obsidian/Brain/scripts/claude-hook-retrieval.ps1",
-            "timeout": 15
-          }
-        ]
-      }
     ]
   }
 }

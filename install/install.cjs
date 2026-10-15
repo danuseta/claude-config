@@ -100,6 +100,7 @@ function renderString(s, secrets, fills, where) {
         ? `node "${configDir}/kit/${file}"${tail}`
         : `"${configDir}/kit/bin/kit-node" ${file}${tail}`;
     })
+    .replace(/\{\{python\}\}/g, OS === 'windows' ? 'python' : 'python3')
     .replace(/\{\{configDir\}\}/g, configDir)
     .replace(/\{\{home\}\}/g, home);
 }

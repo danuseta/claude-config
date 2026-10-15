@@ -64,5 +64,5 @@ for every node. Skip graph for trivial single-fact questions.
 - Untuk setiap task yang menghasilkan kerja atau keputusan, sebelum menjawab atau mengubah file: jalankan E:\Obsidian\Brain\scripts\brain-search.ps1 dengan keyword dari task, lalu baca 1-3 catatan wiki atau project yang relevan.
 - Sebelum respons final, antrekan catatan ke raw dengan parameter -NoIngest serta metadata Project, Topic, Title, Context, Point, dan Decision. Bentuk pemanggilannya ada di CLAUDE.md bagian "Simpan sebelum respons final" - pakai itu persis. Jangan lewat save-and-ingest.cmd atau powershell -File: keduanya membuang elemen kedua dan seterusnya dari -Point tanpa error.
 - Antre catatan itu per-task, bukan per-sesi. Tiap task yang selesai dan mengubah file atau menghasilkan keputusan dapat catatannya sendiri, walaupun sesi yang sama sudah pernah menyimpan sebelumnya. Hook Stop hanya jaring pengaman, bukan pemicu.
-- Watcher Obsidian Brain yang berjalan saat login akan mengambil raw dan menjalankan ingest otomatis. Jangan jalankan ingest_raw.py langsung dan jangan menulis ke raw/processed.
+- Ingest dijalankan server Brain. Jangan jalankan ingest_raw.py dan jangan menulis ke raw/processed.
 - Saat memakai konteks vault, gunakan wikilink Obsidian; nyatakan jika retrieval tidak menemukan konteks.
