@@ -150,4 +150,25 @@ function pruneFiles(stateDir, now) {
   }
 }
 
-module.exports = { fetchAttachments, attachmentNote, pruneFiles, safeName };
+const ATTACH_BYTES = 10 * 1024 * 1024;
+const ATTACH_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown', csv: 'text/csv', json: 'application/json', log: 'text/plain', html: 'text/html', zip: 'application/zip' };
+
+// A file the agent asked to send with a DOCK_ATTACH line: it must be a regular file inside cwd (after symlinks), small, and of a listed type.
+function resolveAttach(requested, cwd) {
+  try {
+    const root = fs.realpathSync(cwd);
+    const file = fs.realpathSync(path.resolve(root, String(requested)));
+    const rel = path.relative(root, file);
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return { error: 'outside the working folder' };
+    const ext = path.extname(file).slice(1).toLowerCase();
+    if (!ATTACH_TYPES[ext]) return { error: 'file type not allowed' };
+    const st = fs.statSync(file);
+    if (!st.isFile()) return { error: 'not a file' };
+    if (st.size > ATTACH_BYTES) return { error: 'larger than 10 MB' };
+    return { file, name: safeName(path.basename(file)), mime: ATTACH_TYPES[ext] };
+  } catch (e) {
+    return { error: e && e.code === 'ENOENT' ? 'not found' : 'not readable' };
+  }
+}
+
+module.exports = { fetchAttachments, attachmentNote, pruneFiles, safeName, resolveAttach, ATTACH_BYTES };

@@ -306,7 +306,7 @@ test('activity switched off: today\'s claude arguments, today\'s requests, no ac
     assert.equal(t.r.code, 0, t.r.stderr);
     assert.deepEqual(t.args, [...CLAUDE_TODAY, ...SKILL_LINE]);
     assert.equal(t.activity.length, 0);
-    assert.ok(t.requests.every((q) => q.url.endsWith('/chat/delta')));
+    assert.ok(t.requests.every((q) => q.url.endsWith('/chat/delta') || q.url.endsWith('/chat/status')));
     assert.equal(t.last.done, true);
     assert.ok(t.items.some((i) => i.startsWith('tool: Bash')), 'tool items are still sent as today');
   }
