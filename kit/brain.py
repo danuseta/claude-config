@@ -18,6 +18,16 @@ file bytes) or "workspace" (any other OS: save only adds a uniquely named file
 under raw/ and syncs it through git, no events log, no ingest). Override with
 --mode or BRAIN_MODE=local|workspace|hybrid|remote.
 
+Machine areas: every ingester writes only its own area, so two clones can each
+commit and push without conflicting. BRAIN_MACHINE names this machine (default
+"laptop" on Windows, "workspace" elsewhere; [a-z0-9-], not sources, concepts,
+entities, processed or quarantine). Local and workspace saves go to
+raw/<machine>/; ingest_raw.py moves them to raw/<machine>/processed/ and writes
+wiki/<machine>/, index-<machine>.md and log-<machine>.md. The older shared
+wiki/sources|concepts|entities, index.md and log.md are read-only legacy.
+retrieve, search and read cover legacy plus every machine area; local, hybrid
+and workspace modes pull first when the last pull is stale.
+
 "hybrid" reads the local vault and saves through the Brain API (a failed save
 is spooled and resent later); "remote" sends every operation to the Brain API.
 Endpoint: BRAIN_URL + BRAIN_TOKEN, else DOCK_INGEST_URL + DOCK_INGEST_TOKEN.
@@ -60,6 +70,9 @@ SEARCH_STOP_WORDS = [
     "the", "and", "for", "with", "from", "this", "that", "please", "can",
 ]
 TERM_RE = re.compile(r"[\w-]{3,}")  # [\p{L}\p{N}_-]{3,}
+MACHINE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
+WIKI_SECTIONS = ("sources", "concepts", "entities")
+RESERVED_MACHINES = WIKI_SECTIONS + ("processed", "quarantine")
 PULL_INTERVAL_SECONDS = 15 * 60
 HYBRID_PULL_INTERVAL_SECONDS = 5 * 60
 REMOTE_MODES = ("remote", "hybrid")
@@ -178,14 +191,48 @@ def write_event(root, mode, kind, detail="", ms=0):
         pass
 
 
+def is_machine_name(name):
+    return bool(MACHINE_RE.match(name or "")) and name not in RESERVED_MACHINES
+
+
+def machine_name(value=None):
+    """The ingest area of this machine: BRAIN_MACHINE, else laptop on Windows and workspace elsewhere."""
+    name = (os.environ.get("BRAIN_MACHINE", "") if value is None else value).strip().lower()
+    if not name:
+        return "laptop" if IS_WINDOWS else "workspace"
+    if not is_machine_name(name):
+        raise ValueError("BRAIN_MACHINE must match [a-z0-9][a-z0-9-]{0,31} and not be one of %s"
+                         % ", ".join(RESERVED_MACHINES))
+    return name
+
+
+def machine_areas(root):
+    """Machines with an ingest area in this vault: wiki/<machine>/ folders and index-<machine>.md files."""
+    names = set()
+    try:
+        for name in os.listdir(os.path.join(root, "wiki")):
+            if is_machine_name(name) and os.path.isdir(os.path.join(root, "wiki", name)):
+                names.add(name)
+    except OSError:
+        pass
+    try:
+        for name in os.listdir(root):
+            match = re.match(r"^index-(.+)\.md$", name)
+            if match and is_machine_name(match.group(1)):
+                names.add(match.group(1))
+    except OSError:
+        pass
+    return sorted(names)
+
+
 def search_paths(root):
-    candidates = [
-        os.path.join(root, "index.md"),
-        os.path.join(root, "wiki", "sources"),
-        os.path.join(root, "wiki", "concepts"),
-        os.path.join(root, "wiki", "entities"),
-        os.path.join(root, "projects"),
-    ]
+    """Legacy shared pages first, then every machine area, then projects/."""
+    candidates = [os.path.join(root, "index.md")]
+    candidates += [os.path.join(root, "wiki", section) for section in WIKI_SECTIONS]
+    for machine in machine_areas(root):
+        candidates.append(os.path.join(root, "index-%s.md" % machine))
+        candidates += [os.path.join(root, "wiki", machine, section) for section in WIKI_SECTIONS]
+    candidates.append(os.path.join(root, "projects"))
     return [p for p in candidates if os.path.exists(p)]
 
 
@@ -231,8 +278,9 @@ def git(root, *git_args, **kwargs):
 
 def pull_if_stale(root, mode, enabled=True):
     """Workspace: git pull --ff-only when the last pull is older than 15 minutes.
-    Hybrid: a detached pull when it is older than 5 minutes; never waits for git."""
-    if mode not in ("workspace", "hybrid") or not enabled:
+    Hybrid and local: a detached pull when it is older than 5 minutes; never waits for git.
+    Local pulls so the laptop sees the areas other machines ingest; it is a no-op without .git."""
+    if mode not in ("workspace", "hybrid", "local") or not enabled:
         return
     if os.environ.get("BRAIN_PULL", "").strip().lower() == "off":
         return
@@ -240,13 +288,14 @@ def pull_if_stale(root, mode, enabled=True):
     if not os.path.isdir(git_dir):
         return
     stamp = os.path.join(git_dir, "brain-last-pull")
-    interval = HYBRID_PULL_INTERVAL_SECONDS if mode == "hybrid" else PULL_INTERVAL_SECONDS
+    detached = mode in ("hybrid", "local")
+    interval = HYBRID_PULL_INTERVAL_SECONDS if detached else PULL_INTERVAL_SECONDS
     try:
         if time.time() - os.path.getmtime(stamp) < interval:
             return
     except OSError:
         pass
-    if mode == "hybrid":
+    if detached:
         try:
             with open(stamp, "w") as handle:
                 handle.write(str(int(time.time())))
@@ -838,6 +887,7 @@ def cmd_search(args):
         if args.query.strip() == "":
             return 0
         return run_remote("search", {"query": args.query[:200], "limit": args.limit}, render_search)
+    pull_if_stale(root, resolve_mode(args))
     paths = search_paths(root)
     if not paths:
         err("Vault search paths are unavailable under %s" % root)
@@ -881,17 +931,18 @@ def blank(value):
     return value is None or value.strip() == ""
 
 
-def run_git_sync(root, rel_path, retries=3):
-    """Workspace save: commit only the new file, then pull --rebase and push (max 3 tries)."""
-    steps = [("add", ["add", "--", rel_path]),
-             ("commit", ["commit", "-m", "brain(ws): %s" % os.path.basename(rel_path), "--", rel_path])]
+def run_git_sync(root, rel_paths, message, retries=3, autostash=False):
+    """Commit only rel_paths, then pull --rebase and push (max 3 tries). Other changes in the
+    working tree are never committed; autostash lets the rebase run over them."""
+    steps = [("add", ["add", "-A", "--"] + list(rel_paths)),
+             ("commit", ["commit", "-m", message, "--"] + list(rel_paths))]
     for name, git_args in steps:
         result = git(root, *git_args)
         if result.returncode != 0:
             return False, "git %s failed: %s" % (name, result.stderr.decode("utf-8", "replace").strip())
     last = ""
     for _ in range(retries):
-        pulled = git(root, "pull", "--rebase")
+        pulled = git(root, "pull", "--rebase", *(["--autostash"] if autostash else []))
         if pulled.returncode != 0:
             last = "git pull --rebase failed: " + pulled.stderr.decode("utf-8", "replace").strip()
             git(root, "rebase", "--abort")
@@ -958,7 +1009,12 @@ def cmd_save(args):
     root, mode = resolve_root(args), resolve_mode(args)
     if mode in REMOTE_MODES:
         return save_remote(args, root, mode)
-    raw_dir = os.path.join(root, "raw")
+    try:
+        machine = machine_name()
+    except ValueError as exc:
+        err(str(exc))
+        return 2
+    raw_dir = os.path.join(root, "raw", machine)
     project, topic = args.project, args.topic
     context = args.context if args.context is not None else (
         args.body if args.body is not None else "Manual save created with save_and_ingest.")
@@ -1018,11 +1074,12 @@ def cmd_save(args):
     if workspace:
         if args.no_sync or not os.path.isdir(os.path.join(root, ".git")):
             return 0
-        ok, message = run_git_sync(root, "raw/" + os.path.basename(target))
+        rel = "raw/%s/%s" % (machine, os.path.basename(target))
+        ok, message = run_git_sync(root, [rel], "brain(ws): %s" % os.path.basename(target))
         if not ok:
             err(message)
             return 1
-        out("Synced to remote: raw/%s" % os.path.basename(target))
+        out("Synced to remote: %s" % rel)
         return 0
 
     if not args.no_ingest:
@@ -1030,7 +1087,7 @@ def cmd_save(args):
         if not os.path.exists(ingest):
             ingest = os.path.join(SCRIPT_DIR, "ingest_raw.py")
         sys.stdout.flush()
-        subprocess.run([sys.executable, ingest])
+        subprocess.run([sys.executable, ingest, "--push"])
     return 0
 
 
@@ -1203,7 +1260,7 @@ def cmd_hook_autosave(args):
             if spool_names():
                 flush_spool("hook")
         else:
-            for dirpath, _dirs, files in os.walk(raw_dir):
+            for dirpath, _dirs, files in os.walk(os.path.join(raw_dir, machine_name())):
                 for name in files:
                     if not name.lower().endswith(".md"):
                         continue
@@ -1279,10 +1336,10 @@ def cmd_status(args):
         if os.path.exists(cmd):
             sys.stdout.flush()
             return subprocess.run(["cmd", "/c", cmd]).returncode
-    raw_dir = os.path.join(root, "raw")
     try:
+        raw_dir = os.path.join(root, "raw", machine_name())
         queued = [n for n in os.listdir(raw_dir) if n.endswith(".md") and os.path.isfile(os.path.join(raw_dir, n))]
-    except OSError:
+    except (OSError, ValueError):
         queued = []
     out("Mode: %s (ingest dan watcher hanya jalan di laptop)" % mode)
     out("Queued raw notes: %d" % len(queued))
@@ -1303,6 +1360,7 @@ def cmd_read(args):
     root, mode = resolve_root(args), resolve_mode(args)
     if mode == "remote":
         return run_remote("read", {"path": args.path, "offset": args.offset, "limit": args.limit}, render_read)
+    pull_if_stale(root, mode)
     try:
         result = local_read(root, args.path, args.offset, args.limit)
     except OSError:

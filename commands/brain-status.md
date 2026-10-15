@@ -1,5 +1,5 @@
 ---
-description: Status server Brain, antrean ingest, sinkron git, dan spool
+description: Status Brain di mesin ini: antrean ingest, sinkron git, dan spool
 allowed-tools: Bash(python3 ~/.claude/kit/brain.py status:*), Bash(E:/obsidian/Brain/scripts/watcher-status.cmd), Read
 ---
 
@@ -7,8 +7,8 @@ allowed-tools: Bash(python3 ~/.claude/kit/brain.py status:*), Bash(E:/obsidian/B
 
 Ringkas dalam 3-5 baris:
 
-- Antrean server: berapa catatan raw menunggu ingest di server Brain.
+- Antrean: berapa catatan raw menunggu ingest. Laptop: `raw/laptop/` (watcher). Workspace: antrean server Brain.
 - Status ingest: sedang jalan atau tidak, dan kapan ingest terakhir selesai.
-- Sinkron git: commit dan push terakhir vault di server; di laptop `hybrid` juga umur pull terakhir.
+- Sinkron git: commit dan push terakhir vault; di laptop juga umur pull terakhir.
 - Spool: berapa catatan di mesin ini yang belum terkirim. Kalau > 0, sarankan `brain.py flush` setelah server terjangkau.
-- Kalau perintah di atas gagal menjangkau server, laporkan pesannya persis. Laptop yang belum pindah ke `hybrid` masih mencetak status watcher lama; laporkan apa adanya.
+- Kalau perintah di atas gagal menjangkau server, laporkan pesannya persis.

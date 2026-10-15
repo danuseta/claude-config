@@ -6,8 +6,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
-const SOURCE_COMMIT = '1d598d1';
-const RECORDED_SHA256 = 'adfef6df430f32bb83618b087b84f846195ae3a35fdcc3e57cfd6cca8980ab05';
+const SOURCE_COMMIT = 'e91cf9c';
+const RECORDED_SHA256 = '51c06a67961618d128da4d7072543873149eaa04519db92f98866ad854a58d1d';
 const COPY = path.join(__dirname, '..', 'brain.py');
 const VAULT_SOURCE = 'E:/obsidian/Brain/scripts/brain.py';
 const PYTHON = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');

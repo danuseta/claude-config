@@ -48,7 +48,9 @@ Installer menaruh bagian umum di depan, jadi urutan `CLAUDE.md` Windows berubah:
 
 ## Klien Brain di kit
 
-`kit/brain.py` adalah salinan byte-identik `scripts/brain.py` dari repo `danuseta/brain`. Workspace tidak punya vault, jadi klien dikirim lewat kit. Hook retrieval (`UserPromptSubmit`) dan autosave (`Stop`) di `settings.base.json` memanggil salinan ini di dua OS; macro `{{python}}` menjadi `python` di Windows dan `python3` di Linux. Mode diatur overlay: Windows `BRAIN_MODE=hybrid` dengan `BRAIN_ROOT=E:/obsidian/Brain`, Linux `BRAIN_MODE=remote`.
+`kit/brain.py` adalah salinan byte-identik `scripts/brain.py` dari repo `danuseta/brain`. Workspace tidak punya vault, jadi klien dikirim lewat kit. Hook retrieval (`UserPromptSubmit`) dan autosave (`Stop`) di `settings.base.json` memanggil salinan ini di dua OS; macro `{{python}}` menjadi `python` di Windows dan `python3` di Linux. Mode diatur overlay: Windows `BRAIN_MODE=local` dengan `BRAIN_MACHINE=laptop` dan `BRAIN_ROOT=E:/obsidian/Brain`, Linux `BRAIN_MODE=remote`.
+
+Tiap mesin meng-ingest areanya sendiri. Laptop menyimpan ke `raw/laptop/`, watcher `watch_raw.ps1` meng-ingest ke `wiki/laptop/`, `index-laptop.md`, `log-laptop.md`, lalu commit area itu, `pull --rebase`, dan push. Workspace tidak punya vault: catatannya dikirim ke server Brain di VPS, yang meng-ingest ke `wiki/workspace/` dan mendorongnya lewat sync git server. `wiki/sources|concepts|entities`, `index.md` dan `log.md` lama hanya dibaca. Retrieve, search dan read membaca legacy plus semua area mesin. Laptop jangan memakai `hybrid`: di mode itu catatan laptop dikirim ke server dan ikut masuk area `workspace`.
 
 `kit/tests/brain-copy.test.cjs` gagal kalau salinan bergeser dari hash yang dicatat, atau dari `E:/obsidian/Brain/scripts/brain.py` kalau vault ada di mesin itu. Cara memperbarui setelah `brain.py` berubah di repo vault:
 

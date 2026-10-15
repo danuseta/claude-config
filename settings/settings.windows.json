@@ -5,7 +5,8 @@
   },
   "env": {
     "TYPESAFE_API_KEY": "{{secret:TYPESAFE_API_KEY}}",
-    "BRAIN_MODE": "hybrid",
+    "BRAIN_MODE": "local",
+    "BRAIN_MACHINE": "laptop",
     "BRAIN_ROOT": "E:/obsidian/Brain"
   },
   "autoMode": {
