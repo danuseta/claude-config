@@ -47,6 +47,22 @@ function machineDefaults(opts = {}, env = process.env) {
   };
 }
 
+// "Opus" alone does not say which Opus. Claude Code names the version in resolvedModel ("claude-opus-5-5") or at the
+// head of the description ("Opus 5.5 · Best for ..."), so a label without a digit gets it from there.
+const modelVersion = (m) => {
+  const id = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?!\d)/.exec(typeof m.resolvedModel === 'string' ? m.resolvedModel : '');
+  if (id) return `${id[1][0].toUpperCase()}${id[1].slice(1)} ${id[2]}${id[3] ? `.${id[3]}` : ''}`;
+  const head = typeof m.description === 'string' ? m.description.split(' · ')[0].trim() : '';
+  return head !== m.description && /^[A-Za-z]+ \d+(\.\d+)?$/.test(head) ? head : '';
+};
+
+const modelLabel = (m) => {
+  const name = typeof m.displayName === 'string' && m.displayName.trim() ? m.displayName.trim() : m.value;
+  const version = /\d/.test(name) ? '' : modelVersion(m);
+  if (!version) return name;
+  return version.toLowerCase().startsWith(name.toLowerCase()) ? version : `${name} · ${version}`;
+};
+
 function compactCatalog(initializeResponse, terminalCommands, { extra = [], defaults = null } = {}) {
   const raw = initializeResponse && typeof initializeResponse === 'object' ? initializeResponse : {};
   const hidden = new Set([...OPTIONS_BAR_COMMANDS, ...(Array.isArray(terminalCommands) ? terminalCommands.map(String) : [])]);
@@ -64,7 +80,7 @@ function compactCatalog(initializeResponse, terminalCommands, { extra = [], defa
   for (const m of Array.isArray(raw.models) ? raw.models : []) {
     if (!m || !serverKeeps(m.value, VALUE_MAX, extra)) continue;
     const efforts = Array.isArray(m.supportedEffortLevels) ? m.supportedEffortLevels.filter((e) => serverKeeps(e, EFFORT_MAX, extra)).slice(0, EFFORTS_MAX) : [];
-    models.push({ value: m.value, label: clean(typeof m.displayName === 'string' && m.displayName ? m.displayName : m.value, LABEL_MAX, extra), efforts, fast: m.supportsFastMode === true });
+    models.push({ value: m.value, label: clean(modelLabel(m), LABEL_MAX, extra), efforts, fast: m.supportsFastMode === true });
   }
   models.length = Math.min(models.length, MAX_MODELS);
   const fast = {
