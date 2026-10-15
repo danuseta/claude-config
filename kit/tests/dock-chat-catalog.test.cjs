@@ -46,6 +46,18 @@ test('compactCatalog copies only the listed fields and drops terminal-only and o
   for (const leak of ['owner@example.com', 'dock_ing_should', 'C:/secret', 'explore', '2.1.296', 'long text']) assert.ok(!json.includes(leak), leak);
 });
 
+test('a model label without a version gets it from resolvedModel or the description', () => {
+  const labels = catalog.compactCatalog({ models: [
+    { value: 'default', displayName: 'Default (recommended)', resolvedModel: 'claude-opus-5-5', description: 'Opus 5.5 · Best for everyday, complex tasks' },
+    { value: 'opus', displayName: 'Opus', resolvedModel: 'claude-opus-5-5' },
+    { value: 'sonnet', displayName: 'Sonnet 5.5', resolvedModel: 'claude-sonnet-5-5' },
+    { value: 'haiku', displayName: 'Haiku', resolvedModel: 'claude-haiku-4-5-20251001' },
+    { value: 'fable', displayName: 'Fable', description: 'Fable 5.1 · For your toughest challenges' },
+    { value: 'old', displayName: 'Old', description: 'Fast and cheap' },
+  ] }, []).models.map((m) => m.label);
+  assert.deepEqual(labels, ['Default (recommended) · Opus 5.5', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 4.5', 'Fable 5.1', 'Old']);
+});
+
 test('compactCatalog masks secrets before cutting and caps field lengths', () => {
   const c = catalog.compactCatalog(INIT, []);
   const deploy = c.commands.find((x) => x.name === 'deploy');
