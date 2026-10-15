@@ -16,7 +16,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
-const { maskString, config, send, sendFile, toolLine, cut } = require("./dock-push.cjs");
+const { maskString, config, send, sendFile, toolLine, cut, pushLedgersChangedSince } = require("./dock-push.cjs");
 const activityLib = require("./activity.cjs");
 const interact = require("./dock-chat-interact.cjs");
 const session = require("./dock-chat-session.cjs");
@@ -25,6 +25,7 @@ const { pruneFiles, resolveAttach, ATTACH_BYTES } = require("./dock-chat-files.c
 const guardLib = require("./guard.cjs");
 const procLib = require("./dock-chat-proc.cjs");
 const preflight = require("./dock-chat-preflight.cjs");
+const outbox = require("./dock-chat-outbox.cjs");
 const PATHS = require("./paths.cjs").resolvePaths();
 
 const STATE_DIR = process.env.DOCK_KIT_STATE_DIR || __dirname;
@@ -65,7 +66,7 @@ function timing(askTtlSeconds, env = process.env) {
 	const num = (v, d) => (Number.isFinite(v) && v >= 0 ? v : d);
 	return {
 		askTtlMs: num(t.askTtlMs, askTtlSeconds * 1000), waitBudgetMs: num(t.waitBudgetMs, 30 * 60 * 1000), waitSeconds: num(t.waitSeconds, 25), waitGapMs: num(t.waitGapMs, 1000),
-		interruptGraceMs: num(t.interruptGraceMs, 10000), closeGraceMs: num(t.closeGraceMs, 5000), exitGraceMs: num(t.exitGraceMs, 10000), drainMs: num(t.drainMs, 1500),
+		interruptGraceMs: num(t.interruptGraceMs, 10000), closeGraceMs: num(t.closeGraceMs, 5000), exitGraceMs: num(t.exitGraceMs, 10000), drainMs: num(t.drainMs, 1500), outageMs: num(t.outageMs, 30 * 60 * 1000),
 	};
 }
 
@@ -351,16 +352,31 @@ function limitsOf(event) {
 }
 
 // Sends the files a turn collected. A 404 means an older DOCK without /chat/upload: uploads stay off for the life of this process.
+// Resolves the files that could not be delivered because DOCK was unreachable (network error, 5xx, 401); a refused file is dropped.
 async function uploadFiles(msg, files) {
+	const left = [];
 	for (const f of files) {
-		if (bridgeMemo.uploadOff) return;
+		if (bridgeMemo.uploadOff) return [];
 		try {
 			const r = await sendFile("/chat/upload", { sessionId: msg.sessionId, replyTo: msg.id, name: f.name }, f.bytes, f.mime, UPLOAD_TIMEOUT_MS);
 			if (r.skipped || r.status === 200) continue;
-			if (r.status === 404) { bridgeMemo.uploadOff = true; log("DOCK has no /chat/upload route (older server); files from the agent are skipped"); return; }
+			if (r.status === 404) { bridgeMemo.uploadOff = true; log("DOCK has no /chat/upload route (older server); files from the agent are skipped"); return []; }
 			log(`upload refused: ${r.status}${r.error ? " " + r.error : ""}`);
-		} catch (e) { log(`upload failed: ${e.message}`); }
+			if (r.status >= 500 || r.status === 401) left.push(f);
+		} catch (e) { log(`upload failed: ${e.message}`); left.push(f); }
 	}
+	return left;
+}
+
+// One delta with its files, delivered the way the main loop resends the outbox: files first when it is the final one.
+async function deliverEntry({ msg, body, files }, retryBaseMs) {
+	const done = Boolean(body && body.done);
+	let left = files;
+	if (done) left = await uploadFiles(msg, left);
+	if (left.length && done) return false;
+	if (body && !(await sendDelta(body, retryBaseMs, 1))) return false;
+	if (!done) left = await uploadFiles(msg, left);
+	return left.length === 0;
 }
 
 const tokensOf = (u) => (u && typeof u === "object" ? [u.input_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens].reduce((n, v) => n + (Number.isFinite(v) ? v : 0), 0) : 0);
@@ -386,13 +402,33 @@ function statusOf(msg, result, state) {
 	return body;
 }
 
-function turnCore(msg, cfg, opts, onAbort) {
+// A turn is never killed because DOCK cannot be reached. Deltas wait in order and are retried; once the turn has ended, the retrying
+// lasts timing.outageMs, and what is still undelivered then goes to the outbox, which the main loop resends.
+function turnCore(msg, cfg, opts) {
 	const mask = (s) => maskString(String(s), { masked: 0, blobs: 0 }, cfg.extra);
 	const out = (text) => cut(mask(text));
-	const state = { claudeSessionId: interact.uuidOf(msg.claudeSessionId), pending: [], detail: null, lastSent: 0, aborted: false, model: null, usage: null, uploads: [], seen: new Set(), images: 0, queued: 0, statusLogged: false };
+	const state = { claudeSessionId: interact.uuidOf(msg.claudeSessionId), pending: [], detail: null, lastSent: 0, finalAt: 0, parked: false, model: null, usage: null, uploads: [], seen: new Set(), images: 0, queued: 0, statusLogged: false };
 	let chain = Promise.resolve();
 	let timer = null, child, result = null, act = null;
 
+	const park = (job) => {
+		state.parked = true;
+		try { outbox.add(STATE_DIR, { msg: { sessionId: msg.sessionId, id: msg.id }, ...job }, { log }); log(`DOCK unreachable: the delta for message ${msg.id} was written to the outbox`); }
+		catch (e) { log(`outbox write failed for message ${msg.id}: ${e.message}`); }
+	};
+	const deliver = async (job) => {
+		if (state.parked) return park({ body: job.body, files: job.files });
+		let left = job.files, sent = false;
+		for (;;) {
+			if (job.body.done) left = await uploadFiles(msg, left);
+			if (!sent && (!job.body.done || !left.length)) sent = await sendDelta(job.body, opts.retryBaseMs, job.once ? 1 : undefined);
+			if (sent && !job.body.done) left = await uploadFiles(msg, left);
+			if (sent && !left.length) return;
+			if (job.once) return log(`delta for message ${msg.id} not delivered`);
+			if (state.finalAt && Date.now() - state.finalAt > opts.timing.outageMs) return park({ body: sent ? null : job.body, files: left });
+			await sleep(opts.retryBaseMs);
+		}
+	};
 	const post = (extra, attempts) => {
 		const items = state.pending; state.pending = [];
 		const files = state.uploads; state.uploads = [];
@@ -400,16 +436,12 @@ function turnCore(msg, cfg, opts, onAbort) {
 		if (state.claudeSessionId) body.claudeSessionId = state.claudeSessionId;
 		if (state.detail) body.detail = state.detail;
 		state.lastSent = Date.now();
-		chain = chain.then(async () => {
-			if (state.aborted) return;
-			if (extra && extra.done) await uploadFiles(msg, files);
-			if (!(await sendDelta(body, opts.retryBaseMs, attempts))) { state.aborted = true; log(`dropping turn for message ${msg.id}: DOCK unreachable`); onAbort(child); return; }
-			if (!(extra && extra.done)) await uploadFiles(msg, files);
-		});
+		if (extra && (extra.done || extra.error)) state.finalAt = Date.now();
+		chain = chain.then(() => deliver({ body, files, once: attempts === 1 })).catch((e) => log(`delta handling failed: ${e.message}`));
 		return chain;
 	};
 	const schedule = () => {
-		if (timer || state.aborted) return;
+		if (timer) return;
 		const wait = Math.max(0, state.lastSent + DELTA_INTERVAL_MS - Date.now());
 		timer = setTimeout(() => { timer = null; if (state.pending.length || state.detail || state.uploads.length) post({ done: false, error: null }); }, wait);
 	};
@@ -558,7 +590,7 @@ async function precheckWait(msg, caps, gapMs) {
 async function runTurn(msg, cfg, opts) {
 	const missing = process.env.DOCK_CHAT_PREFLIGHT === "off" ? [] : preflight.problems(childEnv(opts));
 	if (missing.length) {
-		const core = turnCore(msg, cfg, opts, () => {});
+		const core = turnCore(msg, cfg, opts);
 		log(`turn refused: ${missing.join("; ")}`);
 		await core.post({ done: false, error: core.out(`This machine is not ready for a chat turn: ${missing.join("; ")}`) });
 		return;
@@ -587,7 +619,7 @@ let sharedAllow = null;
 const allowStore = () => sharedAllow || (sharedAllow = interact.createAllowStore(ALLOW_FILE, { log }));
 
 async function runInteractive(msg, cfg, opts, claude, flags) {
-	const core = turnCore(msg, cfg, opts, (c) => killTree(c));
+	const core = turnCore(msg, cfg, opts);
 	const act = opts.activity.enabled && Date.now() >= activityMemo.silencedUntil ? startActivity(msg, core.mask, opts) : null;
 	core.setActivity(act);
 	const store = allowStore();
@@ -616,7 +648,7 @@ async function runInteractive(msg, cfg, opts, claude, flags) {
 
 async function runLegacy(msg, cfg, opts, claude) {
 	let child;
-	const core = turnCore(msg, cfg, opts, (c) => killTree(c));
+	const core = turnCore(msg, cfg, opts);
 	const { mask, out, state } = core;
 
 	if (!claude) {
@@ -706,6 +738,12 @@ async function runLegacy(msg, cfg, opts, claude) {
 	await core.chain();
 }
 
+// The claude process of a turn has no DOCK credentials, so its ledger writes (status.cjs) are pushed from here once the turn is over.
+// Fire and forget: bounded by pushLedgersChangedSince, never throws, one log line per turn when something failed.
+function pushLedgers(since) {
+	pushLedgersChangedSince(since).then((r) => { if (r.error) log(`ledger push after the turn: ${r.error}`); }, (e) => log(`ledger push after the turn: ${e.message}`));
+}
+
 async function claimOne(wait, caps) {
 	const body = { wait };
 	if (caps && Array.isArray(caps.features) && caps.features.length) body.caps = caps;
@@ -742,7 +780,8 @@ async function main(cmd, args) {
 	const pool = createTurnPool(opts.parallelTurns);
 	const handle = async (message) => {
 		activeTurns++;
-		try { await runTurn(message, config() || cfg, opts); } finally { activeTurns--; }
+		const began = Date.now();
+		try { await runTurn(message, config() || cfg, opts); } finally { activeTurns--; pushLedgers(began); }
 		log(`message ${safeId(message.id)} finished`);
 	};
 	log(`bridge ${cmd}: ${cfg.url}`);
@@ -750,6 +789,7 @@ async function main(cmd, args) {
 	for (;;) {
 		try {
 			await pool.slot();
+			await outbox.flush(STATE_DIR, (entry) => deliverEntry(entry, opts.retryBaseMs), log);
 			const claude = resolveClaude(opts.claudeBin);
 			const flags = claude && opts.interactive ? await supportedFlags(claude, opts) : null;
 			if (flags) await ensureCatalog(claude, opts, flags);

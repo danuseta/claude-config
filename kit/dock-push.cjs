@@ -385,6 +385,26 @@ function detached(args) {
 function pushStatusDetached(key) {
 	try { if (config()) detached(["status", key]); } catch {}
 }
+// Pushes every ledger written since `sinceMs`, the way `status KEY` does. For the chat bridge, whose turns run claude without DOCK credentials.
+// Never throws; resolves { pushed, failed, error } and gives up after `budgetMs`.
+async function pushLedgersChangedSince(sinceMs, budgetMs = 20000) {
+	const out = { pushed: [], failed: [], error: null };
+	if (!config()) return out;
+	const stop = new AbortController();
+	const timer = setTimeout(() => stop.abort(), budgetMs);
+	try {
+		for (const key of ledgerKeys()) {
+			if (stop.signal.aborted) { out.error = out.error || "time budget used up"; break; }
+			try {
+				if (fs.statSync(ledgerFile(key)).mtimeMs < sinceMs - 1000) continue;
+				const r = await send("", readLedger(key), 8000, stop.signal);
+				if (r.skipped || (r.status >= 200 && r.status < 300)) out.pushed.push(key);
+				else { out.failed.push(key); out.error = out.error || `${key}: ${r.status}`; }
+			} catch (e) { out.failed.push(key); out.error = out.error || `${key}: ${e.message}`; }
+		}
+	} catch (e) { out.error = e.message; } finally { clearTimeout(timer); }
+	return out;
+}
 // ---------- ledger hand-over: the four /ledger/* routes, used by status.cjs ----------
 const LEDGER_ROUTES = ["list", "get", "handover", "accept"];
 function ledger(route, body, timeoutMs) {
@@ -480,7 +500,7 @@ async function syncSessions(args, cfg) {
 	console.log(`sessions: ${sent} sent, ${skipped} unchanged or skipped, ${failed} failed`);
 }
 
-module.exports = { pushStatusDetached, maskString, config, send, sendBinary, sendFile, toolLine, cut, ledger };
+module.exports = { pushStatusDetached, pushLedgersChangedSince, maskString, config, send, sendBinary, sendFile, toolLine, cut, ledger };
 
 if (require.main === module) {
 	const [cmd, ...args] = process.argv.slice(2);
