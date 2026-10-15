@@ -568,3 +568,35 @@ setTimeout(() => {
     }
   }
 });
+
+test('bridge run: the one-shot path uses the permission mode the message asks for, else the configured one', async () => {
+  for (const [options, configured, expected] of [[{ permissionMode: 'auto' }, null, 'auto'], [{ permissionMode: 'bogus' }, 'acceptEdits', 'acceptEdits'], [undefined, null, null]]) {
+    const dir = tmp('chat-legacy-mode');
+    let dock, bridge;
+    try {
+      fs.writeFileSync(path.join(dir, 'args-claude.cjs'), `
+const fs = require('fs'), path = require('path');
+if (process.argv.includes('--help')) process.exit(0);
+fs.writeFileSync(path.join(${JSON.stringify(dir)}, 'args.json'), JSON.stringify(process.argv.slice(2)));
+console.log(JSON.stringify({ type: 'result', session_id: 's-1', is_error: false }));
+`);
+      fs.writeFileSync(path.join(dir, 'dock-chat.json'), JSON.stringify({ claudeBin: path.join(dir, 'args-claude.cjs'), cwd: dir, turnTimeoutMs: 20000, retryBaseMs: 50, permissionMode: configured, interactive: false, activity: false }));
+      let sent = false;
+      dock = await startServer((req) => {
+        if (!req.url.endsWith('/chat/claim')) return null;
+        const message = sent ? null : { id: 1, sessionId: 'dock-mode-1', text: 'hello', options };
+        sent = true;
+        return { json: { ok: true, result: { message } } };
+      });
+      bridge = spawn(process.execPath, [path.join(KIT, 'dock-chat.cjs'), 'run'], { env: { ...process.env, ...sandboxEnv(dir), DOCK_CHAT_CONFIG: path.join(dir, 'dock-chat.json'), DOCK_INGEST_URL: `${dock.url}/ingest/orchestrator`, DOCK_INGEST_TOKEN: 'dock_ing_test', DOCK_CHAT_TUNING: JSON.stringify({ waitGapMs: 0 }) }, cwd: KIT, stdio: 'ignore', windowsHide: true });
+      assert.ok(await waitFor(() => fs.existsSync(path.join(dir, 'args.json')), 15000), 'claude ran');
+      const args = JSON.parse(fs.readFileSync(path.join(dir, 'args.json'), 'utf8'));
+      const at = args.indexOf('--permission-mode');
+      assert.equal(at === -1 ? null : args[at + 1], expected, JSON.stringify(args));
+    } finally {
+      if (bridge) bridge.kill('SIGKILL');
+      if (dock) await dock.close();
+      rmrf(dir);
+    }
+  }
+});
