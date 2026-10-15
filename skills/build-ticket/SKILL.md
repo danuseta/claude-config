@@ -93,23 +93,22 @@ Unit tests do not catch an unreadable button.
 
 ## 9. Ship
 
-Commit, push, give the compare link. Nothing else.
-
-In a DOCK chat turn (`DOCK_CHAT_TURN=1`: the orchestrator cron or the owner chatting from DOCK) nobody is at the terminal to open the pull request, so open it yourself and then stop. The base is `develop` unless the start prompt names another one (a V1 Playbook ticket, epic QRD-1232, goes to `feat/V1-Playbook`):
+Commit on the ticket branch. Do not push and do not open a pull request: the owner asks for both when the work is OK, and names the base branch then.
 
 ```
-rtk gh pr create --base <base> --head <work branch> --fill
-node "<kitDir>/status.cjs" set <KEY> stage=pr waiting="PR open: waiting for the owner's review"
+node "<kitDir>/status.cjs" set <KEY> stage=commit waiting="Ready for review: waiting for the owner"
 ```
 
-Set the stage and the waiting text in that one command, after the pull request exists. Then end the turn. The owner will ask in the chat whether the work follows the ticket and the contract and, for UI work, whether it was checked in a browser. Answer from the ledger and the evidence. Make the demo video (`demo-video` skill) only after the owner approves in that chat, never before.
+Then end the turn with the branch name, the last commit, the `Contract:` line from `rules/ticket-contract.md`, and the decisions taken without the owner. The owner will ask whether the work follows the ticket and the contract and, for UI work, whether it was checked in a browser. Answer from the ledger and the evidence.
+
+When the owner asks for the pull request, push and open it against the base the owner names, put the `Contract:` line and the decisions in its body. The ledger moves to `stage=pr` on its own once the pull request exists. Make the demo video (`demo-video` skill) only after the owner approves, never before.
 
 ### DOCK turns: one ticket, no asking on a ticket with acceptance criteria
 
 - A DOCK session works on this ticket only. A request about another ticket belongs in its own DOCK session; say so instead of starting it here.
 - When the ticket has acceptance criteria, do not stop to ask. On an ambiguity, take the reading closest to the AC, record it with `status.cjs decide <KEY> "<what and why>"`, and go on.
-- Stop and ask only when you cannot go on without the owner: missing access or token, the environment is down, a prerequisite ticket is not done. Say which. A question you still have may go with the PR message instead.
-- After the pull request exists, append a section "Decisions taken without the owner" to its body (`rtk gh pr edit <n> --body-file <file>`, the file being the current body plus the section), one line per `decide` entry. Repeat the same list in your last chat message.
+- Stop and ask only when you cannot go on without the owner: missing access or token, the environment is down, a prerequisite ticket is not done. Say which. A question you still have goes in your last chat message instead.
+- List the decisions taken without the owner in your last chat message, one line per `decide` entry. When the owner later asks for the pull request, the same list goes in its body as a section "Decisions taken without the owner".
 
 ## 10. Queue the note
 
@@ -121,4 +120,6 @@ Until `<kitDir>/brain.py` exists, run the same `save` subcommand on the `brain.p
 
 ## Never
 
-Do not draft a PR description. The exceptions are the `Contract:` line and quotes that `rules/ticket-contract.md` requires, and the "Decisions taken without the owner" section a DOCK turn appends (section 9).
+Do not draft a PR description. The exceptions are the `Contract:` line and quotes that `rules/ticket-contract.md` requires, and the "Decisions taken without the owner" section (section 9).
+
+Do not push or open a pull request until the owner asks for it.
