@@ -630,7 +630,7 @@ async function main(cmd, args) {
 	if (cmd === "check") {
 		const cfg = config(), s = settings(), c = resolveClaude(s.claudeBin);
 		console.log(cfg ? `url: ${cfg.url}\ntoken: set` : "dock: not configured (set DOCK_INGEST_URL and DOCK_INGEST_TOKEN, or write dock.json)");
-		console.log(`claude: ${c ? [c.cmd, ...c.prefix].join(" ") : "NOT FOUND (" + s.claudeBin + ")"}\ncwd: ${s.cwd}\nconfigDir: ${s.configDir || "(unset: Claude Code default)"}\nkeepAwake: ${s.keepAwake.mechanism}${s.keepAwake.mechanism === "server" ? " (not configured: DOCK-side keep-awake has no client part)" : ""}\npermissionMode: ${s.permissionMode || "(user settings)"}\nmaxTurns: ${s.maxTurns || "(none)"}\nparallelTurns: ${s.parallelTurns}\nextraArgs:${s.extraArgs.join(" ") || "(none)"}`);
+		console.log(`claude: ${c ? [c.cmd, ...c.prefix].join(" ") : "NOT FOUND (" + s.claudeBin + ")"}\ncwd: ${s.cwd}\nconfigDir: ${s.configDir || "(unset: Claude Code default)"}\nkeepAwake: ${s.keepAwake.mechanism}${s.keepAwake.mechanism === "server" ? " (not configured: DOCK-side keep-awake has no client part)" : ""}\npermissionMode: ${s.permissionMode || "(user settings)"}\nmaxTurns: ${s.maxTurns || "(none)"}\nparallelTurns: ${s.parallelTurns}\nextraArgs: ${s.extraArgs.join(" ") || "(none)"}`);
 		let flags = null;
 		if (c && s.interactive) { flags = await supportedFlags(c, s); await ensureCatalog(c, s, flags); }
 		const caps = buildCaps(s, flags), cat = bridgeMemo.catalog;
