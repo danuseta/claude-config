@@ -1223,7 +1223,7 @@ def cmd_hook_autosave(args):
             save_command = ('powershell -NoProfile -ExecutionPolicy Bypass -File %s/save_and_ingest.ps1 -NoIngest '
                             '-Project "<project>" -Topic "<topic>" -Title "<judul>" -Context "<kenapa task ini muncul>" '
                             '-Point "<poin 1>","<poin 2>" -Decision "<keputusan/hasil akhir>"'
-                            % SCRIPT_DIR.replace("\\", "/"))
+                            % os.path.join(root, "scripts").replace("\\", "/"))
         else:
             save_command = ('python3 %s/brain.py save --no-ingest --project "<project>" --topic "<topic>" '
                             '--title "<judul>" --context "<kenapa task ini muncul>" '

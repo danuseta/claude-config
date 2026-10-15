@@ -6,8 +6,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
-const SOURCE_COMMIT = '701f6a2';
-const RECORDED_SHA256 = '31cb56f7d2a962e0081546d80fe0bcf7596b35aaab0718da5f37ef15799c1c99';
+const SOURCE_COMMIT = '1d598d1';
+const RECORDED_SHA256 = 'adfef6df430f32bb83618b087b84f846195ae3a35fdcc3e57cfd6cca8980ab05';
 const COPY = path.join(__dirname, '..', 'brain.py');
 const VAULT_SOURCE = 'E:/obsidian/Brain/scripts/brain.py';
 const PYTHON = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
@@ -24,7 +24,10 @@ test('kit/brain.py --help exits 0 and lists the remote mode', () => {
   assert.match(r.stdout, /remote/);
 });
 
-test('kit/brain.py is byte-identical to the vault copy when the vault is on this machine', (t) => {
-  if (!fs.existsSync(VAULT_SOURCE)) return t.skip(`${VAULT_SOURCE} not present`);
-  assert.equal(sha256(COPY), sha256(VAULT_SOURCE), `kit/brain.py differs from ${VAULT_SOURCE}`);
+test('kit/brain.py is byte-identical to scripts/brain.py at the recorded vault commit', (t) => {
+  const vault = path.dirname(path.dirname(VAULT_SOURCE));
+  if (!fs.existsSync(vault)) return t.skip(`${vault} not present`);
+  const r = spawnSync('git', ['-C', vault, 'show', `${SOURCE_COMMIT}:scripts/brain.py`], { encoding: 'buffer', timeout: 30000 });
+  if (r.status !== 0) return t.skip(`commit ${SOURCE_COMMIT} not in ${vault}; run git fetch there`);
+  assert.equal(sha256(COPY), crypto.createHash('sha256').update(r.stdout).digest('hex'), `kit/brain.py differs from ${SOURCE_COMMIT}:scripts/brain.py`);
 });
