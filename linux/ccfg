@@ -11,8 +11,8 @@ usage() {
   cat <<'EOF'
 usage: ccfg <command>
   status                          services, binaries, secrets, last run
-  start|stop|restart [tailscale|bridge|all]
-  logs [personalize|tailscaled|bridge] [-f]
+  start|stop|restart [tailscale|bridge|dock|all]
+  logs [personalize|tailscaled|bridge|dock] [-f]
   doctor [--strict]               acceptance checks (exit 0 unless --strict and something failed)
   update                          git pull --ff-only, install.cjs --apply, restart bridge
   secret set NAME                 value read from stdin (hidden on a terminal)
@@ -24,7 +24,7 @@ EOF
 
 targets() {
   case ${1:-all} in
-    all) printf 'tailscaled bridge' ;;
+    all) printf 'tailscaled bridge'; [ "$ENABLE_DOCK" != 1 ] || printf ' dock' ;;
     *) service_unit "$1" || { echo "unknown target: $1" >&2; return 1; } ;;
   esac
 }
@@ -34,7 +34,7 @@ cmd_start() { local u; bootstrap_dirs; for u in $(targets "${1:-all}"); do servi
 cmd_stop() {
   local u list
   list=$(targets "${1:-all}") || return 1
-  [ "${1:-all}" != all ] || list="bridge tailscaled"
+  [ "${1:-all}" != all ] || list="dock bridge tailscaled"
   for u in $list; do service_stop "$u"; done
 }
 
@@ -43,7 +43,7 @@ cmd_restart() { cmd_stop "${1:-all}"; cmd_start "${1:-all}"; }
 cmd_ensure() {
   local u
   bootstrap_dirs
-  for u in tailscaled bridge; do
+  for u in $(targets all); do
     service_pid "$u" >/dev/null && continue
     [ "$u" = bridge ] && [ ! -d "$TS_STATE" ] && continue
     service_start "$u" >/dev/null 2>&1
@@ -57,6 +57,7 @@ cmd_logs() {
     personalize) f=$CCFG_STATE/personalize.log ;;
     tailscale | tailscaled) f=$CCFG_STATE/tailscaled.log ;;
     bridge) f=$CCFG_STATE/bridge.log ;;
+    dock) f=$CCFG_STATE/dock.log ;;
     *) echo "unknown log: $which" >&2; return 1 ;;
   esac
   [ -f "$f" ] || { echo "no log yet: $f"; return 0; }
@@ -67,7 +68,7 @@ cmd_status() {
   local u sp cp T v n
   n=$(secret_names | wc -l | tr -d ' ')
   printf 'secrets    : %s, mode %s, %s names\n' "$(secrets_state)" "$(file_mode "$CCFG_SECRETS" || echo -)" "$n"
-  for u in tailscaled bridge; do
+  for u in $(targets all); do
     sp=$(service_pid "$u") || sp=""
     cp=$(cat "$CCFG_RUN/$u.child" 2>/dev/null)
     if [ -n "$sp" ]; then
@@ -129,6 +130,11 @@ cmd_doctor() {
       if tr '\0' '\n' <"/proc/$cp/environ" 2>/dev/null | grep -q '^CLAUDE_CODE_OAUTH_TOKEN='; then chk PASS bridge-auth "CLAUDE_CODE_OAUTH_TOKEN present in the bridge environment"; else chk FAIL bridge-auth "CLAUDE_CODE_OAUTH_TOKEN missing in the bridge environment"; fi
     fi
   else chk FAIL bridge "bridge is not running (ccfg start bridge)"; fi
+
+  if [ "$ENABLE_DOCK" = 1 ]; then
+    out=$(curl -s --max-time 5 "http://127.0.0.1:$DOCK_PORT/health" 2>/dev/null)
+    if printf '%s' "$out" | grep -q '"status":"ok"'; then chk PASS dock "DOCK answers on 127.0.0.1:$DOCK_PORT"; else chk FAIL dock "DOCK not answering on 127.0.0.1:$DOCK_PORT (ccfg logs dock)"; fi
+  else chk SKIP dock "switch ENABLE_DOCK is off"; fi
 
   if rtk --version >/dev/null 2>&1 && bd --version >/dev/null 2>&1; then chk PASS rtk-bd "rtk $(rtk --version 2>&1 | head -n 1), bd $(bd --version 2>&1 | head -n 1)"; else chk FAIL rtk-bd "rtk or bd not runnable"; fi
 
@@ -213,13 +219,13 @@ cmd_uninstall() {
   for a in "$@"; do case $a in --yes) yes=1 ;; --keep-secrets) keep=1 ;; esac; done
   cat <<EOF
 uninstall would:
-  1 stop the bridge and tailscaled
+  1 stop DOCK, the bridge and tailscaled
   2 remove ~/personalize (only if it hands off to claude-config) and the ccfg link in $CCFG_BIN
   3 remove installed files identical to the repo (install.cjs --uninstall), the kit directory and CLAUDE.md
   4 restore settings.json from the copy taken before the first install
   5 uninstall plugins and MCP servers this repo added, remove binaries it installed
   6 remove the Tailscale state, the bashrc hook and $CCFG_STATE$([ "$keep" = 1 ] || echo " and $(dirname "$CCFG_SECRETS")")
-  left alone: template files (rules, graphify, playwright-cli, mongodb MCP), ~/projects, ~/brain, $CCFG_REPO
+  left alone: template files (rules, graphify, playwright-cli, mongodb MCP), ~/projects, ~/brain, $CCFG_REPO, $DOCK_APP_DIR, $DOCK_DATA_DIR
 EOF
   [ "$yes" = 1 ] || { echo "dry listing only; re-run with --yes"; return 0; }
   cmd_stop all

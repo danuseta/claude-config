@@ -383,6 +383,30 @@ s_bridge() {
   note "bridge running (config $res)"
 }
 
+s_dock() {
+  local head
+  [ "$ENABLE_DOCK" = 1 ] || { note "switch ENABLE_DOCK is off"; return 10; }
+  command -v gh >/dev/null 2>&1 || { note "gh not found"; return 10; }
+  command -v node >/dev/null 2>&1 || { note "node not found"; return 10; }
+  if [ "$DRY" = 1 ]; then note "would clone or pull $DOCK_REPO into $DOCK_APP_DIR, build it when HEAD moved and start DOCK on port $DOCK_PORT"; return 0; fi
+  if [ -d "$DOCK_APP_DIR/.git" ]; then
+    timeout 120 git -C "$DOCK_APP_DIR" pull --ff-only || { note "pull failed"; return 1; }
+  else
+    timeout 300 gh repo clone "$DOCK_REPO" "$DOCK_APP_DIR" || { note "clone failed"; return 1; }
+  fi
+  secret_has DOCK_ENCRYPTION_KEY || secret_write DOCK_ENCRYPTION_KEY "$(node -e 'console.log(require("crypto").randomBytes(32).toString("hex"))')" || { note "could not write DOCK_ENCRYPTION_KEY"; return 1; }
+  mkdir -p "$DOCK_DATA_DIR"
+  head=$(git -C "$DOCK_APP_DIR" rev-parse HEAD)
+  if [ "$head" != "$(cat "$DOCK_DATA_DIR/built" 2>/dev/null)" ]; then
+    (cd "$DOCK_APP_DIR" && npm ci && npm run db:generate --workspace=backend/bff-graphql && VITE_GRAPHQL_URL=/graphql npm run build:app) >"$CCFG_STATE/dock-build.log" 2>&1 \
+      || { note "build failed (see $CCFG_STATE/dock-build.log)"; return 1; }
+    printf '%s\n' "$head" >"$DOCK_DATA_DIR/built"
+    service_pid dock >/dev/null && service_stop dock
+  fi
+  service_start dock || { note "dock did not start"; return 1; }
+  note "DOCK ${head:0:7} on 127.0.0.1:$DOCK_PORT"
+}
+
 s_brain() {
   local dir=$HOME/brain
   [ "$ENABLE_BRAIN" = 1 ] || { note "switch ENABLE_BRAIN is off"; return 10; }
@@ -463,6 +487,7 @@ main() {
   step tailscale s_tailscale 300
   step reach s_reach 90
   step plugins s_plugins 1800
+  step dock s_dock 1200
   step bridge s_bridge 120
   step brain s_brain 400
   step fallback s_fallback

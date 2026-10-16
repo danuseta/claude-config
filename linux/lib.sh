@@ -192,6 +192,7 @@ service_unit() {
   case $1 in
     tailscale | tailscaled) printf 'tailscaled' ;;
     bridge | chat) printf 'bridge' ;;
+    dock) printf 'dock' ;;
     *) return 1 ;;
   esac
 }
@@ -207,6 +208,11 @@ service_precheck() {
       [ "$(secrets_state)" = ok ] || { echo "secrets file missing or not mode 600"; return 3; }
       secret_has DOCK_INGEST_URL && secret_has DOCK_INGEST_TOKEN || { echo "DOCK_INGEST_URL or DOCK_INGEST_TOKEN not set (ccfg secret set)"; return 3; }
       ;;
+    dock)
+      command -v node >/dev/null 2>&1 || { echo "node not found on PATH"; return 3; }
+      [ -f "$DOCK_APP_DIR/backend/bff-graphql/dist/index.js" ] || { echo "DOCK is not built in $DOCK_APP_DIR (personalize --only=dock)"; return 3; }
+      secret_has DOCK_ENCRYPTION_KEY || { echo "DOCK_ENCRYPTION_KEY not set (personalize --only=dock makes one)"; return 3; }
+      ;;
   esac
   return 0
 }
@@ -215,6 +221,14 @@ service_prepare() {
   case $1 in
     bridge) load_kit_env; cd "$CCFG_CLAUDE_DIR/kit" || return 1 ;;
     tailscaled) setup_path ;;
+    dock)
+      setup_path
+      mkdir -p "$DOCK_DATA_DIR"
+      cd "$DOCK_APP_DIR" || return 1
+      export DOCK_MODE=workspace NODE_ENV=production PORT="$DOCK_PORT" TRUST_PROXY=true DOCK_PIN_MODE=always \
+        FRONTEND_DIST_PATH="$DOCK_APP_DIR/frontend/dist" DATABASE_URL="file:$DOCK_DATA_DIR/jidis.db" JIDIS_DATA_DIR="$DOCK_DATA_DIR" \
+        ENCRYPTION_KEY="$(secret_get DOCK_ENCRYPTION_KEY)"
+      ;;
   esac
 }
 
@@ -226,6 +240,10 @@ service_exec() {
         --socks5-server="127.0.0.1:$TS_PROXY_PORT" --outbound-http-proxy-listen="127.0.0.1:$TS_PROXY_PORT"
       ;;
     bridge) exec node "$CCFG_CLAUDE_DIR/kit/dock-chat.cjs" run ;;
+    dock)
+      npx prisma db push --skip-generate --schema backend/bff-graphql/prisma/schema.prisma || return 1
+      exec node backend/bff-graphql/dist/index.js
+      ;;
   esac
 }
 
