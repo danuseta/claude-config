@@ -228,6 +228,14 @@ service_prepare() {
       export DOCK_MODE=workspace NODE_ENV=production PORT="$DOCK_PORT" TRUST_PROXY=true DOCK_PIN_MODE=always \
         FRONTEND_DIST_PATH="$DOCK_APP_DIR/frontend/dist" DATABASE_URL="file:$DOCK_DATA_DIR/jidis.db" JIDIS_DATA_DIR="$DOCK_DATA_DIR" \
         ENCRYPTION_KEY="$(secret_get DOCK_ENCRYPTION_KEY)"
+      # The laptop DOCK on the VPS is the ledger peer, reached over the tailnet through tailscaled.
+      # Only the peer uses that proxy: Jira and GitHub keep going out directly.
+      local n v
+      for n in DOCK_LEDGER_PEER_URL DOCK_LEDGER_PEER_TOKEN; do
+        v=$(secret_get "$n") || continue
+        [ -z "$v" ] || export "$n=$v"
+      done
+      export DOCK_LEDGER_PEER_PROXY="http://127.0.0.1:$TS_PROXY_PORT"
       ;;
   esac
 }
