@@ -390,10 +390,15 @@ def remote_config():
     token = os.environ.get("BRAIN_TOKEN", "").strip()
     if url and token:
         return url.rstrip("/"), token
-    sources = [(os.environ.get("DOCK_INGEST_URL", ""), os.environ.get("DOCK_INGEST_TOKEN", ""))]
     home = os.path.expanduser("~")
+    values = {} if IS_WINDOWS else parse_env_file(os.path.join(home, ".config", "claude-config", "secrets.env"))
+    # A workspace whose DOCK_INGEST_URL points at its own DOCK keeps the brain on the shared one through these two.
+    url = values.get("BRAIN_URL", "").strip()
+    token = values.get("BRAIN_TOKEN", "").strip()
+    if url and token:
+        return url.rstrip("/"), token
+    sources = [(os.environ.get("DOCK_INGEST_URL", ""), os.environ.get("DOCK_INGEST_TOKEN", ""))]
     if not IS_WINDOWS:
-        values = parse_env_file(os.path.join(home, ".config", "claude-config", "secrets.env"))
         sources.append((values.get("DOCK_INGEST_URL", ""), values.get("DOCK_INGEST_TOKEN", "")))
     folders = []
     if os.environ.get("CLAUDE_CONFIG_DIR"):
