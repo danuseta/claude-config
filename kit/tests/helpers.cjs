@@ -67,6 +67,7 @@ module.exports = { KIT, SOURCE_KIT, hasSource, tmp, rmrf, startServer, runNode, 
 // A fake of DOCK's ledger routes (P.6) and of POST / (the owner's ledger push). Tokens dock_ing_<machine> name the caller.
 function ledgerFake() {
   const runs = new Map();
+  const resets = [];
   const machineOf = (req) => String(req.headers.authorization || '').replace('Bearer dock_ing_', '');
   const view = (r, me) => ({ key: r.key, machine: r.machine, ledgerUpdatedAt: r.ledgerUpdatedAt, handover: r.handover, ledger: r.ledger, mine: r.machine === me });
   const bad = (error) => ({ status: 400, json: { ok: false, error } });
@@ -80,7 +81,7 @@ function ledgerFake() {
       else return { json: { ok: true, result: { key: b.key, ignored: true, owner: r.machine } } };
       return { json: { ok: true, result: { key: b.key } } };
     }
-    if (route === '/ledger/list') return { json: { ok: true, result: { runs: [...runs.values()].map((r) => ({ key: r.key, title: r.title, stage: r.stage, machine: r.machine, ledgerUpdatedAt: r.ledgerUpdatedAt, handoverTo: r.handover ? r.handover.to : null, mine: r.machine === me })) } } };
+    if (route === '/ledger/list') return { json: { ok: true, result: { resets: resets.filter((reset) => reset.machine === me), runs: [...runs.values()].map((r) => ({ key: r.key, title: r.title, stage: r.stage, machine: r.machine, ledgerUpdatedAt: r.ledgerUpdatedAt, handoverTo: r.handover ? r.handover.to : null, mine: r.machine === me })) } } };
     const r = runs.get(b.key);
     if (route === '/ledger/get') return r ? { json: { ok: true, result: view(r, me) } } : { status: 404, json: { ok: false, error: 'Unknown ticket' } };
     if (route === '/ledger/handover') {
@@ -98,7 +99,7 @@ function ledgerFake() {
     }
     return null;
   };
-  return { runs, respond };
+  return { runs, resets, respond };
 }
 
 module.exports.ledgerFake = ledgerFake;
