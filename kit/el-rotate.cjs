@@ -1,65 +1,41 @@
-// ElevenLabs key rotation. One JSON store, round-robin on limit.
+// ElevenLabs key rotation. The keys live in DOCK (the laptop DOCK keeps them; the
+// workspace DOCK passes every call on), so both machines and both DOCKs share one set.
 //   node el-rotate.cjs add <name>        prompt for the key (hidden), store under name
 //   node el-rotate.cjs add <name> <key>  non-interactive form
 //   node el-rotate.cjs list              show names + masked key + status
 //   node el-rotate.cjs remove <name>     drop one entry
-//   node el-rotate.cjs clear             empty the store
+//   node el-rotate.cjs clear             remove every key
 //   node el-rotate.cjs tts <text> [--voice ID]
 //   node el-rotate.cjs get               print the key that will be used next
+//   node el-rotate.cjs park [ms]         park the key get gives, after it hit its limit (default 1h)
+//   node el-rotate.cjs import [file]     send an old local elevenlabs-keys.json to DOCK, then delete the file
 //
 // Rotation: try the current key; on 401/402/403/429 or a quota/rate error,
-// park it in cooldowns and move on to the next, until one succeeds or every
-// key is parked. Store: elevenlabs-keys.json next to this file. Keys are
-// never printed in full.
+// park it and move on to the next, until one succeeds or every key is
+// parked. Keys are never printed in full, except by get.
 const fs = require("fs");
 const path = require("path");
 const readline = require("readline");
+const dock = require("./dock-push.cjs");
 
-const STORE_FILE = path.join(__dirname, "elevenlabs-keys.json");
+const OLD_STORE_FILE = path.join(__dirname, "elevenlabs-keys.json");
 const API_BASE = "https://api.elevenlabs.io/v1";
 const DEFAULT_VOICE = "pNInz6obpgDQGcFmaJgB";
 const DEFAULT_MODEL = "eleven_multilingual_v2";
 const LOCK_MAX_DEFAULT = 3600_000; // 1h if the API gives no retry hint
 const NAME_RE = /^[A-Za-z0-9._-]+$/;
 
-function emptyStore() {
-	return { keys: {}, order: [], current: 0, cooldowns: {} };
+async function call(route, body = {}) {
+	const r = await dock.send(`/elevenlabs/${route}`, body, 10000);
+	if (r.skipped) throw new Error("DOCK is not configured (dock.json); the ElevenLabs keys live in DOCK");
+	if (r.status !== 200) throw new Error(`DOCK refused elevenlabs/${route}: ${r.status}${r.error ? " " + r.error : ""}`);
+	return r.result;
 }
 
-function load() {
-	let data;
-	try {
-		data = JSON.parse(fs.readFileSync(STORE_FILE, "utf8"));
-	} catch (_) {
-		return emptyStore();
-	}
-	if (Array.isArray(data.keys)) return migrateFromArray(data);
-	if (!data.keys || typeof data.keys !== "object") data.keys = {};
-	if (!Array.isArray(data.order)) data.order = Object.keys(data.keys);
-	if (typeof data.current !== "number") data.current = 0;
-	if (!data.cooldowns || typeof data.cooldowns !== "object") data.cooldowns = {};
-	return data;
-}
-
-// Old store shape: keys was an array of bare strings. Give them names.
-function migrateFromArray(data) {
-	const store = emptyStore();
-	(data.keys || []).forEach((key, i) => {
-		if (!key) return;
-		const name = `key${i + 1}`;
-		store.keys[name] = key;
-		store.order.push(name);
-	});
-	store.current = 0;
-	for (const [k, v] of Object.entries(data.cooldowns || {})) {
-		const name = store.order.find((n) => store.keys[n] === k);
-		if (name) store.cooldowns[name] = v;
-	}
-	return store;
-}
-
-function save(data) {
-	fs.writeFileSync(STORE_FILE, JSON.stringify(data, null, 2) + "\n");
+// { keys: {name: key}, order: [name], current: index, cooldowns: {name: epoch ms} }
+async function load() {
+	const data = await call("store");
+	return { keys: data.keys || {}, order: data.order || [], current: data.current || 0, cooldowns: data.cooldowns || {} };
 }
 
 function mask(key) {
@@ -89,8 +65,9 @@ function usableOrder(data) {
 	return out;
 }
 
-function park(data, name, ms) {
+async function park(data, name, ms) {
 	data.cooldowns[name] = Date.now() + (ms || LOCK_MAX_DEFAULT);
+	await call("park", { name, until: new Date(data.cooldowns[name]).toISOString() });
 }
 
 // Short reason from an error body: the ElevenLabs "code"/"type" if present.
@@ -135,9 +112,9 @@ function retryHintMs(body, headers) {
 
 // Core: run fetchWith(key) across usable keys, rotating on exhaustion.
 async function withRotation(fetchWith) {
-	const data = load();
+	const data = await load();
 	if (data.order.length === 0) {
-		throw new Error("no keys in store; run: elabs add <name>");
+		throw new Error("no keys in DOCK; run: elabs add <name>, or add one in DOCK Settings > Agents");
 	}
 	const order = usableOrder(data);
 	if (order.length === 0) {
@@ -145,7 +122,6 @@ async function withRotation(fetchWith) {
 	}
 
 	let lastErr;
-	let changed = false;
 	for (const idx of order) {
 		const name = data.order[idx];
 		const key = data.keys[name];
@@ -157,28 +133,20 @@ async function withRotation(fetchWith) {
 			continue;
 		}
 		if (res.ok) {
-			if (data.current !== idx) {
-				data.current = idx;
-				changed = true;
-			}
-			if (changed) save(data);
+			if (data.current !== idx) await call("current", { name });
 			return { res, name };
 		}
 		const body = await res.text();
 		if (isKeyExhausted(res.status, body)) {
-			park(data, name, retryHintMs(body, res.headers));
-			data.current = (idx + 1) % data.order.length;
-			changed = true;
+			await park(data, name, retryHintMs(body, res.headers));
 			lastErr = new Error(
 				`${name} (${mask(key)}) -> HTTP ${res.status} ${reasonOf(body)}`.trim(),
 			);
 			continue;
 		}
 		// Non-key error (bad request etc): stop, do not burn keys.
-		if (changed) save(data);
 		return { res, name, body };
 	}
-	save(data);
 	throw lastErr || new Error("all keys exhausted");
 }
 
@@ -264,17 +232,12 @@ async function main() {
 				process.exitCode = 1;
 				break;
 			}
-			const data = load();
-			const existed = Boolean(data.keys[name]);
-			data.keys[name] = key;
-			if (!data.order.includes(name)) data.order.push(name);
-			delete data.cooldowns[name];
-			save(data);
-			console.log(`${existed ? "updated" : "added"} "${name}" (${mask(key)}), total ${data.order.length}`);
+			await call("add", { name, key });
+			console.log(`added "${name}" (${mask(key)}) to DOCK`);
 			break;
 		}
 		case "list": {
-			const data = load();
+			const data = await load();
 			if (data.order.length === 0) {
 				console.log("(empty)");
 				break;
@@ -291,27 +254,22 @@ async function main() {
 		}
 		case "remove": {
 			const name = args.pos[0];
-			const data = load();
-			if (!data.keys[name]) {
+			if (!(await call("remove", { name }))) {
 				console.error(`no key named "${name}"`);
 				process.exitCode = 1;
 				break;
 			}
-			delete data.keys[name];
-			delete data.cooldowns[name];
-			data.order = data.order.filter((n) => n !== name);
-			if (data.current >= data.order.length) data.current = 0;
-			save(data);
-			console.log(`removed "${name}", total ${data.order.length}`);
+			console.log(`removed "${name}"`);
 			break;
 		}
 		case "clear": {
-			save(emptyStore());
+			const data = await load();
+			for (const name of data.order) await call("remove", { name });
 			console.log("cleared");
 			break;
 		}
 		case "get": {
-			const data = load();
+			const data = await load();
 			const order = usableOrder(data);
 			if (order.length === 0) {
 				console.error("no usable key");
@@ -319,6 +277,28 @@ async function main() {
 				break;
 			}
 			process.stdout.write(data.keys[data.order[order[0]]]);
+			break;
+		}
+		case "park": {
+			const data = await load();
+			const order = usableOrder(data);
+			if (order.length === 0) {
+				console.error("no usable key to park");
+				process.exitCode = 1;
+				break;
+			}
+			const name = data.order[order[0]];
+			await park(data, name, Number(args.pos[0]) || 0);
+			console.log(`parked "${name}"`);
+			break;
+		}
+		case "import": {
+			const file = args.pos[0] || OLD_STORE_FILE;
+			const old = JSON.parse(fs.readFileSync(file, "utf8"));
+			const names = (Array.isArray(old.order) ? old.order : Object.keys(old.keys || {})).filter((name) => old.keys && old.keys[name]);
+			for (const name of names) await call("add", { name, key: old.keys[name] });
+			fs.unlinkSync(file);
+			console.log(`imported ${names.length} key(s) to DOCK and deleted ${file}`);
 			break;
 		}
 		case "tts": {
@@ -337,12 +317,14 @@ async function main() {
 		default:
 			console.log(
 				[
-					"ElevenLabs key rotation",
+					"ElevenLabs key rotation (keys live in DOCK)",
 					"  add <name> [key]    store a key under a label (prompts if key omitted)",
 					"  list                show names + masked key + status",
 					"  remove <name>       drop one entry",
-					"  clear               empty store",
+					"  clear               remove every key",
 					"  get                 print next usable key",
+					"  park [ms]           park the key get gives (default 1h)",
+					"  import [file]       send an old local elevenlabs-keys.json to DOCK, then delete it",
 					"  tts <text> [--voice ID]",
 				].join("\n"),
 			);
