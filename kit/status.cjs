@@ -197,12 +197,23 @@ const handoverCheck = (s) => {
 	return { branches };
 };
 const dockError = (what, r) => (r.skipped ? "DOCK is not configured" : `DOCK refused ${what}: ${r.status}${r.error ? " " + r.error : ""}`);
+// A ticket moved back to To Do in Jira loses its run on DOCK. The ledger made before that is put aside, so the next start is fresh.
+const archiveResets = (resets) => {
+	for (const reset of resets) {
+		const local = load(reset.key);
+		if (!local || Date.parse(local.createdAt ?? "") >= Date.parse(reset.resetAt)) continue;
+		const to = path.join(ROOT, `${reset.key}.reset-${now().replace(/[-:.]/g, "")}`);
+		fs.renameSync(path.dirname(file(reset.key)), to);
+		console.log(`${reset.key} went back to To Do in Jira; its old ledger is in ${to}`);
+	}
+};
 // One line per ticket offered to this machine; quiet when DOCK is off or slow.
 const offers = async () => {
 	try {
 		const r = await dock().ledger("list", {}, 3000);
 		if (r.status !== 200) return;
 		for (const run of r.result?.runs ?? []) if (run.handoverTo && !run.mine) console.log(`${run.key} is offered to this machine: node ${String(PATHS.kitDir).replace(/\\/g, "/")}/status.cjs pull ${run.key}`);
+		archiveResets(r.result?.resets ?? []);
 	} catch {}
 };
 
