@@ -230,9 +230,8 @@ service_prepare() {
         ENCRYPTION_KEY="$(secret_get DOCK_ENCRYPTION_KEY)"
       # The laptop DOCK on the VPS is the ledger peer, reached over the tailnet through tailscaled.
       # Only the peer uses that proxy: Jira and GitHub keep going out directly.
-      # The demo video bucket keys, when set, let this DOCK keep the demo videos.
       local n v
-      for n in DOCK_LEDGER_PEER_URL DOCK_LEDGER_PEER_TOKEN DEMO_S3_ACCESS_KEY DEMO_S3_SECRET_KEY; do
+      for n in DOCK_LEDGER_PEER_URL DOCK_LEDGER_PEER_TOKEN; do
         v=$(secret_get "$n") || continue
         [ -z "$v" ] || export "$n=$v"
       done

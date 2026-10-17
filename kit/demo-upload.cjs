@@ -1,6 +1,6 @@
 // Puts a ticket's demo video in DOCK's bucket and sets its demo link on both DOCKs.
 //   node demo-upload.cjs <KEY> <file.mp4>
-// The workspace DOCK keeps the bucket keys; this only sends the file with the machine's ingest token.
+// The bucket is set in DOCK Settings; this only sends the file with the machine's ingest token.
 // Prints the permanent link. A new render for the same ticket replaces the video; the link stays.
 const fs = require("fs");
 const dock = require("./dock-push.cjs");
