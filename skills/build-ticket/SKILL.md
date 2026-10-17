@@ -87,6 +87,8 @@ Before shipping, one `oh-my-claudecode:code-reviewer` (Opus) pass on the full di
 
 Seed the data straight into local Mongo, then drive Playwright: log in, open the page, click the thing, read the result out of the DOM.
 
+Start the ticket's dev servers from the worktree folder with `node "<kitDir>/dev-server.cjs" <port> -- <dev command>` (for example `-- npm run dev`), never in the foreground or as a background shell. It returns at once, writes the server's output to the log the DOCK Dev Servers page shows, and keeps that output out of this session. Read the log only when the server misbehaves: `tail -n 50 ~/.local/state/dock/dev-logs/<folder>-<port>.log`.
+
 Playwright lives in the scratchpad, never in the repo. Screenshots go to the day's folder, `<root>/<MMDD>/qrd-<n>/` (month and day they were taken, lowercase ticket, e.g. `<root>/1006/qrd-1393/`), numbered and named for what they show. Dark mode is mandatory for every screenshot (Playwright `colorScheme: "dark"` plus localStorage `v2-theme=dark`), file name ending `-dark.png`. A `-light.png` is only ever an extra next to its dark twin, taken when the AC names light mode or the owner asks; what is shown or sent to anyone is the dark one. `<evidence>/<KEY>/` keeps only the ledger, logs, scripts, video and caches.
 
 Unit tests do not catch an unreadable button.
