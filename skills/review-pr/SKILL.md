@@ -138,6 +138,8 @@ Each finding carries its impact and its blast radius, not just its location.
 
 Close with Approve or Request Change.
 
+Record the review in the ledger so the DOCK Agents page shows it: one `node <kitDir>/status.cjs finding <KEY> --severity blocker|non-blocking|nit "<finding>"` per finding, one `lgtm <KEY> "<part>"` per part that is fine, then `verdict <KEY> approve|request-change`. Approve is refused while a blocker is recorded.
+
 ## 8b. The message to the author
 
 Write it with the `review-message` skill (`.claude/skills/review-message/SKILL.md`): addressed to "mas", all lowercase, blocker first and blockers only when one exists, which part is lgtm by name, and each screenshot named by file inside the comment it proves.

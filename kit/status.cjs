@@ -14,7 +14,9 @@
 //   node status.cjs fail KEY <transient|defect|spec|env|permission> "<evidence>" ["<what failed>"] -> typed failure with an attempt count
 //   node status.cjs assume KEY "<assumption>" "<what would prove it wrong>"  |  assume KEY <n> <confirmed|refuted> "<evidence>"
 //   node status.cjs replan KEY "<reason>"            -> counted against replanBudget (default 2, set KEY replanBudget=<n> at the gate)
-//   node status.cjs finding KEY "<text>"             -> a reviewer finding raised after the PR was opened
+//   node status.cjs finding KEY [--severity blocker|non-blocking|nit] "<text>" -> a reviewer finding (default non-blocking)
+//   node status.cjs lgtm KEY "<part>"                -> a part of the change the reviewer found fine
+//   node status.cjs verdict KEY approve|request-change -> the review verdict; approve is refused while a blocker is recorded
 //   node status.cjs metrics                          -> closing numbers per ticket and per work type
 //   node status.cjs remote                           -> the tickets DOCK knows: owner machine, offered to, local ledger or not
 //   node status.cjs handover KEY --to <machine> [--note "..."] -> offer a pushed ticket to another machine; save then refuses here
@@ -38,6 +40,8 @@ const FAILS = {
 const HANDOFF = ["status", "summary", "evidence", "where", "assumptions", "open", "unverified"];
 const FIX_FROM = ["test", "verify", "evidence", "commit", "pr"];
 const STAGES = ["gate", "plan", "code", "test", "verify", "evidence", "commit", "pr", "done", "blocked"];
+const SEVERITIES = ["blocker", "non-blocking", "nit"];
+const VERDICTS = ["approve", "request-change"];
 const file = (key) => path.join(ROOT, key, "status.json");
 const load = (key) => (fs.existsSync(file(key)) ? JSON.parse(fs.readFileSync(file(key), "utf8")) : null);
 const save = (key, s, allowHanded = false) => {
@@ -458,11 +462,32 @@ if (!cmd) {
 } else if (cmd === "finding") {
 	const s = load(key);
 	if (!s) return console.log(`no status for ${key}; run init first`);
-	const text = rest.join(" ").trim();
+	const severity = optValue("--severity") || "non-blocking";
+	if (!SEVERITIES.includes(severity)) return refuse(`--severity must be one of ${SEVERITIES.join(", ")}`);
+	const at = rest.indexOf("--severity");
+	const text = (at >= 0 ? [...rest.slice(0, at), ...rest.slice(at + 2)] : rest).join(" ").trim();
 	if (!text) return console.log("finding needs a text");
-	(s.findings ??= []).push({ at: now(), text });
+	(s.findings ??= []).push({ at: now(), severity, text });
 	save(key, s);
-	console.log(`${key} reviewer finding #${s.findings.length}`);
+	console.log(`${key} reviewer finding #${s.findings.length} (${severity})`);
+} else if (cmd === "lgtm") {
+	const s = load(key);
+	if (!s) return console.log(`no status for ${key}; run init first`);
+	const text = rest.join(" ").trim();
+	if (!text) return console.log("lgtm needs the part that is fine");
+	(s.lgtm ??= []).push({ at: now(), text });
+	save(key, s);
+	console.log(`${key} lgtm #${s.lgtm.length}`);
+} else if (cmd === "verdict") {
+	const s = load(key);
+	if (!s) return console.log(`no status for ${key}; run init first`);
+	const verdict = rest[0];
+	if (!VERDICTS.includes(verdict)) return refuse(`verdict must be one of ${VERDICTS.join(", ")}`);
+	const blockers = (s.findings ?? []).filter((f) => f.severity === "blocker").length;
+	if (verdict === "approve" && blockers) return refuse(`${key} has ${blockers} blocker finding(s); approve needs none`);
+	s.verdict = { at: now(), value: verdict };
+	save(key, s);
+	console.log(`${key} verdict: ${verdict}`);
 } else if (cmd === "metrics") {
 	const keys = fs.existsSync(ROOT) ? fs.readdirSync(ROOT).filter((k) => fs.existsSync(file(k))) : [];
 	const rows = keys.map(load).filter((s) => s.stage === "done").map((s) => ({ s, c: s.closing ?? closing(s, s.updatedAt) }));
@@ -485,5 +510,5 @@ if (!cmd) {
 		console.log(`| ${name} | ${list.length} | ${mean(tracked, (row) => row.c.fixRounds)} | ${mean(list, (row) => (row.s.findings ?? []).length)} | ${mean(timed, (row) => row.c.hours)} |`);
 	}
 } else {
-	console.log("usage: status.cjs [show KEY | init KEY title bePort fePort beDir feDir | set KEY k=v... | ac KEY n STATE text evidence | ac-set KEY @file [jiraUpdated] | stale [KEY jiraUpdated [@file]] | handoff KEY who k=v...|@file.json | fail KEY type evidence [what] | assume KEY text falsifier | assume KEY n confirmed|refuted evidence | replan KEY reason | finding KEY text | metrics | brief KEY text|@file | decide KEY text | sync [KEY] | remote | handover KEY --to machine [--note text] | pull KEY [--force]]");
+	console.log("usage: status.cjs [show KEY | init KEY title bePort fePort beDir feDir | set KEY k=v... | ac KEY n STATE text evidence | ac-set KEY @file [jiraUpdated] | stale [KEY jiraUpdated [@file]] | handoff KEY who k=v...|@file.json | fail KEY type evidence [what] | assume KEY text falsifier | assume KEY n confirmed|refuted evidence | replan KEY reason | finding KEY [--severity blocker|non-blocking|nit] text | lgtm KEY text | verdict KEY approve|request-change | metrics | brief KEY text|@file | decide KEY text | sync [KEY] | remote | handover KEY --to machine [--note text] | pull KEY [--force]]");
 }
