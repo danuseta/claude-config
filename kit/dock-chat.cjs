@@ -410,6 +410,7 @@ function turnCore(msg, cfg, opts) {
 	const state = { claudeSessionId: interact.uuidOf(msg.claudeSessionId), pending: [], detail: null, lastSent: 0, finalAt: 0, parked: false, model: null, usage: null, uploads: [], seen: new Set(), images: 0, queued: 0, statusLogged: false };
 	let chain = Promise.resolve();
 	let timer = null, child, result = null, act = null;
+	const subs = new Map();
 
 	const park = (job) => {
 		state.parked = true;
@@ -482,7 +483,18 @@ function turnCore(msg, cfg, opts) {
 		}
 		return rest.replace(/\n{3,}/g, "\n\n").trim();
 	};
+	const trackSubagents = (o) => {
+		const blocks = o.message && Array.isArray(o.message.content) ? o.message.content : [];
+		if (o.type === "assistant" && !o.parent_tool_use_id) { for (const b of blocks) if (b && b.type === "tool_use" && (b.name === "Agent" || b.name === "Task") && typeof b.id === "string") subs.set(b.id, { input: b.input, running: false }); }
+		else if (o.type === "user") {
+			for (const b of blocks) {
+				const s = b && b.type === "tool_result" ? subs.get(b.tool_use_id) : null;
+				if (s) { if (activityLib.isBackgroundLaunch(s.input, b.content, b.is_error)) s.running = true; else subs.delete(b.tool_use_id); }
+			}
+		} else if (o.type === "system" && o.subtype === "task_notification") subs.delete(o.tool_use_id);
+	};
 	const onEvent = (o) => {
+		trackSubagents(o);
 		if (o.type === "system" && o.subtype === "init") { learn(o.session_id); if (typeof o.model === "string" && o.model) state.model = o.model; }
 		else if (o.type === "user" && o.message && Array.isArray(o.message.content)) collectImages(o.message.content);
 		else if (o.type === "rate_limit_event") {
@@ -511,6 +523,7 @@ function turnCore(msg, cfg, opts) {
 	return {
 		mask, out, state, post, schedule, onEvent,
 		result: () => result,
+		subagentsRunning: () => [...subs.values()].filter((s) => s.running).length,
 		chain: () => chain,
 		setChild(c) { child = c; },
 		setActivity(a) { act = a; },
@@ -734,7 +747,8 @@ async function runLegacy(msg, cfg, opts, claude) {
 	process.removeListener("SIGTERM", onSignal);
 	if (act) await Promise.all([pace, act.settle()]);
 	else await pace;
-	await core.post(error ? { done: false, error: mask(error).slice(0, 300) } : { done: true, error: null });
+	const subagentsRunning = !error ? core.subagentsRunning() : 0;
+	await core.post(error ? { done: false, error: mask(error).slice(0, 300) } : subagentsRunning > 0 ? { done: true, error: null, subagentsRunning } : { done: true, error: null });
 	await core.chain();
 }
 
