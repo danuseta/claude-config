@@ -323,11 +323,12 @@ def pull_if_stale(root, mode, enabled=True):
 # --------------------------------------------------------------------------- remote client
 
 class BrainFailure(Exception):
-    def __init__(self, kind, status=None, retry_after=None):
+    def __init__(self, kind, status=None, retry_after=None, reason=None):
         Exception.__init__(self, kind)
         self.kind = kind
         self.status = status
         self.retry_after = retry_after
+        self.reason = reason
 
     @property
     def retryable(self):
@@ -351,8 +352,22 @@ def failure_line(failure):
         wait = " dalam %s detik" % failure.retry_after if failure.retry_after else ""
         return "Brain server: dibatasi (429), coba lagi%s" % wait
     if failure.status in (502, 503, 504):
-        return "Brain server tidak terjangkau: server tidak tersedia (%d)" % failure.status
+        said = " - %s" % failure.reason if failure.reason else ""
+        return "Brain server tidak terjangkau: server tidak tersedia (%d)%s" % (failure.status, said)
     return "Brain server: %s" % STATUS_REASONS.get(failure.status, "status %s" % failure.status)
+
+
+# The DOCK proxy's own fixed answers; any other error body is never shown, since it could carry note text.
+PROXY_REASONS = ("Brain is not configured", "Brain is unavailable", "Brain is busy")
+
+
+def proxy_reason(exc):
+    try:
+        body = json.loads(exc.read(4096).decode("utf-8"))
+    except (OSError, ValueError, AttributeError):
+        return None
+    text = body.get("error") if isinstance(body, dict) else None
+    return text if text in PROXY_REASONS else None
 
 
 def parse_env_file(path):
@@ -390,10 +405,15 @@ def remote_config():
     token = os.environ.get("BRAIN_TOKEN", "").strip()
     if url and token:
         return url.rstrip("/"), token
-    sources = [(os.environ.get("DOCK_INGEST_URL", ""), os.environ.get("DOCK_INGEST_TOKEN", ""))]
     home = os.path.expanduser("~")
+    values = {} if IS_WINDOWS else parse_env_file(os.path.join(home, ".config", "claude-config", "secrets.env"))
+    # A workspace whose DOCK_INGEST_URL points at its own DOCK keeps the brain on the shared one through these two.
+    url = values.get("BRAIN_URL", "").strip()
+    token = values.get("BRAIN_TOKEN", "").strip()
+    if url and token:
+        return url.rstrip("/"), token
+    sources = [(os.environ.get("DOCK_INGEST_URL", ""), os.environ.get("DOCK_INGEST_TOKEN", ""))]
     if not IS_WINDOWS:
-        values = parse_env_file(os.path.join(home, ".config", "claude-config", "secrets.env"))
         sources.append((values.get("DOCK_INGEST_URL", ""), values.get("DOCK_INGEST_TOKEN", "")))
     folders = []
     if os.environ.get("CLAUDE_CONFIG_DIR"):
@@ -439,7 +459,7 @@ def send_request(url, token, data, timeout):
             raw = reply.read(MAX_REPLY_BYTES + 1)
     except urllib.error.HTTPError as exc:
         retry = (exc.headers.get("retry-after") or "").strip() if exc.headers else ""
-        raise BrainFailure("status", exc.code, retry if retry.isdigit() else None)
+        raise BrainFailure("status", exc.code, retry if retry.isdigit() else None, proxy_reason(exc))
     except (socket.timeout, TimeoutError):
         raise BrainFailure("timeout")
     except urllib.error.URLError as exc:

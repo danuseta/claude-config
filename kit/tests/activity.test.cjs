@@ -49,7 +49,7 @@ test('recorded turn 2: the subagent row, its own Bash call nested under it, the 
   assert.equal(agent.name, 'general-purpose');
   assert.equal(agent.label.startsWith('Agent general-purpose: '), true);
   assert.equal(child.parentId, agent.id);
-  assert.equal(child.agent, 'general-purpose');
+  assert.equal(child.agent, 'general-purpose: alpha beta g');
   assert.match(agent.detail, /--- report ---/);
   assert.ok(Date.parse(agent.endedAt) > Date.parse(agent.startedAt));
   assert.ok(Date.parse(child.endedAt) > Date.parse(child.startedAt));
@@ -116,7 +116,7 @@ test('synthetic nested agents: the tree is capped at three levels, the plugin pr
   const rows = byId(replay('synthetic-nested-agents.jsonl'));
   assert.equal(rows.toolu_SYN_A1.parentId, null);
   assert.equal(rows.toolu_SYN_A2.parentId, 'toolu_SYN_A1');
-  assert.equal(rows.toolu_SYN_A2.agent, 'explore');
+  assert.match(rows.toolu_SYN_A2.agent, /^explore: /);
   assert.equal(rows.toolu_SYN_A3.parentId, 'toolu_SYN_A2');
   assert.equal(rows.toolu_SYN_A4.parentId, 'toolu_SYN_A2', 'a fourth level is attached to level three');
   assert.equal(rows.toolu_SYN_A5.parentId, 'toolu_SYN_A2', 'and anything below it too');
@@ -165,6 +165,109 @@ test('the result event closes what is still running as stopped', () => {
   t.feed(toolUse('x1', 'Bash', { command: 'sleep 5' }));
   t.feed({ type: 'result', subtype: 'success', is_error: false });
   assert.equal(byId(t).x1.status, 'stopped');
+});
+
+test('a child row carries "<type>: <description>" of its agent, cut to 48 characters; top level stays main', () => {
+  const t = tracker();
+  t.feed(toolUse('a1', 'Agent', { subagent_type: 'plugin:explore', description: 'Scan the repository for usages', prompt: 'p' }));
+  t.feed(toolUse('b1', 'Bash', { command: 'ls' }, 'a1'));
+  t.feed(toolUse('a2', 'Agent', { subagent_type: 'plugin:explore', description: 'A very long description that goes well past the forty-eight character limit', prompt: 'p' }));
+  t.feed(toolUse('b2', 'Bash', { command: 'ls' }, 'a2'));
+  const rows = byId(t);
+  assert.equal(rows.a1.agent, 'main');
+  assert.equal(rows.b1.agent, 'explore: Scan the repository for usages');
+  assert.equal(rows.b2.agent.length, 48);
+  assert.ok(rows.b2.agent.startsWith('explore: A very long'));
+});
+
+const bgLaunch = (t, input = {}) => {
+  t.feed(toolUse('bg1', 'Agent', { subagent_type: 'plugin:explore', description: 'Scan repo', prompt: 'p', run_in_background: true, ...input }));
+  t.feed(toolResult('bg1', 'Async agent launched successfully.'));
+};
+
+test('a background agent launch keeps the row running and adds a start note', () => {
+  const t = tracker();
+  bgLaunch(t);
+  const rows = byId(t);
+  assert.deepEqual([rows.bg1.status, rows.bg1.summary, rows.bg1.endedAt], ['running', 'Running in background', null]);
+  const n = rows['sub-start-bg1'];
+  assert.deepEqual([n.kind, n.name, n.agent, n.parentId, n.status, n.label], ['note', 'subagent', 'main', null, 'ok', 'Subagent started: explore: Scan repo']);
+  assert.equal(t.stats().orphaned, 0);
+});
+
+test('a launch is recognised by its result text when the input flag is missing, but not when it is an error', () => {
+  const t = tracker();
+  t.feed(toolUse('a1', 'Agent', { subagent_type: 'explore', description: 'x', prompt: 'p' }));
+  t.feed(toolResult('a1', [{ type: 'text', text: `Async agent launched successfully. (This tool result is internal metadata ${'x'.repeat(1100)}` }]));
+  t.feed(toolUse('a2', 'Agent', { subagent_type: 'explore', description: 'y', prompt: 'p', run_in_background: true }));
+  t.feed(toolResult('a2', 'Async agent launched failed', { is_error: true }));
+  const rows = byId(t);
+  assert.equal(rows.a1.status, 'running');
+  assert.ok(rows['sub-start-a1']);
+  assert.equal(rows.a2.status, 'error');
+  assert.ok(!rows['sub-start-a2']);
+});
+
+test('task_notification finishes a background agent and adds a finished, failed or stopped note', () => {
+  for (const [status, row, word] of [['completed', 'ok', 'finished'], ['failed', 'error', 'failed'], ['killed', 'stopped', 'stopped']]) {
+    const t = tracker();
+    bgLaunch(t);
+    t.feed({ type: 'system', subtype: 'task_notification', tool_use_id: 'bg1', status });
+    const rows = byId(t);
+    assert.equal(rows.bg1.status, row);
+    assert.equal(rows['sub-end-bg1'].label, `Subagent ${word}: explore: Scan repo`);
+    assert.equal(rows['sub-end-bg1'].name, 'subagent');
+    t.feed({ type: 'result', subtype: 'success' });
+    assert.equal(t.stats().orphaned, 0);
+    assert.ok(!byId(t)['sub-kill-bg1']);
+  }
+});
+
+test('the result event with a background agent still running adds a killed note and counts it as orphaned', () => {
+  const t = tracker();
+  bgLaunch(t);
+  t.feed({ type: 'result', subtype: 'success', is_error: false });
+  const rows = byId(t);
+  assert.equal(rows.bg1.status, 'stopped');
+  assert.deepEqual([rows['sub-kill-bg1'].status, rows['sub-kill-bg1'].label], ['stopped', 'Subagent killed (turn ended): explore: Scan repo']);
+  assert.equal(t.stats().orphaned, 1);
+});
+
+test('a foreground agent whose long result mentions "running in the background" is not a background launch', () => {
+  const t = tracker();
+  t.feed(toolUse('f1', 'Agent', { subagent_type: 'explore', description: 'Scan repo', prompt: 'p' }));
+  t.feed(toolResult('f1', `Report: the dev server keeps running in the background. ${'y'.repeat(600)}`));
+  assert.equal(byId(t).f1.status, 'ok');
+  assert.ok(!byId(t)['sub-start-f1']);
+});
+
+test('a nested running agent gets a kill note but is not counted as orphaned', () => {
+  const t = tracker();
+  bgLaunch(t);
+  t.feed(toolUse('n1', 'Agent', { subagent_type: 'explore', description: 'Nested', prompt: 'p' }, 'bg1'));
+  t.feed({ type: 'result', subtype: 'success', is_error: false });
+  const rows = byId(t);
+  assert.ok(rows['sub-kill-n1'] && rows['sub-kill-bg1']);
+  assert.equal(t.stats().orphaned, 1);
+});
+
+test('a foreground agent adds no start, end or kill notes and nothing is orphaned', () => {
+  const t = tracker();
+  t.feed(toolUse('f1', 'Agent', { subagent_type: 'explore', description: 'Scan repo', prompt: 'p' }));
+  t.feed(toolResult('f1', 'All done, the report.'));
+  t.feed({ type: 'system', subtype: 'task_notification', tool_use_id: 'f1', status: 'completed' });
+  t.feed({ type: 'result', subtype: 'success' });
+  assert.equal(byId(t).f1.status, 'ok');
+  assert.ok(t.snapshot().every((r) => r.name !== 'subagent'));
+  assert.equal(t.stats().orphaned, 0);
+});
+
+test('drop order: subagent notes outlive ordinary done notes', () => {
+  const t = tracker({ tracker: { limits: { rows: 3 } } });
+  bgLaunch(t);
+  for (let i = 0; i < 6; i++) t.feed({ type: 'assistant', message: { content: [{ type: 'thinking' }] }, parent_tool_use_id: null });
+  t.feed(toolUse('t1', 'Bash', { command: 'ls' }));
+  assert.ok(byId(t)['sub-start-bg1']);
 });
 
 test('consecutive thinking blocks are one row', () => {

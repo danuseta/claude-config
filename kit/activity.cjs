@@ -230,6 +230,12 @@ function resultText(content) {
 	if (!Array.isArray(content)) return '';
 	return content.map((b) => (b && b.type === 'text' && typeof b.text === 'string' ? b.text : b && b.type === 'image' ? '[image]' : '')).filter(Boolean).join('\n');
 }
+function isBackgroundLaunch(input, content, isError) {
+	if (isError === true) return false;
+	if (input && input.run_in_background === true) return true;
+	const first = Array.isArray(content) ? (content.find((b) => b && b.type === 'text') || {}).text : content;
+	return typeof first === 'string' && /^\s*Async agent launched/.test(first);
+}
 function errorSummary(text) {
 	const lines = String(text).split('\n').map(oneLine).filter(Boolean);
 	if (!lines.length) return 'Failed';
@@ -256,7 +262,7 @@ function createTracker({ mask = (s) => s, labels = null, now = Date.now, limits 
 	const rows = new Map();           // id -> row, insertion order = creation order
 	const dirty = new Set();
 	const hookOpen = new Map();       // hook_id -> { name, event, at }
-	const stats = { hooksOk: 0, hooksFailed: 0, dropped: 0, skipped: 0, errors: 0, seen: 0 };
+	const stats = { hooksOk: 0, hooksFailed: 0, dropped: 0, skipped: 0, errors: 0, seen: 0, orphaned: 0 };
 	let seq = 0, hookSeq = 0, noteSeq = 0, lastThinking = null;
 	const iso = (ms) => new Date(ms == null ? now() : ms).toISOString();
 
@@ -277,7 +283,8 @@ function createTracker({ mask = (s) => s, labels = null, now = Date.now, limits 
 	const looksLikeEnvDump = (text) => (String(text).match(/^\s*(?:export\s+)?[A-Z][A-Z0-9_]{2,}=\S/gm) || []).length >= 5;
 
 	const depthOf = (id) => { const r = rows.get(id); return r ? r.depth : 1; };
-	const agentOf = (parentId) => { if (!parentId) return 'main'; const p = rows.get(parentId); return p ? stripPrefix(p.name).slice(0, L.agent) || 'agent' : 'agent'; };
+	const agentTitle = (r) => (r.x.desc ? `${stripPrefix(r.name)}: ${r.x.desc}` : stripPrefix(r.name));
+	const agentOf = (parentId) => { if (!parentId) return 'main'; const p = rows.get(parentId); if (!p) return 'agent'; return (p.x.desc ? fit(agentTitle(p), L.agent) : stripPrefix(p.name).slice(0, L.agent)) || 'agent'; };
 
 	function set(row, field, value) {
 		if (row[field] === value) return;
@@ -327,7 +334,7 @@ function createTracker({ mask = (s) => s, labels = null, now = Date.now, limits 
 		let trimmed = false;
 		while (rows.size > L.rows) {
 			const all = [...rows.values()];
-			let v = all.find((r) => r.kind === 'hook' && isDone(r)) || all.find((r) => r.kind === 'note' && r.name !== 'dropped' && isDone(r));
+			let v = all.find((r) => r.kind === 'hook' && isDone(r)) || all.find((r) => r.kind === 'note' && r.name !== 'dropped' && r.name !== 'subagent' && isDone(r));
 			if (v) { remove(v, false); continue; }
 			if (!trimmed) {
 				trimmed = true;
@@ -349,6 +356,12 @@ function createTracker({ mask = (s) => s, labels = null, now = Date.now, limits 
 		if (u.kind === 'tool' && rows.size >= L.hardRows) { stats.dropped++; count(attach(parentRaw), 1); return; }
 		const parentId = attach(parentRaw);
 		const row = add({ id, parentId, kind: u.kind, agent: agentOf(parentId), name: u.name, label: u.label, summary: u.summary, input: u.input, out: u.out, hide: u.hide, tool: name, startedAt: at });
+		if (u.kind === 'agent') { row.x.desc = u.summary; row.x.bg = !!block.input && block.input.run_in_background === true; }
+		makeRoom();
+	}
+	function subNote(prefix, row, label, status) {
+		const at = iso();
+		add({ id: cleanId(`${prefix}-${row.id}`), kind: 'note', name: 'subagent', label, status, startedAt: at, endedAt: at });
 		makeRoom();
 	}
 	function finish(row, block, meta, at) {
@@ -356,6 +369,12 @@ function createTracker({ mask = (s) => s, labels = null, now = Date.now, limits 
 		const x = row.x;
 		if (row.status !== 'running') { if (row.kind === 'agent' && !x.reported) addReport(row, text); return; }
 		const isErr = block.is_error === true;
+		if (row.kind === 'agent' && !x.bgStarted && isBackgroundLaunch({ run_in_background: x.bg }, block.content, isErr)) {
+			x.bg = x.bgStarted = true;
+			set(row, 'summary', 'Running in background');
+			subNote('sub-start', row, `Subagent started: ${agentTitle(row)}`, 'ok');
+			return;
+		}
 		const decision = meta && meta.permission_decision && meta.permission_decision.decision;
 		let denied = isErr && ((decision != null && !/^(accept|allow)/i.test(String(decision))) || (!/^Exit code \d+/i.test(text) && DENIAL_RE.test(text.slice(0, 300))));
 		const status = denied ? 'denied' : isErr ? 'error' : 'ok';
@@ -474,8 +493,13 @@ function createTracker({ mask = (s) => s, labels = null, now = Date.now, limits 
 		const row = rows.get(cleanId(o.tool_use_id));
 		if (!row || row.kind !== 'agent' || row.status !== 'running') return;
 		const s = String(o.status || 'completed');
-		set(row, 'status', s === 'completed' ? 'ok' : /fail|error/i.test(s) ? 'error' : 'stopped');
+		const status = s === 'completed' ? 'ok' : /fail|error/i.test(s) ? 'error' : 'stopped';
+		set(row, 'status', status);
 		set(row, 'endedAt', iso());
+		if (row.x.bgStarted) subNote('sub-end', row, `Subagent ${status === 'ok' ? 'finished' : status === 'error' ? 'failed' : 'stopped'}: ${agentTitle(row)}`, 'ok');
+	}
+	function orphanAgents() {
+		for (const r of [...rows.values()]) if (r.kind === 'agent' && r.status === 'running') { if (r.x.bg && !r.parentId) stats.orphaned++; subNote('sub-kill', r, `Subagent killed (turn ended): ${agentTitle(r)}`, 'stopped'); }
 	}
 	function closeAll(status = 'stopped') {
 		const at = iso();
@@ -491,7 +515,7 @@ function createTracker({ mask = (s) => s, labels = null, now = Date.now, limits 
 			else if (o.type === 'system') {
 				if (o.subtype === 'hook_started' || o.subtype === 'hook_response') onHook(o);
 				else if (o.subtype === 'task_notification') onTaskDone(o);
-			} else if (o.type === 'result') closeAll('stopped');
+			} else if (o.type === 'result') { orphanAgents(); closeAll('stopped'); }
 		} catch { stats.errors++; }
 	}
 
@@ -525,4 +549,4 @@ function createTracker({ mask = (s) => s, labels = null, now = Date.now, limits 
 	return { feed, drain, requeue, closeAll, stats: summary, snapshot };
 }
 
-module.exports = { createTracker, loadLabels, builtinLabels, commandInfo, normalizeCommand, labelFor, summaryFor, detailFor, resultFor: resultText, isSensitiveCommand, isSensitivePath, describeUse, createSafe, errorSummary, LIMITS, HIDDEN_NOTE, BUILTIN_RULES };
+module.exports = { createTracker, isBackgroundLaunch, loadLabels, builtinLabels, commandInfo, normalizeCommand, labelFor, summaryFor, detailFor, resultFor: resultText, isSensitiveCommand, isSensitivePath, describeUse, createSafe, errorSummary, LIMITS, HIDDEN_NOTE, BUILTIN_RULES };

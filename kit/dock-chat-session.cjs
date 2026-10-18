@@ -262,7 +262,10 @@ async function runInteractiveTurn(msg, cfg, opts, d) {
 	if (act) await Promise.all([pace, act.settle()]);
 	else await pace;
 	if (error) await core.post({ done: false, error: core.mask(error).slice(0, 300) }, closedByServer ? 1 : undefined);
-	else await core.post(stopped ? { done: true, error: null, stopped: true } : { done: true, error: null });
+	else {
+		const subagentsRunning = !stopped ? core.subagentsRunning() : 0;
+		await core.post(stopped ? { done: true, error: null, stopped: true } : subagentsRunning > 0 ? { done: true, error: null, subagentsRunning } : { done: true, error: null });
+	}
 	await core.chain();
 	await waitFor(2000, loop);
 }

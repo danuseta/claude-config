@@ -291,6 +291,27 @@ test('an activity turn: the flags are added, /chat/activity arrives before the f
   assert.equal([...rows.values()][1].parentId, [...rows.values()][0].id);
 });
 
+test('a background agent still running at the result puts subagentsRunning on the done delta, a foreground turn does not', async () => {
+  const bg = await activityTurn({ stream: 'synthetic-background-agent.jsonl' });
+  assert.equal(bg.r.code, 0, bg.r.stderr);
+  assert.equal(bg.last.done, true);
+  assert.equal(bg.last.subagentsRunning, 1);
+  assert.ok(bg.deltas.slice(0, -1).every((d) => !('subagentsRunning' in d.body)));
+  assert.ok(finalRows(bg).has('sub-kill-toolu_SYN_BG1'));
+  const fg = await activityTurn({ stream: 'turn-2-subagent.jsonl' });
+  assert.ok(!('subagentsRunning' in fg.last));
+});
+
+test('subagentsRunning does not need the activity tracker, and a launch without the flag still counts', async () => {
+  for (const stream of ['synthetic-background-agent.jsonl', 'synthetic-background-agent-noflag.jsonl']) {
+    const t = await activityTurn({ stream, config: { activity: false } });
+    assert.equal(t.r.code, 0, t.r.stderr);
+    assert.equal(t.last.done, true);
+    assert.equal(t.last.subagentsRunning, 1);
+    assert.equal(t.activity.length, 0);
+  }
+});
+
 test('with activity on, the delta requests carry exactly the same text, session id and done flag as with it off', async () => {
   const on = await activityTurn({ stream: 'turn-2-subagent.jsonl' });
   const off = await activityTurn({ stream: 'turn-2-subagent.jsonl', config: { activity: false } });
