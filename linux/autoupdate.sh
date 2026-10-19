@@ -8,12 +8,15 @@
 AU_DRY=0
 AU_PENDING=$CCFG_RUN/bridge.restart-pending
 
-# A chat turn is a claude process under the bridge; between turns the bridge has no children.
+# A chat turn is a claude process the bridge started with --output-format stream-json; the bridge's other child is its log sink.
 turn_running() {
-  local cp
+  local cp p
   cp=$(cat "$CCFG_RUN/bridge.child" 2>/dev/null)
   is_alive "$cp" || return 1
-  [ -n "$(descendants "$cp")" ]
+  for p in $(descendants "$cp"); do
+    tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null | grep -q -- '--output-format stream-json' && return 0
+  done
+  return 1
 }
 
 # True when origin has commits the checkout lacks and a fast-forward can take them.
