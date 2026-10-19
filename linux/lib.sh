@@ -193,6 +193,7 @@ service_unit() {
     tailscale | tailscaled) printf 'tailscaled' ;;
     bridge | chat) printf 'bridge' ;;
     dock) printf 'dock' ;;
+    updater) printf 'updater' ;;
     *) return 1 ;;
   esac
 }
@@ -212,6 +213,10 @@ service_precheck() {
       command -v node >/dev/null 2>&1 || { echo "node not found on PATH"; return 3; }
       [ -f "$DOCK_APP_DIR/backend/bff-graphql/dist/index.js" ] || { echo "DOCK is not built in $DOCK_APP_DIR (personalize --only=dock)"; return 3; }
       secret_has DOCK_ENCRYPTION_KEY || { echo "DOCK_ENCRYPTION_KEY not set (personalize --only=dock makes one)"; return 3; }
+      ;;
+    updater)
+      [ "$ENABLE_AUTOUPDATE" = 1 ] || { echo "switch ENABLE_AUTOUPDATE is off"; return 3; }
+      command -v git >/dev/null 2>&1 || { echo "git not found on PATH"; return 3; }
       ;;
   esac
   return 0
@@ -237,6 +242,7 @@ service_prepare() {
       done
       export DOCK_LEDGER_PEER_PROXY="http://127.0.0.1:$TS_PROXY_PORT"
       ;;
+    updater) setup_path; command -v node >/dev/null 2>&1 || load_template_env ;;
   esac
 }
 
@@ -252,6 +258,8 @@ service_exec() {
       npx prisma db push --skip-generate --schema backend/bff-graphql/prisma/schema.prisma || return 1
       exec node backend/bff-graphql/dist/index.js
       ;;
+    # Each pass is a new bash, so a pull that rewrites autoupdate.sh never changes a script while it runs.
+    updater) while :; do bash "$CCFG_LINUX_DIR/autoupdate.sh"; sleep "$AUTOUPDATE_EVERY_SECS"; done ;;
   esac
 }
 

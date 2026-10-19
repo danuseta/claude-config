@@ -383,6 +383,17 @@ s_bridge() {
   note "bridge running (config $res)"
 }
 
+s_updater() {
+  local why
+  why=$(service_precheck updater) || { note "$why"; return 10; }
+  if [ "$DRY" = 1 ]; then
+    service_pid updater >/dev/null && note "updater already running" || note "would start the updater (a pass every ${AUTOUPDATE_EVERY_SECS}s)"
+    return 0
+  fi
+  service_start updater || { note "updater did not start"; return 1; }
+  note "updater running"
+}
+
 s_dock() {
   local head
   [ "$ENABLE_DOCK" = 1 ] || { note "switch ENABLE_DOCK is off"; return 10; }
@@ -489,6 +500,7 @@ main() {
   step plugins s_plugins 1800
   step dock s_dock 1200
   step bridge s_bridge 120
+  step updater s_updater 30
   step brain s_brain 400
   step fallback s_fallback
   finish
