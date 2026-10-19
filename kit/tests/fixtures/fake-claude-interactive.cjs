@@ -8,7 +8,8 @@ const args = process.argv.slice(2);
 
 if (args[0] === '--help') {
   process.stdout.write('Usage: claude [options]\n  --verbose  Override verbose mode\n  --include-hook-events  Include hooks\n  --forward-subagent-text  Forward text\n'
-    + (env.FAKE_NO_INTERACTIVE ? '' : '  --input-format <format>  Input format (stream-json)\n  --permission-prompts <mode>  Where permission prompts go (host)\n'));
+    + (env.FAKE_NO_INTERACTIVE ? '' : '  --input-format <format>  Input format (stream-json)\n  --permission-prompts <mode>  Where permission prompts go (host)\n')
+    + (env.FAKE_NO_INTERACTIVE || env.FAKE_NO_REPLAY ? '' : '  --replay-user-messages  Re-emit user messages from stdin back on stdout\n'));
   process.exit(0);
 }
 
@@ -25,9 +26,24 @@ const script = JSON.parse(env.FAKE_SCRIPT || '[]');
 const asks = new Map();
 const decisions = {};
 const waiters = [];
-let interrupted = false, started = false;
+const replay = args.includes('--replay-user-messages');
+const steers = [];
+let interrupted = false, started = false, finished = false;
 const wake = () => waiters.splice(0).forEach((f) => f());
 const until = async (pred) => { while (!pred() && !interrupted) await new Promise((r) => waiters.push(r)); };
+const textOf = (m) => m.message.content.map((b) => b.text).join('');
+const readSteers = () => {
+  const read = steers.splice(0);
+  if (replay) for (const m of read) emit({ type: 'user', isReplay: true, uuid: m.uuid, session_id: sessionId, message: m.message, parent_tool_use_id: null });
+  return read;
+};
+// Like claude, a message written after the script ended is read as the next turn of the same process.
+const nextTurn = () => {
+  if (!finished || interrupted || !steers.length) return;
+  const read = readSteers();
+  emit({ type: 'assistant', session_id: sessionId, message: { content: [{ type: 'text', text: `steered: ${read.map(textOf).join(' | ')}` }] } });
+  emit({ type: 'result', subtype: 'success', is_error: false, session_id: sessionId, ...(env.FAKE_NEXT_COST ? { total_cost_usd: Number(env.FAKE_NEXT_COST) } : {}) });
+};
 const ok = (requestId, response) => emit({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response } });
 
 const settingsArg = argOf('--settings') || '';
@@ -84,6 +100,8 @@ async function run() {
     else if (step.sayDecisions) emit({ type: 'assistant', session_id: sessionId, message: { content: [{ type: 'text', text: `DECISIONS ${JSON.stringify(decisions)}` }] } });
     else if (step.sleep) await Promise.race([new Promise((r) => setTimeout(r, step.sleep)), until(() => false)]);
     else if (step.init) emit(initEvent());
+    else if (step.awaitSteer) await until(() => steers.length > 0);
+    else if (step.readSteers) emit({ type: 'assistant', session_id: sessionId, message: { content: [{ type: 'text', text: `read: ${readSteers().map(textOf).join(' | ')}` }] } });
     else if (step.result) emit({ type: 'result', subtype: 'success', is_error: false, session_id: sessionId, ...step.result });
     else if (step.hang) await until(() => false);
     else if (step.bigLine) await new Promise((r) => { process.stdout.write(Buffer.alloc(step.bigLine, 120), () => process.stdout.write('\n', r)); });
@@ -114,7 +132,12 @@ if (!args.includes('--input-format')) {
     } else if (o.type === 'user' && !started) {
       started = true;
       emit(initEvent());
-      run();
+      if (replay) emit({ type: 'user', isReplay: true, uuid: o.uuid || 'first-uuid', session_id: sessionId, message: o.message, parent_tool_use_id: null });
+      run().then(() => { finished = true; nextTurn(); });
+    } else if (o.type === 'user') {
+      steers.push(o);
+      wake();
+      nextTurn();
     }
   });
   rl.on('close', () => { if (!env.FAKE_IGNORE_STDIN_CLOSE) process.exit(0); });
