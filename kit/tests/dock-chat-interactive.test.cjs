@@ -80,7 +80,7 @@ function fakeDock(o = {}) {
   })));
 }
 
-const FAST_TUNING = { waitSeconds: 1, waitGapMs: 30, askTtlMs: 600000, interruptGraceMs: 10000, closeGraceMs: 5000, exitGraceMs: 3000 };
+const FAST_TUNING = { waitSeconds: 1, waitGapMs: 30, askTtlMs: 600000, interruptGraceMs: 10000, closeGraceMs: 5000, exitGraceMs: 3000, followTurnMs: 300 };
 
 async function turn({ script = [], dock: dockOpts = {}, config = {}, env: envIn = {}, tuning = {}, seed, after } = {}) {
   const dir = tmp('chat-int');
@@ -142,6 +142,16 @@ test('an interactive turn: stream-json arguments, user text only on stdin, initi
   assert.equal(t.last.stopped, undefined);
   assert.ok(t.state.requests.every((q) => !JSON.stringify(q.body).includes('canary-account')), 'the account never leaves');
   assert.deepEqual(t.argv.slice(t.argv.indexOf('--permission-prompt-tool'), t.argv.indexOf('--permission-prompt-tool') + 2), ['--permission-prompt-tool', 'stdio']);
+});
+
+test('a resumed session that runs a queued turn first: the first result does not end the turn, the prompt turn after it does', async () => {
+  const t = await turn({ script: [{ say: 'notification handled' }, { result: {} }, { sleep: 100 }, { init: true }, { say: 'prompt answered' }, { result: {} }] });
+  assert.equal(t.r.code, 0, t.r.stderr);
+  assert.ok(t.texts.includes('assistant: notification handled'));
+  assert.ok(t.texts.includes('assistant: prompt answered'), 'the prompt turn after the first result reaches DOCK');
+  assert.equal(t.last.done, true);
+  assert.equal(t.last.error, null);
+  assert.match(t.r.stderr + t.r.stdout, /claude started another turn after a result/);
 });
 
 test('the claim carries the capabilities, /chat/wait carries them too, and the process is not left running', async () => {

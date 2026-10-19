@@ -129,13 +129,27 @@ async function runInteractiveTurn(msg, cfg, opts, d) {
 		if (!exited) d.killTree(child);
 	}
 
-	const onResult = () => {
+	const finishTurn = () => {
 		afterResult = true;
 		asker.closeAll();
 		d.snapshot(child);
 		resolveResult();
 		endInput();
 		killLater(timing.exitGraceMs);
+	};
+	// A resumed session can run a queued turn of its own first (a task notification about agents of the previous run),
+	// so a result ends the turn only when no new turn starts within followTurnMs.
+	let followTimer = null;
+	const onResult = () => {
+		if (stopping) return finishTurn();
+		clearTimeout(followTimer);
+		followTimer = setTimeout(() => { followTimer = null; finishTurn(); }, timing.followTurnMs);
+	};
+	const onTurnStart = () => {
+		if (!followTimer) return;
+		clearTimeout(followTimer);
+		followTimer = null;
+		log('claude started another turn after a result; the turn goes on');
 	};
 
 	let unsupportedLogged = false, oversizeLogged = false;
@@ -158,6 +172,7 @@ async function runInteractiveTurn(msg, cfg, opts, d) {
 		if (o.type === 'control_cancel_request') return asker.cancel(o.request_id);
 		if (act) act.feed(o);
 		if (o.type === 'system' && o.subtype === 'init') {
+			onTurnStart();
 			initEvent = o;
 			d.noteInit(o);
 			log(`turn model: ${String(o.model || 'unknown').slice(0, 60)}`);
@@ -232,6 +247,7 @@ async function runInteractiveTurn(msg, cfg, opts, d) {
 	const loop = waitLoop().catch((e) => { log(`wait loop stopped: ${e.message}`); });
 
 	const code = await closedP;
+	if (followTimer) { clearTimeout(followTimer); followTimer = null; afterResult = true; }
 	ended = true;
 	waitCtl.abort();
 	endSignal();
