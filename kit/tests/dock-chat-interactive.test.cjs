@@ -50,7 +50,8 @@ function fakeDock(o = {}) {
           }
           const stop = Boolean(o.stopWhen && o.stopWhen(state));
           const closed = Boolean(o.closeWhen && o.closeWhen(state));
-          if (answers.length || stop || closed || Date.now() >= end) return json({ ok: true, result: { stop, answers, closed } });
+          const steer = (o.steer || []).filter((s) => n >= (s.fromWait || 2) && s.id > ((body && body.steerSeen) || 0)).map(({ id, text }) => ({ id, text }));
+          if (answers.length || stop || closed || steer.length || Date.now() >= end) return json({ ok: true, result: { stop, answers, closed, ...(steer.length ? { steer } : {}) } });
           await sleep(20);
         }
       }
@@ -152,6 +153,56 @@ test('a resumed session that runs a queued turn first: the first result does not
   assert.equal(t.last.done, true);
   assert.equal(t.last.error, null);
   assert.match(t.r.stderr + t.r.stdout, /claude started another turn after a result/);
+});
+
+const STEER = [{ id: 40, text: 'keep the tag filter' }];
+const steerAcked = (t) => t.state.requests.findIndex((q) => q.route === '/chat/wait' && Array.isArray(q.body.steerAck) && q.body.steerAck.includes(40));
+
+test('steer: a message from DOCK is written into the running turn, acked once claude echoes it, and the turn goes on', async () => {
+  const t = await turn({ script: [{ say: 'working' }, { awaitSteer: true }, { readSteers: true }, { result: {} }], dock: { steer: STEER } });
+  assert.equal(t.r.code, 0, t.r.stderr);
+  assert.ok(t.argv.includes('--replay-user-messages'));
+  assert.ok(t.state.requests.find((q) => q.route === '/chat/claim').body.caps.features.includes('steer'));
+  const written = t.stdin.filter((m) => m.type === 'user').slice(1);
+  assert.equal(written.length, 1, 'the steer is written once');
+  assert.deepEqual(written[0].message, { role: 'user', content: [{ type: 'text', text: 'keep the tag filter' }] });
+  assert.match(written[0].uuid, /^[0-9a-f-]{36}$/);
+  assert.ok(t.texts.includes('assistant: read: keep the tag filter'));
+  assert.ok(!t.texts.some((x) => x.includes('user:')), 'echoes are not shown as messages');
+  const acked = steerAcked(t);
+  assert.ok(acked >= 0, 'the read steer is acked');
+  assert.ok(acked < t.state.requests.findIndex((q) => q.route === '/chat/delta' && q.body.done), 'the ack reaches DOCK before the turn ends');
+  assert.ok(t.state.waits.filter((w) => w.steerSeen === 40).length >= 1, 'later waits carry steerSeen');
+  assert.equal(t.last.done, true);
+  assert.equal(t.last.error, null);
+});
+
+test('steer: one written before the result is answered as the next turn of the same process, not cut off', async () => {
+  const t = await turn({ script: [{ say: 'first' }, { awaitSteer: true }, { result: { total_cost_usd: 0.1 } }, { sleep: 3000 }], dock: { steer: STEER }, env: { FAKE_NEXT_COST: '0.25' }, tuning: { steerGraceMs: 5000, exitGraceMs: 200 } });
+  assert.equal(t.r.code, 0, t.r.stderr);
+  assert.ok(t.texts.includes('assistant: steered: keep the tag filter'), 'the answer to the steer reaches DOCK');
+  assert.ok(steerAcked(t) >= 0);
+  assert.equal(t.last.done, true);
+  assert.equal(t.last.error, null);
+  const costs = t.state.requests.filter((q) => q.route === '/chat/status').map((q) => q.body.turnCostUsd);
+  assert.deepEqual(costs.map((c) => Math.round(c * 100) / 100), [0.1, 0.15], 'each result reports its own cost, not the running total');
+});
+
+test('steer: a steer never read ends the turn after steerGraceMs, unacked, so DOCK runs it as the next turn', async () => {
+  const t = await turn({ script: [{ say: 'first' }, { awaitSteer: true }, { result: {} }, { hang: true }], dock: { steer: STEER }, env: { FAKE_NO_REPLAY: '' }, tuning: { steerGraceMs: 400 } });
+  assert.equal(t.r.code, 0, t.r.stderr);
+  assert.equal(steerAcked(t), -1);
+  assert.equal(t.last.done, true);
+  assert.match(t.r.stderr + t.r.stdout, /a steer was not read in time/);
+});
+
+test('steer: a claude without --replay-user-messages offers no steer and writes none', async () => {
+  const t = await turn({ script: [{ say: 'working' }, { sleep: 300 }, { result: {} }], dock: { steer: STEER }, env: { FAKE_NO_REPLAY: '1' } });
+  assert.equal(t.r.code, 0, t.r.stderr);
+  assert.ok(!t.argv.includes('--replay-user-messages'));
+  assert.ok(!t.state.requests.find((q) => q.route === '/chat/claim').body.caps.features.includes('steer'));
+  assert.equal(t.stdin.filter((m) => m.type === 'user').length, 1);
+  assert.ok(t.state.waits.every((w) => w.steerSeen === undefined && w.steerAck === undefined));
 });
 
 test('the claim carries the capabilities, /chat/wait carries them too, and the process is not left running', async () => {

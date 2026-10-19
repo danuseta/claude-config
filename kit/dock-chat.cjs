@@ -66,7 +66,7 @@ function timing(askTtlSeconds, env = process.env) {
 	const num = (v, d) => (Number.isFinite(v) && v >= 0 ? v : d);
 	return {
 		askTtlMs: num(t.askTtlMs, askTtlSeconds * 1000), waitBudgetMs: num(t.waitBudgetMs, 30 * 60 * 1000), waitSeconds: num(t.waitSeconds, 25), waitGapMs: num(t.waitGapMs, 1000),
-		interruptGraceMs: num(t.interruptGraceMs, 10000), closeGraceMs: num(t.closeGraceMs, 5000), exitGraceMs: num(t.exitGraceMs, 10000), followTurnMs: num(t.followTurnMs, 5000), drainMs: num(t.drainMs, 1500), outageMs: num(t.outageMs, 30 * 60 * 1000),
+		interruptGraceMs: num(t.interruptGraceMs, 10000), closeGraceMs: num(t.closeGraceMs, 5000), exitGraceMs: num(t.exitGraceMs, 10000), followTurnMs: num(t.followTurnMs, 5000), steerGraceMs: num(t.steerGraceMs, 30000), drainMs: num(t.drainMs, 1500), outageMs: num(t.outageMs, 30 * 60 * 1000),
 	};
 }
 
@@ -275,7 +275,7 @@ function supportedFlags(claude, opts) {
 	if (!activityMemo.helpFlags.has(key)) {
 		activityMemo.helpFlags.set(key, new Promise((resolve) => {
 			let text = "";
-			const done = () => resolve({ hooks: text.includes("--include-hook-events"), subagentText: text.includes("--forward-subagent-text"), inputFormat: text.includes("--input-format"), permissionPrompts: text.includes("--permission-prompts") });
+			const done = () => resolve({ hooks: text.includes("--include-hook-events"), subagentText: text.includes("--forward-subagent-text"), inputFormat: text.includes("--input-format"), permissionPrompts: text.includes("--permission-prompts"), replayUser: text.includes("--replay-user-messages") });
 			try {
 				const child = spawn(claude.cmd, [...claude.prefix, "--help"], { cwd: opts.cwd, env: childEnv(opts), shell: false, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
 				const timer = setTimeout(() => { killTree(child); done(); }, HELP_TIMEOUT_MS);
@@ -398,7 +398,10 @@ function statusOf(msg, result, state) {
 		body.contextSize = size;
 		if (tokens > 0) body.contextPercentage = Math.round((tokens / size) * 1000) / 10;
 	}
-	if (Number.isFinite(result.total_cost_usd)) body.turnCostUsd = result.total_cost_usd;
+	if (Number.isFinite(result.total_cost_usd)) {
+		body.turnCostUsd = Math.max(0, result.total_cost_usd - state.costSeen);
+		state.costSeen = result.total_cost_usd;
+	}
 	return body;
 }
 
@@ -407,7 +410,7 @@ function statusOf(msg, result, state) {
 function turnCore(msg, cfg, opts) {
 	const mask = (s) => maskString(String(s), { masked: 0, blobs: 0 }, cfg.extra);
 	const out = (text) => cut(mask(text));
-	const state = { claudeSessionId: interact.uuidOf(msg.claudeSessionId), pending: [], detail: null, lastSent: 0, finalAt: 0, parked: false, model: null, usage: null, uploads: [], seen: new Set(), images: 0, queued: 0, statusLogged: false };
+	const state = { claudeSessionId: interact.uuidOf(msg.claudeSessionId), pending: [], detail: null, lastSent: 0, finalAt: 0, parked: false, model: null, usage: null, uploads: [], seen: new Set(), images: 0, queued: 0, statusLogged: false, costSeen: 0 };
 	let chain = Promise.resolve();
 	let timer = null, child, result = null, act = null;
 	const subs = new Map();
@@ -577,6 +580,7 @@ function buildCaps(opts, flags) {
 		if (cat && cat.commands.length) features.push("commands");
 		if (cat && cat.models.length) features.push("model", "effort");
 		if (cat && cat.fast.available) features.push("fast");
+		if (flags.replayUser) features.push("steer");
 	}
 	return { v: 2, kit: KIT_ID, claude: bridgeMemo.claudeVersion, features, modes: features.length ? [...interact.MODES] : [], catalogHash: cat ? cat.hash : null };
 }

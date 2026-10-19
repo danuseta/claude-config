@@ -1,6 +1,7 @@
 'use strict';
 const os = require('os');
 const path = require('path');
+const { randomUUID } = require('crypto');
 const { spawn } = require('child_process');
 const dockPush = require('./dock-push.cjs');
 const files = require('./dock-chat-files.cjs');
@@ -9,6 +10,8 @@ const procLib = require('./dock-chat-proc.cjs');
 
 const MAX_BACKOFF_MS = 30000;
 const KEEP_AWAKE_EVERY_MS = 10 * 60 * 1000;
+const STEER_ACKS_PER_WAIT = 20;
+const STEER_FLUSH_TRIES = 5;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const waitFor = (ms, ...promises) => new Promise((resolve) => {
@@ -51,6 +54,8 @@ async function runInteractiveTurn(msg, cfg, opts, d) {
 	args.push(...chosen.args);
 	if (att.files.length && att.dir) args.push('--add-dir', att.dir);
 	if (opts.appendSystemPrompt) args.push('--append-system-prompt', opts.appendSystemPrompt);
+	const canSteer = Boolean(flags.replayUser);
+	if (canSteer && !opts.extraArgs.includes('--replay-user-messages')) args.push('--replay-user-messages');
 	args.push(...opts.extraArgs);
 
 	const env = d.childEnv(opts);
@@ -129,7 +134,44 @@ async function runInteractiveTurn(msg, cfg, opts, d) {
 		if (!exited) d.killTree(child);
 	}
 
+	// Steer messages written to stdin, by uuid, until claude echoes them back as read. Claude runs one written before a result
+	// as its next turn, so the turn does not end while one is unread; steerGraceMs bounds that wait.
+	const unread = new Map();
+	const steerAcks = [];
+	let steerSeen = 0, steerTimer = null, steerLate = false, flushing = null;
+	const flushSteerAcks = () => {
+		if (flushing || !steerAcks.length) return flushing || Promise.resolve();
+		const ids = steerAcks.splice(0, STEER_ACKS_PER_WAIT);
+		const back = () => { steerAcks.unshift(...ids.filter((id) => !steerAcks.includes(id))); };
+		flushing = d.call('/chat/wait', { sessionId, replyTo, wait: 0, ack: [], steerSeen, steerAck: ids }, 10000)
+			.then((r) => { if (!r || r.skipped || r.status < 200 || r.status >= 300) back(); }, back)
+			.finally(() => { flushing = null; });
+		return flushing;
+	};
+	const writeSteers = (list) => {
+		for (const s of list) {
+			if (!s || !Number.isInteger(s.id) || s.id <= steerSeen || typeof s.text !== 'string') continue;
+			const uuid = randomUUID();
+			if (!send({ type: 'user', uuid, message: { role: 'user', content: [{ type: 'text', text: s.text || ' ' }] }, parent_tool_use_id: null })) return;
+			unread.set(uuid, s.id);
+			steerSeen = s.id;
+			log(`steer ${s.id} written to the running turn`);
+		}
+	};
+	const onEcho = (o) => {
+		const id = unread.get(o.uuid);
+		if (id === undefined) return;
+		unread.delete(o.uuid);
+		steerAcks.push(id);
+		if (!unread.size) { clearTimeout(steerTimer); steerTimer = null; }
+		void flushSteerAcks();
+	};
+
 	const finishTurn = () => {
+		if (unread.size && !stopping && !steerLate) {
+			if (!steerTimer) steerTimer = setTimeout(() => { steerTimer = null; steerLate = true; log('a steer was not read in time; the turn ends'); finishTurn(); }, timing.steerGraceMs);
+			return;
+		}
 		afterResult = true;
 		asker.closeAll();
 		d.snapshot(child);
@@ -170,6 +212,7 @@ async function runInteractiveTurn(msg, cfg, opts, d) {
 			return;
 		}
 		if (o.type === 'control_cancel_request') return asker.cancel(o.request_id);
+		if (o.type === 'user' && o.isReplay) return onEcho(o);
 		if (act) act.feed(o);
 		if (o.type === 'system' && o.subtype === 'init') {
 			onTurnStart();
@@ -213,10 +256,15 @@ async function runInteractiveTurn(msg, cfg, opts, d) {
 			skipCancelled = false;
 			const body = { sessionId, replyTo, wait: timing.waitSeconds, ack, caps: d.caps() };
 			if (cancelled.length) body.cancelled = cancelled;
+			const steerAck = canSteer ? steerAcks.splice(0, STEER_ACKS_PER_WAIT) : [];
+			if (canSteer) body.steerSeen = steerSeen;
+			if (steerAck.length) body.steerAck = steerAck;
+			const steerBack = () => { steerAcks.unshift(...steerAck.filter((id) => !steerAcks.includes(id))); };
 			let r = null;
 			try { r = await d.call('/chat/wait', body, (timing.waitSeconds + 5) * 1000, waitCtl.signal); } catch (e) { if (!ended) log(`wait failed: ${e.message}`); }
-			if (ended) return;
 			const status = r && !r.skipped ? r.status : 0;
+			if (status < 200 || status >= 300) steerBack();
+			if (ended) return;
 			if (status === 404) {
 				if (r.error && /Unknown ticket/i.test(r.error)) { void stopSequence('closed'); return; }
 				d.markOld();
@@ -240,6 +288,7 @@ async function runInteractiveTurn(msg, cfg, opts, d) {
 			const res = r.result && typeof r.result === 'object' ? r.result : {};
 			const answers = Array.isArray(res.answers) ? res.answers : [];
 			asker.deliver(answers);
+			if (canSteer && Array.isArray(res.steer) && !afterResult && res.stop !== true && res.closed !== true) writeSteers(res.steer);
 			if (res.stop === true) { void stopSequence('stop'); return; }
 			if (res.closed === true) { void stopSequence('closed'); return; }
 		}
@@ -248,6 +297,7 @@ async function runInteractiveTurn(msg, cfg, opts, d) {
 
 	const code = await closedP;
 	if (followTimer) { clearTimeout(followTimer); followTimer = null; afterResult = true; }
+	clearTimeout(steerTimer);
 	ended = true;
 	waitCtl.abort();
 	endSignal();
@@ -277,6 +327,13 @@ async function runInteractiveTurn(msg, cfg, opts, d) {
 	process.removeListener('SIGTERM', onSignal);
 	if (act) await Promise.all([pace, act.settle()]);
 	else await pace;
+	// An ack lost here makes DOCK run a steer Claude already answered a second time, so it is retried before done is sent.
+	for (let attempt = 0; attempt < STEER_FLUSH_TRIES && (flushing || steerAcks.length); attempt++) {
+		await flushing;
+		if (steerAcks.length) await flushSteerAcks();
+		if (steerAcks.length) await sleep(1000 * (attempt + 1));
+	}
+	if (steerAcks.length) log(`${steerAcks.length} steer ack(s) did not reach DOCK; DOCK may run them again`);
 	if (error) await core.post({ done: false, error: core.mask(error).slice(0, 300) }, closedByServer ? 1 : undefined);
 	else {
 		const subagentsRunning = !stopped ? core.subagentsRunning() : 0;
