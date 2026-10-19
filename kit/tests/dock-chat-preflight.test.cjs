@@ -18,7 +18,7 @@ function profile(dir, drop) {
   fs.mkdirSync(path.join(plugin, 'src', 'hooks'), { recursive: true });
   if (drop !== 'installed') fs.writeFileSync(path.join(plugin, 'src', 'hooks', 'caveman-activate.js'), '');
   fs.writeFileSync(path.join(cfg, 'settings.json'), JSON.stringify({
-    hooks: { PreToolUse: drop === 'hook' ? [] : [{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: 'rtk hook claude' }] }] },
+    hooks: { PreToolUse: drop === 'hook' ? [] : [{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: '[ "$DOCK_RTK" = off ] || rtk hook claude' }] }] },
     enabledPlugins: { 'caveman@caveman': drop !== 'enabled' },
   }));
   fs.writeFileSync(path.join(cfg, 'plugins', 'installed_plugins.json'), JSON.stringify({ plugins: { 'caveman@caveman': [{ installPath: plugin }] } }));
@@ -90,4 +90,58 @@ test('settings: the shared allowlist is in the form the rtk hook rewrites to, an
 test('settings: the Linux overlay adds no permissions of its own, so both machines get the same list', () => {
   assert.equal(JSON.parse(fs.readFileSync(path.join(REPO, 'settings', 'settings.linux.json'), 'utf8')).permissions, undefined);
   assert.equal(JSON.parse(fs.readFileSync(path.join(REPO, 'settings', 'settings.windows.json'), 'utf8')).permissions, undefined);
+});
+
+test('childEnv: CAVEMAN_DEFAULT_MODE follows the agent setting at every level', () => {
+  for (const caveman of ['off', 'lite', 'full', 'ultra']) assert.equal(chat.childEnv({ configDir: null, agent: { rtk: true, caveman } }, {}).CAVEMAN_DEFAULT_MODE, caveman);
+});
+
+test('preflight: rtk off skips both rtk checks, caveman off skips both caveman checks', () => {
+  const dir = tmp('preflight');
+  try {
+    assert.deepEqual(problems(profile(dir, 'hook'), { platform: 'linux', runs: () => false, agent: { rtk: false, caveman: 'full' } }), []);
+    assert.deepEqual(problems(profile(dir, 'enabled'), { runs: () => true, agent: { rtk: true, caveman: 'off' } }), []);
+    assert.deepEqual(problems({ CLAUDE_CONFIG_DIR: dir + '-none' }, { platform: 'linux', runs: () => false, agent: { rtk: false, caveman: 'off' } }), []);
+    assert.equal(problems(profile(dir, 'hook'), { runs: () => false, agent: { rtk: true, caveman: 'off' } }).length, 2);
+  } finally { rmrf(dir); }
+});
+
+test('numstatOf: normal rows, binary rows count as 0, empty output has no files', () => {
+  assert.deepEqual(chat.numstatOf('3\t1\ta/b.ts\n-\t-\timg.png\n'), [{ path: 'a/b.ts', added: 3, removed: 1 }, { path: 'img.png', added: 0, removed: 0 }]);
+  assert.deepEqual(chat.numstatOf(''), []);
+});
+
+test('childEnv: DOCK_RTK=off only when the agent setting turns rtk off', () => {
+  assert.equal(chat.childEnv({ configDir: null, agent: { rtk: false, caveman: 'full' } }, {}, 'linux').DOCK_RTK, 'off');
+  assert.equal(chat.childEnv({ configDir: null, agent: { rtk: true, caveman: 'full' } }, { DOCK_RTK: 'off' }, 'linux').DOCK_RTK, undefined);
+  assert.equal(chat.childEnv({ configDir: null }, {}).DOCK_RTK, undefined);
+});
+
+test('preflight: rtk off with an unguarded rtk hook still in settings.json is a problem, a guarded one is not', () => {
+  const dir = tmp('preflight');
+  try {
+    const env = profile(dir);
+    const file = path.join(env.CLAUDE_CONFIG_DIR, 'settings.json');
+    const settings = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const off = { platform: 'linux', runs: () => false, agent: { rtk: false, caveman: 'full' } };
+    assert.deepEqual(problems(env, off), []);
+    settings.hooks.PreToolUse[0].hooks.push({ type: 'command', command: 'rtk hook claude' });
+    fs.writeFileSync(file, JSON.stringify(settings));
+    const found = problems(env, off);
+    assert.equal(found.length, 1);
+    assert.match(found[0], /rtk is off in DOCK but this machine still has an unguarded "rtk hook claude" hook; remove it from .*settings\.json/);
+    assert.deepEqual(problems(env, { runs: () => true, agent: { rtk: true, caveman: 'full' } }), []);
+  } finally { rmrf(dir); }
+});
+
+test('windows: rtk stays on whatever the agent setting says', () => {
+  assert.equal(chat.childEnv({ configDir: null, agent: { rtk: false, caveman: 'lite' } }, {}, 'win32').DOCK_RTK, undefined);
+  assert.equal(chat.childEnv({ configDir: null, agent: { rtk: false, caveman: 'lite' } }, {}, 'win32').CAVEMAN_DEFAULT_MODE, 'lite');
+  const dir = tmp('preflight');
+  try {
+    const agent = { rtk: false, caveman: 'full' };
+    assert.match(problems(profile(dir, 'hook'), { platform: 'win32', runs: () => true, agent }).join(), /"rtk hook claude" PreToolUse hook is missing/);
+    assert.match(problems(profile(dir), { platform: 'win32', runs: () => false, agent }).join(), /rtk is not runnable/);
+    assert.deepEqual(problems(profile(dir), { platform: 'win32', runs: () => true, agent }), []);
+  } finally { rmrf(dir); }
 });

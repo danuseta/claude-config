@@ -15,7 +15,7 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { spawn, spawnSync } = require("child_process");
+const { spawn, spawnSync, execFile } = require("child_process");
 const { maskString, config, send, sendFile, toolLine, cut, pushLedgersChangedSince } = require("./dock-push.cjs");
 const activityLib = require("./activity.cjs");
 const interact = require("./dock-chat-interact.cjs");
@@ -99,8 +99,10 @@ function settings({ platform = process.platform, paths = PATHS, file: given } = 
 // The environment claude runs in. DOCK_CHAT_TURN=1 switches guard.cjs to its unattended profile; CAVEMAN_DEFAULT_MODE switches caveman on,
 // which stays off in a headless session without it; CLAUDE_CONFIG_DIR is set only when configDir is; the proxy variables kit-node sets to
 // reach DOCK are removed so Anthropic traffic does not go through tailscaled.
-function childEnv(opts, base = process.env) {
-	const env = { ...base, DOCK_CHAT_TURN: "1", CAVEMAN_DEFAULT_MODE: "caveman" };
+function childEnv(opts, base = process.env, platform = process.platform) {
+	const env = { ...base, DOCK_CHAT_TURN: "1", CAVEMAN_DEFAULT_MODE: (opts.agent && opts.agent.caveman) || "caveman" };
+	if (platform !== "win32" && opts.agent && opts.agent.rtk === false) env.DOCK_RTK = "off";
+	else delete env.DOCK_RTK;
 	const keep = new Set(Array.isArray(opts.passEnv) ? opts.passEnv : []);
 	for (const k of Object.keys(env)) if (BRIDGE_SECRET.test(k) && !keep.has(k)) delete env[k];
 	if (opts.configDir) env.CLAUDE_CONFIG_DIR = opts.configDir;
@@ -379,12 +381,60 @@ async function deliverEntry({ msg, body, files }, retryBaseMs) {
 	return left.length === 0;
 }
 
+function numstatOf(text) {
+	const files = [];
+	for (const line of String(text).split("\n")) {
+		const m = /^(\d+|-)\t(\d+|-)\t(.+)$/.exec(line);
+		if (m) files.push({ path: m[3], added: Number(m[1]) || 0, removed: Number(m[2]) || 0 });
+	}
+	return files;
+}
+
+const EDIT_PATH = { Edit: "file_path", Write: "file_path", MultiEdit: "file_path", NotebookEdit: "notebook_path" };
+
+function touchedPath(block, cwd) {
+	const key = EDIT_PATH[block.name];
+	const p = key && block.input && block.input[key];
+	return typeof p === "string" && p ? path.resolve(cwd, p) : null;
+}
+
+const git = (cwd, args) => new Promise((resolve) => execFile("git", ["-c", "core.quotePath=false", ...args], { cwd, encoding: "utf8", timeout: 5000, windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => resolve(err ? null : stdout)));
+
+async function changedFiles(paths) {
+	const byRepo = new Map(), tops = new Map();
+	for (const file of paths) {
+		const dir = path.dirname(file);
+		if (!tops.has(dir)) tops.set(dir, await git(dir, ["rev-parse", "--show-toplevel"]));
+		const top = tops.get(dir);
+		if (top && top.trim()) {
+			const repo = path.resolve(top.trim());
+			byRepo.set(repo, [...(byRepo.get(repo) || []), file]);
+		}
+	}
+	const files = [];
+	for (const [repo, list] of byRepo) {
+		const rel = (f) => path.relative(repo, f).split(path.sep).join("/");
+		const tracked = new Set(String((await git(repo, ["ls-files", "--", ...list.map(rel)])) || "").split("\n").filter(Boolean));
+		const diff = tracked.size ? await git(repo, ["diff", "--numstat", "--no-renames", "HEAD", "--", ...tracked]) : "";
+		const found = new Map(numstatOf(diff || "").map((f) => [f.path, f]));
+		for (const f of list) {
+			const name = rel(f), shown = path.basename(repo) + "/" + name;
+			let counted = found.get(name);
+			if (!counted && !tracked.has(name)) {
+				try { counted = { added: fs.readFileSync(f, "utf8").split("\n").filter((l, i, all) => l || i < all.length - 1).length, removed: 0 }; } catch { counted = null; }
+			}
+			files.push({ path: shown, added: counted ? counted.added : 0, removed: counted ? counted.removed : 0 });
+		}
+	}
+	return files;
+}
+
 const tokensOf = (u) => (u && typeof u === "object" ? [u.input_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens].reduce((n, v) => n + (Number.isFinite(v) ? v : 0), 0) : 0);
 
 // What /chat/status gets after a turn. Context is the last main-thread API call of the turn (input plus both cache counts), because the
 // result event's own usage adds up every call of the turn; that sum is the fallback when no assistant event carried usage.
-function statusOf(msg, result, state) {
-	const body = { sessionId: msg.sessionId };
+function statusOf(msg, result, state, files) {
+	const body = { sessionId: msg.sessionId, files };
 	if (state.model) body.model = state.model;
 	const defaults = bridgeMemo.catalog && bridgeMemo.catalog.defaults;
 	const effort = (msg.options && typeof msg.options.effort === "string" && msg.options.effort) || (defaults && defaults.effort);
@@ -486,6 +536,7 @@ function turnCore(msg, cfg, opts) {
 		}
 		return rest.replace(/\n{3,}/g, "\n\n").trim();
 	};
+	const touched = new Set();
 	const trackSubagents = (o) => {
 		const blocks = o.message && Array.isArray(o.message.content) ? o.message.content : [];
 		if (o.type === "assistant" && !o.parent_tool_use_id) { for (const b of blocks) if (b && b.type === "tool_use" && (b.name === "Agent" || b.name === "Task") && typeof b.id === "string") subs.set(b.id, { input: b.input, running: false }); }
@@ -514,13 +565,13 @@ function turnCore(msg, cfg, opts) {
 					const text = stripAttach(b.text);
 					if (text.trim()) state.pending.push({ role: "assistant", text: out(text), at });
 				}
-				else if (b.type === "tool_use") { state.pending.push({ role: "tool", text: out(toolLine(b.name, b.input)), at }); state.detail = mask(String(b.name)); }
+				else if (b.type === "tool_use") { const edited = touchedPath(b, opts.cwd); if (edited) touched.add(edited); state.pending.push({ role: "tool", text: out(toolLine(b.name, b.input)), at }); state.detail = mask(String(b.name)); }
 			}
 			schedule();
 		} else if (o.type === "result") {
 			learn(o.session_id);
 			result = o;
-			call("/chat/status", statusOf(msg, o, state), 5000).catch((e) => { if (!state.statusLogged) { state.statusLogged = true; log(`status not sent: ${e.message}`); } });
+			changedFiles([...touched]).then((files) => call("/chat/status", statusOf(msg, o, state, files), 5000)).catch((e) => { if (!state.statusLogged) { state.statusLogged = true; log(`status not sent: ${e.message}`); } });
 		}
 	};
 	return {
@@ -605,7 +656,7 @@ async function precheckWait(msg, caps, gapMs) {
 
 // A turn without rtk or caveman is refused: the answer in DOCK says what is missing on this machine. DOCK_CHAT_PREFLIGHT=off is for the tests.
 async function runTurn(msg, cfg, opts) {
-	const missing = process.env.DOCK_CHAT_PREFLIGHT === "off" ? [] : preflight.problems(childEnv(opts));
+	const missing = process.env.DOCK_CHAT_PREFLIGHT === "off" ? [] : preflight.problems(childEnv({ ...opts, agent: msg.agent }), { agent: msg.agent });
 	if (missing.length) {
 		const core = turnCore(msg, cfg, opts);
 		log(`turn refused: ${missing.join("; ")}`);
@@ -693,7 +744,7 @@ async function runLegacy(msg, cfg, opts, claude) {
 	if (opts.appendSystemPrompt) args.push("--append-system-prompt", opts.appendSystemPrompt);
 	args.push(...opts.extraArgs);
 
-	const env = childEnv(opts);
+	const env = childEnv({ ...opts, agent: msg.agent });
 	let stderrTail = "", timedOut = false, spawnError = null;
 	child = spawn(claude.cmd, args, { cwd: opts.cwd, env, shell: false, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
 	core.setChild(child);
@@ -835,7 +886,7 @@ async function main(cmd, args) {
 	}
 }
 
-module.exports = { resolveClaude, killTree, childEnv, limitsOf, settings, createTurnPool, keepAwake, track, snapshotTree, reap, killAllSync };
+module.exports = { resolveClaude, killTree, childEnv, numstatOf, touchedPath, changedFiles, limitsOf, settings, createTurnPool, keepAwake, track, snapshotTree, reap, killAllSync };
 
 if (require.main === module) {
 	const [cmd, ...args] = process.argv.slice(2);

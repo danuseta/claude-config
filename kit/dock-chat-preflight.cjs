@@ -17,16 +17,19 @@ function rtkRuns(env) {
 }
 
 // The problems of the profile claude would run with under `env`; an empty list means the turn may run.
-function problems(env, { runs = rtkRuns } = {}) {
+function problems(env, { runs = rtkRuns, agent, platform = process.platform } = {}) {
+  const rtk = platform === 'win32' || !agent || agent.rtk !== false;
+  const caveman = !agent || agent.caveman !== 'off';
   const dir = env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
   const settings = readJson(path.join(dir, 'settings.json'));
   const installed = (readJson(path.join(dir, 'plugins', 'installed_plugins.json')).plugins || {})[CAVEMAN] || [];
   const hooks = ((settings.hooks || {}).PreToolUse || []).flatMap((entry) => entry.hooks || []);
   const found = [];
-  if (!runs(env)) found.push('rtk is not runnable from the bridge PATH');
-  if (!hooks.some((hook) => String(hook.command).includes(RTK_HOOK))) found.push(`the "${RTK_HOOK}" PreToolUse hook is missing in ${dir}/settings.json`);
-  if ((settings.enabledPlugins || {})[CAVEMAN] !== true) found.push(`the ${CAVEMAN} plugin is not enabled in ${dir}/settings.json`);
-  if (!installed.some((plugin) => fs.existsSync(path.join(String(plugin.installPath), CAVEMAN_HOOK)))) found.push(`the ${CAVEMAN} plugin is not installed`);
+  if (rtk && !runs(env)) found.push('rtk is not runnable from the bridge PATH');
+  if (!rtk && hooks.some((hook) => String(hook.command).includes(RTK_HOOK) && !String(hook.command).includes('DOCK_RTK'))) found.push(`rtk is off in DOCK but this machine still has an unguarded "${RTK_HOOK}" hook; remove it from ${path.join(dir, 'settings.json')}`);
+  if (rtk && !hooks.some((hook) => String(hook.command).includes(RTK_HOOK))) found.push(`the "${RTK_HOOK}" PreToolUse hook is missing in ${dir}/settings.json`);
+  if (caveman && (settings.enabledPlugins || {})[CAVEMAN] !== true) found.push(`the ${CAVEMAN} plugin is not enabled in ${dir}/settings.json`);
+  if (caveman && !installed.some((plugin) => fs.existsSync(path.join(String(plugin.installPath), CAVEMAN_HOOK)))) found.push(`the ${CAVEMAN} plugin is not installed`);
   return found;
 }
 

@@ -58,7 +58,7 @@ async function runInteractiveTurn(msg, cfg, opts, d) {
 	if (canSteer && !opts.extraArgs.includes('--replay-user-messages')) args.push('--replay-user-messages');
 	args.push(...opts.extraArgs);
 
-	const env = d.childEnv(opts);
+	const env = d.childEnv({ ...opts, agent: msg.agent });
 	let stderrTail = '', timedOut = false, spawnError = null, closedByServer = false, stopped = false, afterResult = false, ended = false, stdinOpen = true, exited = false;
 	const initId = `init-${interact.rand()}`;
 	let initEvent = null, initResponse = null, resultEvent = null;
