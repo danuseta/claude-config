@@ -83,6 +83,7 @@ async function run() {
     else if (step.cancelAsk) { emit({ type: 'control_cancel_request', request_id: step.cancelAsk }); asks.get(step.cancelAsk).resolved = true; }
     else if (step.sayDecisions) emit({ type: 'assistant', session_id: sessionId, message: { content: [{ type: 'text', text: `DECISIONS ${JSON.stringify(decisions)}` }] } });
     else if (step.sleep) await Promise.race([new Promise((r) => setTimeout(r, step.sleep)), until(() => false)]);
+    else if (step.init) emit(initEvent());
     else if (step.result) emit({ type: 'result', subtype: 'success', is_error: false, session_id: sessionId, ...step.result });
     else if (step.hang) await until(() => false);
     else if (step.bigLine) await new Promise((r) => { process.stdout.write(Buffer.alloc(step.bigLine, 120), () => process.stdout.write('\n', r)); });

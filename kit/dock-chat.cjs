@@ -66,7 +66,7 @@ function timing(askTtlSeconds, env = process.env) {
 	const num = (v, d) => (Number.isFinite(v) && v >= 0 ? v : d);
 	return {
 		askTtlMs: num(t.askTtlMs, askTtlSeconds * 1000), waitBudgetMs: num(t.waitBudgetMs, 30 * 60 * 1000), waitSeconds: num(t.waitSeconds, 25), waitGapMs: num(t.waitGapMs, 1000),
-		interruptGraceMs: num(t.interruptGraceMs, 10000), closeGraceMs: num(t.closeGraceMs, 5000), exitGraceMs: num(t.exitGraceMs, 10000), drainMs: num(t.drainMs, 1500), outageMs: num(t.outageMs, 30 * 60 * 1000),
+		interruptGraceMs: num(t.interruptGraceMs, 10000), closeGraceMs: num(t.closeGraceMs, 5000), exitGraceMs: num(t.exitGraceMs, 10000), followTurnMs: num(t.followTurnMs, 5000), drainMs: num(t.drainMs, 1500), outageMs: num(t.outageMs, 30 * 60 * 1000),
 	};
 }
 
