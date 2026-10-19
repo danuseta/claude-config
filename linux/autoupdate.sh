@@ -6,7 +6,6 @@
 . "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib.sh"
 
 AU_DRY=0
-AU_PENDING=$CCFG_RUN/bridge.restart-pending
 
 # A chat turn is a claude process the bridge started with --output-format stream-json; the bridge's other child is its log sink.
 turn_running() {
@@ -17,6 +16,16 @@ turn_running() {
     tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null | grep -q -- '--output-format stream-json' && return 0
   done
   return 1
+}
+
+# The bridge loaded its kit when it started: a kit script written later, by this updater or by hand, needs a restart.
+kit_newer_than_bridge() {
+  local cp age
+  cp=$(cat "$CCFG_RUN/bridge.child" 2>/dev/null)
+  is_alive "$cp" || return 1
+  age=$(ps -o etimes= -p "$cp" 2>/dev/null | tr -d ' ')
+  [ -n "$age" ] || return 1
+  [ -n "$(find "$CCFG_CLAUDE_DIR/kit" -maxdepth 1 -name '*.cjs' -newermt "@$(($(date +%s) - age))" 2>/dev/null | head -n 1)" ]
 }
 
 # True when origin has commits the checkout lacks and a fast-forward can take them.
@@ -36,11 +45,10 @@ dock_stale() {
 
 au_pass() {
   if [ -d "$CCFG_REPO/.git" ] && behind "$CCFG_REPO"; then
-    if [ "$AU_DRY" = 1 ]; then say DRY "would pull claude-config, apply install and plugins, and mark the bridge for a restart"
+    if [ "$AU_DRY" = 1 ]; then say DRY "would pull claude-config and apply install and plugins"
     else
       say INFO "claude-config moved, updating"
       bash "$CCFG_LINUX_DIR/personalize.sh" --stdout --only=repo,install,plugins
-      : >"$AU_PENDING"
     fi
   fi
 
@@ -53,13 +61,12 @@ au_pass() {
     fi
   fi
 
-  [ -f "$AU_PENDING" ] || return 0
-  if ! service_pid bridge >/dev/null; then rm -f "$AU_PENDING"
-  elif turn_running; then say INFO "bridge restart waits: a chat turn is running"
-  elif [ "$AU_DRY" = 1 ]; then say DRY "would restart the bridge"
+  service_pid bridge >/dev/null && kit_newer_than_bridge || return 0
+  if turn_running; then say INFO "bridge restart waits: a chat turn is running"
+  elif [ "$AU_DRY" = 1 ]; then say DRY "would restart the bridge on the new kit"
   else
     say INFO "restarting the bridge on the new kit"
-    service_stop bridge && service_start bridge && rm -f "$AU_PENDING"
+    service_stop bridge && service_start bridge
   fi
 }
 
@@ -69,7 +76,7 @@ command -v node >/dev/null 2>&1 || load_template_env
 mkdir -p "$CCFG_RUN"
 if [ "$AU_DRY" = 1 ]; then
   au_pass
-  say DRY "turn running: $(turn_running && echo yes || echo no), bridge restart pending: $([ -f "$AU_PENDING" ] && echo yes || echo no)"
+  say DRY "turn running: $(turn_running && echo yes || echo no), kit newer than the bridge: $(kit_newer_than_bridge && echo yes || echo no)"
   exit 0
 fi
 lock_acquire "$CCFG_RUN/autoupdate.lock" autoupdate.sh || exit 0
