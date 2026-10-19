@@ -11,8 +11,8 @@ usage() {
   cat <<'EOF'
 usage: ccfg <command>
   status                          services, binaries, secrets, last run
-  start|stop|restart [tailscale|bridge|dock|all]
-  logs [personalize|tailscaled|bridge|dock] [-f]
+  start|stop|restart [tailscale|bridge|dock|updater|all]
+  logs [personalize|tailscaled|bridge|dock|updater] [-f]
   doctor [--strict]               acceptance checks (exit 0 unless --strict and something failed)
   update                          git pull --ff-only, install.cjs --apply, restart bridge
   secret set NAME                 value read from stdin (hidden on a terminal)
@@ -24,7 +24,7 @@ EOF
 
 targets() {
   case ${1:-all} in
-    all) printf 'tailscaled bridge'; [ "$ENABLE_DOCK" != 1 ] || printf ' dock' ;;
+    all) printf 'tailscaled bridge'; [ "$ENABLE_DOCK" != 1 ] || printf ' dock'; [ "$ENABLE_AUTOUPDATE" != 1 ] || printf ' updater' ;;
     *) service_unit "$1" || { echo "unknown target: $1" >&2; return 1; } ;;
   esac
 }
@@ -34,7 +34,7 @@ cmd_start() { local u; bootstrap_dirs; for u in $(targets "${1:-all}"); do servi
 cmd_stop() {
   local u list
   list=$(targets "${1:-all}") || return 1
-  [ "${1:-all}" != all ] || list="dock bridge tailscaled"
+  [ "${1:-all}" != all ] || list="updater dock bridge tailscaled"
   for u in $list; do service_stop "$u"; done
 }
 
@@ -58,6 +58,7 @@ cmd_logs() {
     tailscale | tailscaled) f=$CCFG_STATE/tailscaled.log ;;
     bridge) f=$CCFG_STATE/bridge.log ;;
     dock) f=$CCFG_STATE/dock.log ;;
+    updater) f=$CCFG_STATE/updater.log ;;
     *) echo "unknown log: $which" >&2; return 1 ;;
   esac
   [ -f "$f" ] || { echo "no log yet: $f"; return 0; }
