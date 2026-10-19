@@ -114,15 +114,6 @@
             "timeout": 5
           }
         ]
-      },
-      {
-        "matcher": "Bash|PowerShell",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "rtk hook claude"
-          }
-        ]
       }
     ],
     "Stop": [

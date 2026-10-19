@@ -1,5 +1,18 @@
 {
   "env": {
     "BRAIN_MODE": "remote"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"$DOCK_RTK\" = off ] || rtk hook claude"
+          }
+        ]
+      }
+    ]
   }
 }

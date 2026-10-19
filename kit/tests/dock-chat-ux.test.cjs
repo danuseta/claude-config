@@ -93,7 +93,7 @@ test('a turn posts /chat/status with model, effort, context and cost, using the 
     assert.equal(t.r.code, 0, t.r.stderr);
     const status = t.at('/chat/status');
     assert.equal(status.length, 1);
-    assert.deepEqual(status[0].body, { sessionId: 'dock-s9', model: 'claude-opus-5-5', effort: 'max', contextTokens: 4100, contextSize: 200000, contextPercentage: 2.1, turnCostUsd: 0.25 });
+    assert.deepEqual(status[0].body, { sessionId: 'dock-s9', files: [], model: 'claude-opus-5-5', effort: 'max', contextTokens: 4100, contextSize: 200000, contextPercentage: 2.1, turnCostUsd: 0.25 });
     assert.equal(t.at('/chat/delta').at(-1).body.done, true);
   } finally { await t.dock.close(); t.done(); }
 });

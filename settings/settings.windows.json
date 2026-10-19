@@ -37,5 +37,18 @@
       "**Org-specific CLIs**: None configured (project uses bd/beads for issue tracking, gh for PR review, and Atlassian/Figma MCP integrations per repo skill docs, but no org-specific CLI wrapper was corroborated)",
       "**routine under <user>/ prefix**: not applicable — no per-user path convention found"
     ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rtk hook claude"
+          }
+        ]
+      }
+    ]
   }
 }
