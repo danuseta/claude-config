@@ -43,9 +43,10 @@ Read the first prompt of the session:
 
 ## 3. Starting a ticket
 1. Contract and readiness are the runner's job (its planner applies `rules/ticket-contract.md` and the Jira custom fields). You only check: `node K/status.cjs show <KEY>`. A ledger at `pr` or `done`, or waiting on the owner, is reported, not restarted. A ledger made by the old orchestrate flow (no `engine`) is continued from its stage: tell the runner the stage.
-2. `node K/status.cjs set <KEY> engine=sous` (makes `render` automatic: `NOW.md`, `status.md`, `decisions.md`, `issues.md` under the blackboard follow every ledger write).
-3. Dispatch `sous-ticket-runner` (model opus) with: key, `K`, `ROOT`, `EVIDENCE`, `configDir`, mode (cron / manual / continuation), and on a continuation the owner's answer or cancel note.
-4. Its return is one block. Relay it to the owner as a table; verify the deciding line yourself (`status.cjs show`, the PR URL) before repeating it.
+2. **Stacked ticket.** The prompt says `Stack on <PARENT>`, or the ticket depends on a ticket whose PR is open but not merged (its ledger has `pr.be` / `pr.fe`, or its Jira status is PR Review): `node K/status.cjs set <KEY> stackedOn=<PARENT>`. It reads the parent's open PRs with `gh pr view` and stores, per repo, the parent PR, its head branch and its base; a repo the parent has no open PR in keeps its normal base. It also clears an old `Blocked: prerequisite ...` waiting, so a ledger waiting only on that prerequisite is started, not reported. A REFUSED means the parent cannot carry a stack: the ticket stays blocked. A dependency that is merged (UAT CHECK, readyforproduction, done) needs no stack.
+3. `node K/status.cjs set <KEY> engine=sous` (makes `render` automatic: `NOW.md`, `status.md`, `decisions.md`, `issues.md` under the blackboard follow every ledger write).
+4. Dispatch `sous-ticket-runner` (model opus) with: key, `K`, `ROOT`, `EVIDENCE`, `configDir`, mode (cron / manual / continuation), the stack parent when there is one, and on a continuation the owner's answer or cancel note.
+5. Its return is one block. Relay it to the owner as a table; verify the deciding line yourself (`status.cjs show`, the PR URL) before repeating it.
 
 ## 4. Continuing from the blackboard
 DOCK opens a NEW session for every owner action; it never resumes an old one. The first prompt is:
