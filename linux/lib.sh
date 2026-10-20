@@ -47,14 +47,18 @@ rotate_log() {
   mv -f "$f" "$f.1"
 }
 
+# A child that started its own session (spawn detached, setsid) is left out with its subtree: a dev server
+# started from DOCK has to outlive a DOCK restart. Without a session column every child counts, as before.
 descendants() {
   local pid=$1 table
-  table=$(ps -eo pid=,ppid= 2>/dev/null)
+  table=$(ps -eo pid=,ppid=,sid= 2>/dev/null)
   [ -n "$table" ] || table=$(ps -e 2>/dev/null | awk 'NR==1{ok=($2=="PPID")} ok&&NR>1{print $1, $2}')
   printf '%s\n' "$table" | awk -v root="$pid" '
-    NF >= 2 { k[$2] = k[$2] " " $1 }
+    NF >= 2 { k[$2] = k[$2] " " $1; if (NF >= 3) sid[$1] = $3 }
     END { head = 1; tail = 1; q[1] = root
-      while (head <= tail) { c = split(k[q[head]], a, " "); for (i = 1; i <= c; i++) { q[++tail] = a[i]; print a[i] } head++ } }'
+      while (head <= tail) { c = split(k[q[head]], a, " ")
+        for (i = 1; i <= c; i++) { if ((a[i] in sid) && (root in sid) && sid[a[i]] != sid[root]) continue; q[++tail] = a[i]; print a[i] }
+        head++ } }'
 }
 
 kill_tree() {
