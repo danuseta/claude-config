@@ -575,7 +575,7 @@ setTimeout(() => {
         const n = queue.shift();
         return { json: { ok: true, result: { message: n ? { id: n, sessionId: `dock-par-${n}`, text: String(n) } : null } } };
       });
-      bridge = spawn(process.execPath, [path.join(KIT, 'dock-chat.cjs'), 'run'], { env: { ...process.env, ...sandboxEnv(dir), DOCK_CHAT_CONFIG: path.join(dir, 'dock-chat.json'), DOCK_INGEST_URL: `${dock.url}/ingest/orchestrator`, DOCK_INGEST_TOKEN: 'dock_ing_test', DOCK_CHAT_TUNING: JSON.stringify({ waitGapMs: 0 }) }, cwd: KIT, stdio: 'ignore', windowsHide: true });
+      bridge = spawn(process.execPath, [path.join(KIT, 'dock-chat.cjs'), 'run'], { env: { ...process.env, ...sandboxEnv(dir), DOCK_CHAT_CONFIG: path.join(dir, 'dock-chat.json'), DOCK_INGEST_URL: `${dock.url}/ingest/orchestrator`, DOCK_INGEST_TOKEN: 'dock_ing_test', DOCK_CHAT_TUNING: JSON.stringify({ waitGapMs: 0, doctorEveryMs: 0 }) }, cwd: KIT, stdio: 'ignore', windowsHide: true });
       const log = () => { try { return fs.readFileSync(path.join(dir, 'order.log'), 'utf8').trim().split('\n'); } catch { return []; } };
       assert.ok(await waitFor(() => log().filter((l) => l.startsWith('end-')).length === 2, 15000), `both turns finished: ${log()}`);
       const lines = log();
@@ -609,11 +609,38 @@ console.log(JSON.stringify({ type: 'result', session_id: 's-1', is_error: false 
         sent = true;
         return { json: { ok: true, result: { message } } };
       });
-      bridge = spawn(process.execPath, [path.join(KIT, 'dock-chat.cjs'), 'run'], { env: { ...process.env, ...sandboxEnv(dir), DOCK_CHAT_CONFIG: path.join(dir, 'dock-chat.json'), DOCK_INGEST_URL: `${dock.url}/ingest/orchestrator`, DOCK_INGEST_TOKEN: 'dock_ing_test', DOCK_CHAT_TUNING: JSON.stringify({ waitGapMs: 0 }) }, cwd: KIT, stdio: 'ignore', windowsHide: true });
+      bridge = spawn(process.execPath, [path.join(KIT, 'dock-chat.cjs'), 'run'], { env: { ...process.env, ...sandboxEnv(dir), DOCK_CHAT_CONFIG: path.join(dir, 'dock-chat.json'), DOCK_INGEST_URL: `${dock.url}/ingest/orchestrator`, DOCK_INGEST_TOKEN: 'dock_ing_test', DOCK_CHAT_TUNING: JSON.stringify({ waitGapMs: 0, doctorEveryMs: 0 }) }, cwd: KIT, stdio: 'ignore', windowsHide: true });
       assert.ok(await waitFor(() => fs.existsSync(path.join(dir, 'args.json')), 15000), 'claude ran');
       const args = JSON.parse(fs.readFileSync(path.join(dir, 'args.json'), 'utf8'));
       const at = args.indexOf('--permission-mode');
       assert.equal(at === -1 ? null : args[at + 1], expected, JSON.stringify(args));
+    } finally {
+      if (bridge) bridge.kill('SIGKILL');
+      if (dock) await dock.close();
+      rmrf(dir);
+    }
+  }
+});
+
+test('bridge run: pushes a doctor report on start and when a claim asks for one', async () => {
+  for (const [tuning, asked] of [[{ waitGapMs: 0, doctorEveryMs: 0 }, true], [{ waitGapMs: 0 }, false]]) {
+    const dir = tmp('chat-doctor');
+    let dock, bridge;
+    try {
+      fs.writeFileSync(path.join(dir, 'dock-chat.json'), JSON.stringify({ claudeBin: process.execPath, cwd: dir, retryBaseMs: 50, interactive: false, activity: false }));
+      let claims = 0;
+      dock = await startServer((req) => {
+        if (req.url.endsWith('/doctor')) return { json: { ok: true, result: {} } };
+        if (!req.url.endsWith('/chat/claim')) return null;
+        claims++;
+        return { json: { ok: true, result: { message: null, ...(asked && claims === 1 ? { wantDoctor: true } : {}) } } };
+      });
+      bridge = spawn(process.execPath, [path.join(KIT, 'dock-chat.cjs'), 'run'], { env: { ...process.env, ...sandboxEnv(dir), DOCK_CHAT_CONFIG: path.join(dir, 'dock-chat.json'), DOCK_INGEST_URL: `${dock.url}/ingest/orchestrator`, DOCK_INGEST_TOKEN: 'dock_ing_test', DOCK_CHAT_TUNING: JSON.stringify(tuning) }, cwd: KIT, stdio: 'ignore', windowsHide: true });
+      const reports = () => dock.requests.filter((q) => q.url.endsWith('/doctor'));
+      assert.ok(await waitFor(() => reports().length === 1, 60000), asked ? 'the asked doctor run reached DOCK' : 'the start-up doctor run reached DOCK');
+      assert.ok(Array.isArray(reports()[0].body.checks) && reports()[0].body.checks.length > 0, 'the report carries its checks');
+      await new Promise((r) => setTimeout(r, 1000));
+      assert.equal(reports().length, 1, 'one run, not one per claim');
     } finally {
       if (bridge) bridge.kill('SIGKILL');
       if (dock) await dock.close();

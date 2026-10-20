@@ -12,6 +12,7 @@
 //     "activity": { "enabled": true, "hooks": true, "subagentText": true } }   "activity": false (or enabled: false) switches the activity feed off
 // Defaults come from paths.cjs. On Linux configDir is unset, so Claude Code keeps its own ~/.claude.
 // The DOCK url and token come from dock-push.cjs (dock.json or env).
+// `run` also pushes doctor.cjs on start, every 6 hours, and when DOCK's Health page asks (wantDoctor on a claim).
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
@@ -35,6 +36,8 @@ const KIT_ID = "dock-kit-2";
 const OLD_SERVER_MS = 10 * 60 * 1000;
 const CATALOG_EVERY_MS = 6 * 60 * 60 * 1000;
 const CATALOG_RETRY_MS = 10 * 60 * 1000;
+const DOCTOR_EVERY_MS = 6 * 60 * 60 * 1000;
+const DOCTOR_TIMEOUT_MS = 2 * 60 * 1000;
 const TERMINAL_COMMANDS = ["doctor", "color", "focus", "reload-plugins"];
 const DELTA_INTERVAL_MS = 1000;
 const CLAIM_WAIT_S = 25;
@@ -67,6 +70,7 @@ function timing(askTtlSeconds, env = process.env) {
 	return {
 		askTtlMs: num(t.askTtlMs, askTtlSeconds * 1000), waitBudgetMs: num(t.waitBudgetMs, 30 * 60 * 1000), waitSeconds: num(t.waitSeconds, 25), waitGapMs: num(t.waitGapMs, 1000),
 		interruptGraceMs: num(t.interruptGraceMs, 10000), closeGraceMs: num(t.closeGraceMs, 5000), exitGraceMs: num(t.exitGraceMs, 10000), followTurnMs: num(t.followTurnMs, 5000), steerGraceMs: num(t.steerGraceMs, 30000), drainMs: num(t.drainMs, 1500), outageMs: num(t.outageMs, 30 * 60 * 1000),
+		doctorEveryMs: num(t.doctorEveryMs, DOCTOR_EVERY_MS),
 	};
 }
 
@@ -813,12 +817,25 @@ function pushLedgers(since) {
 	pushLedgersChangedSince(since).then((r) => { if (r.error) log(`ledger push after the turn: ${r.error}`); }, (e) => log(`ledger push after the turn: ${e.message}`));
 }
 
+// doctor.cjs --push in its own process: its probes block, so they never run inside the bridge. One run at a time.
+const doctorMemo = { at: 0, running: false };
+function runDoctor(why) {
+	if (doctorMemo.running) return;
+	doctorMemo.running = true;
+	doctorMemo.at = Date.now();
+	execFile(process.execPath, [path.join(__dirname, "doctor.cjs"), "--push"], { cwd: __dirname, encoding: "utf8", timeout: DOCTOR_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
+		doctorMemo.running = false;
+		const last = String(stdout || "").trim().split(/\r?\n/).at(-1) || "";
+		log(`doctor (${why}): ${err ? "failed: " + (last || err.message) : last}`);
+	});
+}
+
 async function claimOne(wait, caps) {
 	const body = { wait };
 	if (caps && Array.isArray(caps.features) && caps.features.length) body.caps = caps;
 	const r = await call("/chat/claim", body, (wait + 10) * 1000);
 	// DOCK wraps every ingest answer as { ok, result }.
-	return { ...r, message: r.result ? r.result.message : r.message, wantCatalog: Boolean(r.result && r.result.wantCatalog) };
+	return { ...r, message: r.result ? r.result.message : r.message, wantCatalog: Boolean(r.result && r.result.wantCatalog), wantDoctor: Boolean(r.result && r.result.wantDoctor) };
 }
 
 async function main(cmd, args) {
@@ -863,6 +880,7 @@ async function main(cmd, args) {
 			const flags = claude && opts.interactive ? await supportedFlags(claude, opts) : null;
 			if (flags) await ensureCatalog(claude, opts, flags);
 			bridgeMemo.caps = buildCaps(opts, flags);
+			if (cmd === "run" && opts.timing.doctorEveryMs > 0 && Date.now() - doctorMemo.at >= opts.timing.doctorEveryMs) runDoctor("scheduled");
 			if (paceUntil > Date.now()) await sleep(paceUntil - Date.now());
 			const began = Date.now();
 			const r = await claimOne(wait, bridgeMemo.caps);
@@ -871,6 +889,7 @@ async function main(cmd, args) {
 			if (r.status !== 200) throw new Error(`claim answered ${r.status}`);
 			backoff = 0;
 			if (r.wantCatalog && bridgeMemo.catalog) await catalogLib.publishCatalog(bridgeMemo.catalog, call);
+			if (r.wantDoctor) runDoctor("asked from DOCK");
 			if (r.message && r.message.id != null) {
 				log(`message ${safeId(r.message.id)} for session ${safeId(r.message.sessionId)}`);
 				if (cmd === "once") await handle(r.message);
