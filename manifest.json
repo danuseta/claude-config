@@ -40,7 +40,7 @@
     { "from": "kit", "to": "kit", "os": ["windows", "linux"], "exclude": ["tests", "dock-chat-autostart.vbs"] },
     { "from": "agents", "to": "agents", "os": ["windows", "linux"] },
     { "from": "commands", "to": "commands", "os": ["windows", "linux"] },
-    { "from": "skills", "to": "skills", "os": ["windows", "linux"], "excludeOs": { "linux": ["graphify", "playwright-cli"] } }
+    { "from": "skills", "to": "skills", "os": ["windows", "linux"], "exclude": ["synced"], "excludeOs": { "linux": ["graphify", "playwright-cli"] } }
   ],
   "ownedByOtherWorkers": ["kit", "linux", "claude", "plugins", "mcp", "docs", "windows"],
   "importSkip": [
