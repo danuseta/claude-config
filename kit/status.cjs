@@ -31,7 +31,7 @@
 //   node status.cjs remote                           -> the tickets DOCK knows: owner machine, offered to, local ledger or not
 //   node status.cjs handover KEY --to <machine> [--note "..."] -> offer a pushed ticket to another machine; save then refuses here
 //   node status.cjs pull KEY [--force]               -> accept a ticket offered to this machine and write its ledger here
-// Refusals print REFUSED and exit 2. PASS needs evidence that exists and a recorded handoff; done needs a handoff with proof.
+// Refusals print REFUSED and exit 2. PASS needs evidence that exists and a recorded handoff, FAIL needs evidence of what failed; done needs a handoff with proof.
 // QONFLO_EVIDENCE=<dir> points the ledger at a scratch copy and switches the DOCK mirror off.
 const fs = require("fs");
 const path = require("path");
@@ -429,6 +429,7 @@ if (!cmd) {
 		if (problem) return refuse(`AC${n} PASS needs evidence: ${problem}`);
 		if (!(s.handoffs ?? []).length) return refuse(`${key} has no handoff; record the member's report with status.cjs handoff before PASS`);
 	}
+	if (state === "FAIL" && !row.evidence.trim()) return refuse(`AC${n} FAIL needs evidence: what failed (test name and error, or the screenshot path)`);
 	s.ac[idx] = row;
 	save(key, s);
 	console.log(`${key} AC${n}: ${state}`);
