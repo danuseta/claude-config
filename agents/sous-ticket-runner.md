@@ -29,8 +29,8 @@ Keep your own context small: pass paths, never paste whole files or reports into
 
 ## 1. Prepare
 1. `node K/status.cjs sync <KEY>`, then `node K/status.cjs show <KEY>`. A ledger at `done`, or a merged PR in `pr.be` / `pr.fe`, stops here: report it. An open PR means a revision on its branch, no new PR.
-2. `node K/status.cjs set <KEY> engine=sous`.
-3. `node K/status.cjs set <KEY> stage=plan`. No `BOARD/prompts/S<n>.md` yet: call `sous-planner` (model opus) with key, `S1` (or the next free S<n>), `BOARD`, `ROOT`, `K`. It writes the prompt with the AC rows, the contract and the **Terrain** section, writes `BOARD/ac.txt` (one capability per line), and returns Jira's `updated` time, the branch slug, the base branch per repo and the repos. Then `node K/status.cjs ac-set <KEY> @BOARD/ac.txt <updated>`, and one `decide ... --status SHOV --by sous` per planner decision.
+2. `node K/status.cjs set <KEY> engine=sous`. A stack parent in your task, or a `stackedOn` already in the ledger: run (again) `node K/status.cjs set <KEY> stackedOn=<PARENT>` so the branches are current. From then on, for each repo with a `stackedOn.<be|fe>` entry, the base is `origin/<stackedOn.<repo>.branch>` for `prep-ticket.sh` and `<stackedOn.<repo>.branch>` for the PR; other repos keep the planner's base. A REFUSED stack is a `BLOCKER` issue escalated to the owner.
+3. `node K/status.cjs set <KEY> stage=plan`. No `BOARD/prompts/S<n>.md` yet: call `sous-planner` (model opus) with key, `S1` (or the next free S<n>), `BOARD`, `ROOT`, `K`. It writes the prompt with the AC rows, the contract and the **Terrain** section, writes `BOARD/ac.txt` (one capability per line), and returns Jira's `updated` time, the branch slug, the base branch per repo and the repos. Then `node K/status.cjs ac-set <KEY> @BOARD/ac.txt <updated>`, and pass the stack parent to the planner when there is one, and one `decide ... --status SHOV --by sous` per planner decision.
 4. Worktrees: `bash K/prep-ticket.sh <KEY> <slug> <be-base or -> <fe-base or -> "<title>"`. It creates `ROOT/wt-<n>-be|fe` on branch `feat/<KEY>-<slug>` and the ledger dirs and ports. Never `git worktree` directly.
 5. Planner asked for exploration it could not finish: `sous-explorer` with the question and the worktree paths.
 6. **Manual run:** `node K/status.cjs set <KEY> stage=plan waiting="GATE 1: plan in BOARD/prompts/S<n>.md"` and return `RESULT: GATE-1`. Stop. **Cron run:** go on.
@@ -75,11 +75,12 @@ UI ticket only, after FINAL passed or rounds are spent:
 
 ## 5. Publish
 1. `node K/status.cjs set <KEY> stage=commit`, then `node K/status.cjs show <KEY>`. The PR is a **draft** when the ledger has `draft=true` or any issue is still open; otherwise ready for review.
-2. Per repo write `EVIDENCE/<KEY>/pr-body-<be|fe>.md` (section 6), then call `sous-publisher` with: worktree, branch `feat/<KEY>-<slug>`, repo `<owner>/<repo>` (from `git -C <wt> remote get-url origin` read by the publisher), base branch, title `<KEY> <type>: <subject>`, commit message `<type>(<KEY>): <subject>`, the paths to stage (from `git -C <wt> status --porcelain`, minus `docs/`, `.omc/`, `.gitignore`), the body file, and draft yes/no.
+2. Per repo write `EVIDENCE/<KEY>/pr-body-<be|fe>.md` (section 6), then call `sous-publisher` with: worktree, branch `feat/<KEY>-<slug>`, repo `<owner>/<repo>` (from `git -C <wt> remote get-url origin` read by the publisher), base branch (`stackedOn.<repo>.branch` for a stacked repo), title `<KEY> <type>: <subject>`, commit message `<type>(<KEY>): <subject>`, the paths to stage (from `git -C <wt> status --porcelain`, minus `docs/`, `.omc/`, `.gitignore`), the body file, and draft yes/no.
 3. `node K/status.cjs sync <KEY>` fills `pr.be` / `pr.fe` and moves the stage to `pr`. Record `node K/status.cjs handoff <KEY> publisher ...` with the PR URL as evidence, then `node K/status.cjs set <KEY> note= waiting="Ready for review: waiting for the owner"` (DOCK's PR gate text; `sync` clears it when the PR merges).
 
 ## 6. PR body (`EVIDENCE/<KEY>/pr-body-<repo>.md`)
 ```markdown
+Stacked on <stackedOn.<repo>.pr>: merge that first.   (first line, only for a stacked repo)
 Jira: https://<site>/browse/<KEY>
 Contract: Confluence <id> "<title>" v<version>   (or: Contract: not found (searched: <list>))
 

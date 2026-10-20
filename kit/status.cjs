@@ -4,6 +4,7 @@
 //   node status.cjs init KEY "title" bePort fePort beDir feDir
 //   node status.cjs set KEY stage=<stage> [waiting="..."] [pr.be=..] [note="..."] [kind=ticket|review|card] [engine=sous]
 //                       [productionData=true|false] [draft=true|false] [rounds.max=<n>]   (kind=card needs a CARD-<slug> key)
+//                       [stackedOn=<PARENT>] -> base each repo on the parent's open PR head (gh pr view); stackedOn= clears it
 //   node status.cjs ac KEY <n> <PASS|FAIL|TODO> "<text>" ["<evidence>"]
 //   node status.cjs brief KEY "<text>" | @<file>   -> the working brief a fresh session starts from
 //   node status.cjs decide KEY "<decision and why>" [--status SHOV|USULAN|DECIDED] [--by owner|arbiter|sous|agent] [--issue n]
@@ -15,7 +16,7 @@
 //   node status.cjs round KEY ["<why>"]             -> one review-to-task return round; past rounds.max (default 4) an owner issue and draft
 //   node status.cjs lock <name> KEY [--wait <s>] [--pid <n>] | unlock <name> KEY -> one heavy step per machine (stale: dead pid or 30 min)
 //   node status.cjs render KEY                       -> status.md, decisions.md, issues.md, NOW.md under <evidence>/blackboard/KEY (generated)
-//   node status.cjs sync [KEY] [--hook]            -> pull PR state from GitHub: fills pr.be / pr.fe, moves commit -> pr when a PR
+//   node status.cjs sync [KEY] [--hook]            -> pull PR state from GitHub: fills pr.be / pr.fe, retargets a stacked PR once its parent merged, moves commit -> pr when a PR
 //                                                     exists and pr -> done when every PR is merged. Two gh calls whatever the ticket count.
 //   node status.cjs ac-set KEY @<file> [jiraUpdated] -> AC rows from Jira, one capability per line; stamps the source and locks the row count
 //   node status.cjs stale [KEY jiraUpdated [@<file>]] -> compare the stamp with Jira; a stale ledger refuses PASS and done until ac-set runs again
@@ -254,11 +255,50 @@ const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 
 
 const REPOS = PATHS.repos;
 const SYNC_STAMP = path.join(require("os").tmpdir(), "qonflo-ledger-sync.stamp");
+// QONFLO_GH=<script> runs that node script in place of gh (tests).
+const gh = (args, cwd) => require("child_process").execFileSync(process.env.QONFLO_GH ? process.execPath : "gh", [...(process.env.QONFLO_GH ? [process.env.QONFLO_GH] : []), ...args], { cwd, encoding: "utf8", timeout: 20000, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+const ghJson = (args) => { try { return JSON.parse(gh(args)); } catch { return null; } };
 const myPulls = (dir) => {
 	try {
-		const out = require("child_process").execFileSync("gh", ["pr", "list", "--state", "all", "--author", "@me", "--limit", "200", "--json", "number,state,url,headRefName,title"], { cwd: dir, encoding: "utf8", timeout: 20000, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+		const out = gh(["pr", "list", "--state", "all", "--author", "@me", "--limit", "200", "--json", "number,state,url,headRefName,title"], dir);
 		return JSON.parse(out);
 	} catch { return null; }
+};
+// The parent's open PR per repo, for a ticket built on top of it; null with the reason when the parent cannot carry a stack.
+const stackOn = (parent) => {
+	const p = load(parent);
+	if (!p) return { why: `no ledger for ${parent}` };
+	const out = { key: parent, retargeted: {} };
+	for (const side of ["be", "fe"]) {
+		const url = p.pr?.[side];
+		if (!url) continue;
+		const v = ghJson(["pr", "view", url, "--json", "headRefName,baseRefName,state"]);
+		if (!v) return { why: `gh pr view ${url} failed` };
+		if (v.state === "OPEN") out[side] = { pr: url, branch: v.headRefName, base: v.baseRefName };
+	}
+	return out.be || out.fe ? { stack: out } : { why: `${parent} has no open PR to stack on` };
+};
+// A stacked child whose parent PR merged: point the child PR at the parent's base once. A failure is a finding, never retried.
+const retarget = (s) => {
+	const st = s.stackedOn;
+	if (!st) return;
+	for (const side of ["be", "fe"]) {
+		const e = st[side];
+		const child = s.pr?.[side];
+		if (!e || !child || st.retargeted?.[side]) continue;
+		if ((s.findings ?? []).some((f) => f.text.startsWith(`retarget ${side} `))) continue;
+		if (ghJson(["pr", "view", e.pr, "--json", "state"])?.state !== "MERGED") continue;
+		const c = ghJson(["pr", "view", child, "--json", "baseRefName,state"]);
+		if (!c || c.state !== "OPEN") continue;
+		if (c.baseRefName === e.branch) {
+			try { gh(["pr", "edit", child, "--base", e.base]); } catch {
+				(s.findings ??= []).push({ at: now(), severity: "blocker", text: `retarget ${side} failed: ${st.key} merged; run gh pr edit ${child} --base ${e.base} by hand` });
+				continue;
+			}
+		}
+		(st.retargeted ??= {})[side] = now();
+		(s.decisions ??= []).push({ n: s.decisions.length + 1, at: now(), text: `sync: ${st.key} merged; ${side} PR ${child} now targets ${c.baseRefName === e.branch ? e.base : c.baseRefName}`, status: "DECIDED", by: "agent" });
+	}
 };
 // The pull request that speaks for a ticket in one repo: an open one first, else the newest merged one. Closed-unmerged ones are ignored.
 const pullFor = (pulls, key) => {
@@ -284,6 +324,7 @@ const sync = (only, quiet) => {
 			found.push(p);
 			(s.pr ??= {})[side] = main.url;
 		}
+		retarget(s);
 		const from = s.stage;
 		if (found.length && s.stage === "commit") moveStage(s, "pr");
 		if (found.length && s.stage === "pr" && found.every((p) => !p.open && p.merged)) moveStage(s, "done");
@@ -388,6 +429,20 @@ if (!cmd) {
 		if (BOOLEANS.includes(k) || k === "rounds.max") {
 			setPath(s, k, k === "rounds.max" ? Number(v) : v === "true");
 			if (k === "productionData" && v === "true") s.draft = true;
+			continue;
+		}
+		if (k === "stackedOn") {
+			if (!v) {
+				delete s.stackedOn;
+				continue;
+			}
+			if (v === key) return refuse(`${key} cannot stack on itself`);
+			const r = stackOn(v);
+			if (r.why) return refuse(`${key} cannot stack on ${v}: ${r.why}`);
+			s.stackedOn = r.stack;
+			if (/^Blocked: prerequisite/i.test(s.waiting || "")) s.waiting = "";
+			const bases = ["be", "fe"].filter((d) => r.stack[d]).map((d) => `${d} ${r.stack[d].branch}`).join(", ");
+			(s.decisions ??= []).push({ n: s.decisions.length + 1, at: now(), text: `stacked on ${v}: base ${bases}; ${v}'s PR merges first`, status: "DECIDED", by: "agent" });
 			continue;
 		}
 		if (k === "engine" && !v) {

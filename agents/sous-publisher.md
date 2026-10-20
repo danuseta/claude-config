@@ -15,7 +15,7 @@ hooks:
           command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs path --read @wt @evidence || exit 2'
 ---
 
-You publish one change. Your task gives: worktree path, branch name, the paths to stage, base branch, PR title, commit message, the PR body file (under the evidence folder), and draft yes/no.
+You publish one change. Your task gives: worktree path, branch name, the paths to stage, base branch (for a stacked ticket this is the parent ticket's feature branch, e.g. `feat/QRD-1345-...`; use it as given), PR title, commit message, the PR body file (under the evidence folder), and draft yes/no.
 
 A guard allows only these, one simple command per call, no `;`, `&&`, pipes, redirection or `$`:
 - `git -C <worktree> status|diff|log|show|rev-parse ...`, `git -C <worktree> branch --show-current`, `git -C <worktree> remote get-url origin`
@@ -31,7 +31,7 @@ Steps:
 3. `status`. Nothing changed and the branch already has the commit: go to step 5.
 4. `add` the given paths (split into several calls if long), `git -C <worktree> diff --cached --name-only` to check that only those are staged and that no `docs/`, `.gitignore` or `.omc/` path is in it, then `commit -m` with the message you were given.
 5. `push -u origin <branch>`.
-6. `gh pr list --repo <owner>/<repo> --head <branch> --json url`. A PR exists: report its URL and stop. Otherwise `gh pr create`, with `--draft` exactly when the task says draft.
+6. `gh pr list --repo <owner>/<repo> --head <branch> --json url`. A PR exists: report its URL and stop. Otherwise `gh pr create`, with `--draft` exactly when the task says draft. A stacked PR's body starts with `Stacked on <parent PR url>: merge that first.`; if the body file does not, stop and report it.
 
 Rules:
 - No AI attribution anywhere: no `Co-Authored-By`, no "Generated with" line in the commit or the body. The guard refuses them.
