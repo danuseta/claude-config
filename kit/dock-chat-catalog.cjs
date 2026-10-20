@@ -43,9 +43,12 @@ function machineDefaults(opts = {}, env = process.env) {
   return {
     model: text(env.ANTHROPIC_MODEL) || text(file.model),
     effort: text(env.CLAUDE_CODE_EFFORT_LEVEL) || text(file.effortLevel),
-    permissionMode: text(opts.permissionMode) || text(permissions.defaultMode) || 'default',
+    permissionMode: text(opts.permissionMode) || text(permissions.defaultMode),
   };
 }
+
+// Claude Code lists "default" ("Default (recommended)") as a model of its own; it is an alias of another entry in the list.
+const DEFAULT_ALIAS = 'default';
 
 // "Opus" alone does not say which Opus. Claude Code names the version in resolvedModel ("claude-opus-5-5") or at the
 // head of the description ("Opus 5.5 · Best for ..."), so a label without a digit gets it from there.
@@ -76,13 +79,22 @@ function compactCatalog(initializeResponse, terminalCommands, { extra = [], defa
     commands.push({ name, description: clean(c.description, DESCRIPTION_MAX, extra), argumentHint: clean(c.argumentHint, HINT_MAX, extra), kind: c.builtin === true ? 'builtin' : 'skill' });
   }
   commands.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const rawModels = (Array.isArray(raw.models) ? raw.models : []).filter((m) => m && typeof m.value === 'string');
   const models = [];
-  for (const m of Array.isArray(raw.models) ? raw.models : []) {
-    if (!m || !serverKeeps(m.value, VALUE_MAX, extra)) continue;
+  const resolved = new Map();
+  for (const m of rawModels) {
+    if (m.value === DEFAULT_ALIAS || !serverKeeps(m.value, VALUE_MAX, extra)) continue;
     const efforts = Array.isArray(m.supportedEffortLevels) ? m.supportedEffortLevels.filter((e) => serverKeeps(e, EFFORT_MAX, extra)).slice(0, EFFORTS_MAX) : [];
-    models.push({ value: m.value, label: clean(modelLabel(m), LABEL_MAX, extra), efforts, fast: m.supportsFastMode === true });
+    models.push({ value: m.value, label: clean(modelLabel(m), LABEL_MAX, extra), efforts, fast: m.supportsFastMode === true, auto: m.supportsAutoMode === true });
+    if (typeof m.resolvedModel === 'string' && !resolved.has(m.resolvedModel)) resolved.set(m.resolvedModel, m.value);
   }
   models.length = Math.min(models.length, MAX_MODELS);
+  // A default given as the alias, a full model id or nothing at all names the listed model Claude Code would run.
+  const listedModel = (value) => {
+    if (value && models.some((m) => m.value === value)) return value;
+    const entry = rawModels.find((m) => m.value === (value || DEFAULT_ALIAS) || m.resolvedModel === value);
+    return (entry && resolved.get(entry.resolvedModel)) || value || null;
+  };
   const fast = {
     available: typeof raw.fast_mode_state === 'string' && raw.fast_mode_state !== 'off',
     reason: typeof raw.fast_mode_disabled_reason === 'string' ? clean(raw.fast_mode_disabled_reason, LABEL_MAX, extra) || null : null,
@@ -92,7 +104,7 @@ function compactCatalog(initializeResponse, terminalCommands, { extra = [], defa
   while (commands.length && size() > MAX_BYTES) commands.length = Math.floor(commands.length * 0.9);
   const given = defaults && typeof defaults === 'object' ? defaults : {};
   const pick = (v) => clean(v, VALUE_MAX, extra) || null;
-  const machine = { model: pick(given.model), effort: pick(given.effort), permissionMode: pick(given.permissionMode) };
+  const machine = { model: pick(listedModel(pick(given.model))), effort: pick(given.effort), permissionMode: pick(given.permissionMode) || pick(raw.current_permission_mode) };
   const hash = crypto.createHash('sha256').update(JSON.stringify({ commands, models, fast, defaults: machine })).digest('hex');
   return { hash, commands, models, fast, defaults: machine };
 }

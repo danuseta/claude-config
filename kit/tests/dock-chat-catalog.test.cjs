@@ -37,8 +37,8 @@ test('compactCatalog copies only the listed fields and drops terminal-only and o
   assert.equal(c.commands[0].kind, 'builtin');
   assert.equal(c.commands[1].kind, 'skill');
   assert.deepEqual(c.models, [
-    { value: 'opus', label: 'Opus', efforts: ['low', 'high'], fast: true },
-    { value: 'haiku', label: 'Haiku', efforts: [], fast: false },
+    { value: 'opus', label: 'Opus', efforts: ['low', 'high'], fast: true, auto: false },
+    { value: 'haiku', label: 'Haiku', efforts: [], fast: false, auto: false },
   ]);
   assert.deepEqual(c.fast, { available: false, reason: 'extra_usage_disabled' });
   assert.deepEqual(Object.keys(c).sort(), ['commands', 'defaults', 'fast', 'hash', 'models']);
@@ -55,7 +55,30 @@ test('a model label without a version gets it from resolvedModel or the descript
     { value: 'fable', displayName: 'Fable', description: 'Fable 5.1 · For your toughest challenges' },
     { value: 'old', displayName: 'Old', description: 'Fast and cheap' },
   ] }, []).models.map((m) => m.label);
-  assert.deepEqual(labels, ['Default (recommended) · Opus 5.5', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 4.5', 'Fable 5.1', 'Old']);
+  assert.deepEqual(labels, ['Opus 5.5', 'Sonnet 5.5', 'Haiku 4.5', 'Fable 5.1', 'Old']);
+});
+
+const ALIASED = { models: [
+  { value: 'default', displayName: 'Default (recommended)', resolvedModel: 'claude-opus-5-5', supportsAutoMode: true },
+  { value: 'opus', displayName: 'Opus 5.5', resolvedModel: 'claude-opus-5-5', supportsAutoMode: true },
+  { value: 'sonnet', displayName: 'Sonnet 5.5', resolvedModel: 'claude-sonnet-5-5', supportsAutoMode: true },
+  { value: 'claude-haiku-4-5-20251001', displayName: 'Haiku 4.5', resolvedModel: 'claude-haiku-4-5-20251001' },
+], current_permission_mode: 'auto' };
+
+test('the Default (recommended) alias is not listed and a default model names the listed model it runs', () => {
+  const pickModel = (model) => catalog.compactCatalog(ALIASED, [], { defaults: { model } }).defaults.model;
+  assert.deepEqual(catalog.compactCatalog(ALIASED, []).models.map((m) => m.value), ['opus', 'sonnet', 'claude-haiku-4-5-20251001']);
+  assert.equal(pickModel(null), 'opus');
+  assert.equal(pickModel('default'), 'opus');
+  assert.equal(pickModel('claude-sonnet-5-5'), 'sonnet');
+  assert.equal(pickModel('sonnet'), 'sonnet');
+  assert.equal(pickModel('claude-unknown-9'), 'claude-unknown-9');
+});
+
+test('the default permission mode comes from Claude Code unless the bridge names one, and models carry supportsAutoMode', () => {
+  assert.equal(catalog.compactCatalog(ALIASED, []).defaults.permissionMode, 'auto');
+  assert.equal(catalog.compactCatalog(ALIASED, [], { defaults: { permissionMode: 'plan' } }).defaults.permissionMode, 'plan');
+  assert.deepEqual(catalog.compactCatalog(ALIASED, []).models.map((m) => m.auto), [true, true, false]);
 });
 
 test('compactCatalog masks secrets before cutting and caps field lengths', () => {
