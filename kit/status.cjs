@@ -2,10 +2,19 @@
 //   node status.cjs                      -> table of every ticket
 //   node status.cjs show KEY             -> one ticket with its AC lines
 //   node status.cjs init KEY "title" bePort fePort beDir feDir
-//   node status.cjs set KEY stage=<stage> [waiting="..."] [pr.be=..] [note="..."]
+//   node status.cjs set KEY stage=<stage> [waiting="..."] [pr.be=..] [note="..."] [kind=ticket|review|card] [engine=sous]
+//                       [productionData=true|false] [draft=true|false] [rounds.max=<n>]   (kind=card needs a CARD-<slug> key)
 //   node status.cjs ac KEY <n> <PASS|FAIL|TODO> "<text>" ["<evidence>"]
 //   node status.cjs brief KEY "<text>" | @<file>   -> the working brief a fresh session starts from
-//   node status.cjs decide KEY "<decision and why>" -> appended to decisions[], never overwritten
+//   node status.cjs decide KEY "<decision and why>" [--status SHOV|USULAN|DECIDED] [--by owner|arbiter|sous|agent] [--issue n]
+//                                                     -> D-n appended to decisions[], never overwritten (no flags: DECIDED by owner)
+//   node status.cjs decide KEY <n> cancel "<why>"    -> D-n becomes CANCELLED (the owner's override from DOCK)
+//   node status.cjs issue KEY <BLOCKER|QUESTION|RISK|DISPUTE> "<text>" [--options "A|B"] -> I-n, open at level arbiter
+//   node status.cjs issue KEY <n> escalate sous|owner "<why>" -> owner sets waiting to "I-<n>: <text> [A|B]" and draft
+//   node status.cjs issue KEY <n> resolve <decisionN> -> resolved by D-<decisionN>; clears waiting when it was this issue
+//   node status.cjs round KEY ["<why>"]             -> one review-to-task return round; past rounds.max (default 4) an owner issue and draft
+//   node status.cjs lock <name> KEY [--wait <s>] [--pid <n>] | unlock <name> KEY -> one heavy step per machine (stale: dead pid or 30 min)
+//   node status.cjs render KEY                       -> status.md, decisions.md, issues.md, NOW.md under <evidence>/blackboard/KEY (generated)
 //   node status.cjs sync [KEY] [--hook]            -> pull PR state from GitHub: fills pr.be / pr.fe, moves commit -> pr when a PR
 //                                                     exists and pr -> done when every PR is merged. Two gh calls whatever the ticket count.
 //   node status.cjs ac-set KEY @<file> [jiraUpdated] -> AC rows from Jira, one capability per line; stamps the source and locks the row count
@@ -16,7 +25,8 @@
 //   node status.cjs replan KEY "<reason>"            -> counted against replanBudget (default 2, set KEY replanBudget=<n> at the gate)
 //   node status.cjs finding KEY [--severity blocker|non-blocking|nit] "<text>" -> a reviewer finding (default non-blocking)
 //   node status.cjs lgtm KEY "<part>"                -> a part of the change the reviewer found fine
-//   node status.cjs verdict KEY approve|request-change -> the review verdict; approve is refused while a blocker is recorded
+//   node status.cjs verdict KEY approve|request-change [--ticket KEY] [--pr <url>]... -> the review verdict with the reviewed ticket and
+//                                                     PR urls (default: KEY and pr.be / pr.fe); approve is refused while a blocker is recorded
 //   node status.cjs metrics                          -> closing numbers per ticket and per work type
 //   node status.cjs remote                           -> the tickets DOCK knows: owner machine, offered to, local ledger or not
 //   node status.cjs handover KEY --to <machine> [--note "..."] -> offer a pushed ticket to another machine; save then refuses here
@@ -42,6 +52,15 @@ const FIX_FROM = ["test", "verify", "evidence", "commit", "pr"];
 const STAGES = ["gate", "plan", "code", "test", "verify", "evidence", "commit", "pr", "done", "blocked"];
 const SEVERITIES = ["blocker", "non-blocking", "nit"];
 const VERDICTS = ["approve", "request-change"];
+const KINDS = ["ticket", "review", "card"];
+const CARD_KEY = /^CARD-[a-z0-9][a-z0-9-]{0,63}$/;
+const DECISION_SET = ["SHOV", "USULAN", "DECIDED"];
+const DECIDERS = ["owner", "arbiter", "sous", "agent"];
+const ISSUE_TYPES = ["BLOCKER", "QUESTION", "RISK", "DISPUTE"];
+const BOOLEANS = ["productionData", "draft"];
+const BOARD = path.join(ROOT, "blackboard");
+const LOCKS = path.join(ROOT, ".locks");
+const LOCK_STALE_MS = 30 * 60 * 1000;
 const file = (key) => path.join(ROOT, key, "status.json");
 const load = (key) => (fs.existsSync(file(key)) ? JSON.parse(fs.readFileSync(file(key), "utf8")) : null);
 const save = (key, s, allowHanded = false) => {
@@ -49,7 +68,9 @@ const save = (key, s, allowHanded = false) => {
 	if (prev?.handedTo) return refuse(`${key} was handed over to ${prev.handedTo}; it is changed there. \`status.cjs pull ${key}\` takes it back`);
 	fs.mkdirSync(path.dirname(file(key)), { recursive: true });
 	s.updatedAt = new Date().toISOString();
+	if (s.engine === "sous") s.blackboard = fwd(path.join(BOARD, key));
 	fs.writeFileSync(file(key), JSON.stringify(s, null, 2));
+	if (s.engine === "sous") try { renderBoard(key, s); } catch {}
 	// Mirror the ledger to DOCK when it is configured; a no-op otherwise.
 	if (SCRATCH) return;
 	try { require("./dock-push.cjs").pushStatusDetached(key); } catch {}
@@ -128,6 +149,108 @@ const flags = (s) => {
 	if (open) out.push(`${open} assumed`);
 	return out.join(", ") || "-";
 };
+const fwd = (p) => String(p).replace(/\\/g, "/");
+// `--name value` pairs (repeatable) taken out of an argument list; what is left are the words.
+const takeFlags = (args, names) => {
+	const out = {}, words = [];
+	for (let i = 0; i < args.length; i++) {
+		if (names.includes(args[i])) (out[args[i]] ??= []).push(args[++i] ?? "");
+		else words.push(args[i]);
+	}
+	return { flags: out, words };
+};
+// Entries written before D-n numbering carry no n, status or by: they read as their position, DECIDED by the owner.
+const decisionsOf = (s) => (s.decisions ?? []).map((d, i) => ({ ...d, n: d.n ?? i + 1, status: d.status ?? "DECIDED", by: d.by ?? "owner" }));
+const issueOf = (s, n) => (s.issues ?? []).find((x) => x.n === Number(n));
+const stamp = (iso) => (iso ? String(iso).slice(0, 16).replace("T", " ") : "-");
+const line = (t) => String(t ?? "").replace(/\r?\n/g, " ");
+const cell = (t) => line(t).replace(/\|/g, "\\|");
+const IN_FORCE = ["DECIDED", "SHOV", "USULAN"];
+// The blackboard files a session reads, rebuilt whole from the ledger; nobody edits them.
+const renderBoard = (key, s) => {
+	const dir = path.join(BOARD, key);
+	fs.mkdirSync(dir, { recursive: true });
+	const head = `<!-- generated, do not edit: \`status.cjs render ${key}\` rebuilds this file from the ledger -->\n`;
+	const decisions = decisionsOf(s);
+	const issues = s.issues ?? [];
+	const open = issues.filter((x) => x.status === "open");
+	const events = [
+		...(s.history ?? []).map((h) => [h.at, "STAGE", `${h.from ?? "-"} -> ${h.to}`]),
+		...decisions.map((d) => [d.at, "DECISION", `D-${d.n} ${d.cancelledAt ? d.was ?? "DECIDED" : d.status} by ${d.by}: ${d.text}`]),
+		...decisions.filter((d) => d.cancelledAt).map((d) => [d.cancelledAt, "DECISION", `D-${d.n} CANCELLED: ${d.cancelNote}`]),
+		...issues.flatMap((x) => [
+			[x.at, "ISSUE-OPEN", `I-${x.n} ${x.type}: ${x.text}`],
+			...(x.escalations ?? []).map((e) => [e.at, "ESCALATED", `I-${x.n} to ${e.to}: ${e.why}`]),
+			...(x.resolvedAt ? [[x.resolvedAt, "ISSUE-CLOSED", `I-${x.n} by D-${x.resolvedBy}`]] : []),
+		]),
+		...(s.rounds?.log ?? []).map((r) => [r.at, "ROUND", `${r.used}/${r.max}${r.why ? ` ${r.why}` : ""}`]),
+		...(s.handoffs ?? []).map((h) => [h.at, "HANDOFF", `${h.who} ${h.status}: ${h.summary}${h.proven ? "" : " (unproven)"}`]),
+		...(s.failures ?? []).map((f) => [f.at, "FAIL", `${f.type} #${f.attempt}${f.what ? ` ${f.what}` : ""}`]),
+		...(s.findings ?? []).map((f) => [f.at, "FINDING", `${f.severity}: ${f.text}`]),
+	].filter((e) => e[0]).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+	fs.writeFileSync(path.join(dir, "status.md"), `${head}# Status log - ${key}\n\nFormat: \`YYYY-MM-DD HH:MM · ${key} · MARKER · what\`\n\n${events.map(([at, m, t]) => `${stamp(at)} · ${key} · ${m} · ${line(t)}`).join("\n")}\n`);
+	const dBlock = (d) => [
+		`## D-${d.n}`,
+		`- **Status:** ${d.status} · **By:** ${d.by} · **At:** ${stamp(d.at)}${d.issue ? ` · **Issue:** I-${d.issue}` : ""}`,
+		`- **Decision:** ${line(d.text)}`,
+		...(d.cancelledAt ? [`- **Cancelled:** ${stamp(d.cancelledAt)}: ${line(d.cancelNote)}`] : []),
+	].join("\n");
+	fs.writeFileSync(path.join(dir, "decisions.md"), `${head}# Decisions - ${key}\n\nPrecedence: owner DECIDED > SHOV > contract > Jira AC > USULAN. CANCELLED and SUPERSEDED entries do not apply.\n\n${decisions.map(dBlock).join("\n\n")}\n`);
+	const iBlock = (x) => [
+		`### I-${x.n} - ${x.type} · level ${x.level}`,
+		`- **Raised:** ${stamp(x.at)}`,
+		`- **Detail:** ${line(x.text)}`,
+		...(x.options?.length ? [`- **Options:** ${x.options.map(line).join(" | ")}`] : []),
+		...(x.escalations ?? []).map((e) => `- **Escalated:** to ${e.to} ${stamp(e.at)}: ${line(e.why)}`),
+	].join("\n");
+	const closed = issues.filter((x) => x.status !== "open").map((x) => `- I-${x.n} ${x.type}: ${line(x.text)} (resolved by D-${x.resolvedBy}, ${stamp(x.resolvedAt)})`);
+	fs.writeFileSync(path.join(dir, "issues.md"), `${head}# Issues - ${key}\n\n## Open\n\n${open.map(iBlock).join("\n\n") || "none"}\n\n## Resolved\n\n${closed.join("\n") || "none"}\n`);
+	const rows = [
+		["Stage", s.stage], ["Kind", s.kind ?? "ticket"], ["Engine", s.engine ?? "-"], ["Waiting on the owner", s.waiting || "-"],
+		["Review rounds", s.rounds ? `${s.rounds.used ?? 0}/${s.rounds.max ?? 4}` : "-"], ["Draft PR", s.draft ? "yes" : "no"],
+		["Production data", s.productionData ? "yes" : "no"], ["PR", [s.pr?.be, s.pr?.fe].filter(Boolean).join(" ") || "-"],
+		["Worktrees", [s.dirs?.be, s.dirs?.fe].filter((d) => d && d !== "-").join(" ") || "-"],
+	];
+	const now_ = [
+		`${head}# NOW - ${key} ${s.title ?? ""} · per ${stamp(s.updatedAt)}`, "",
+		"| Field | Value |", "|---|---|", ...rows.map(([k, v]) => `| ${k} | ${cell(v)} |`), "",
+		"## Acceptance criteria", "", "| AC | State | Text |", "|---|---|---|", ...(s.ac ?? []).map((a) => `| ${a.n} | ${a.state} | ${cell(a.text)} |`), "",
+		"## Open issues", "", ...(open.length ? open.map((x) => `- I-${x.n} ${x.type} (level ${x.level}): ${line(x.text)}`) : ["none"]), "",
+		"## Decisions in force", "", ...(decisions.filter((d) => IN_FORCE.includes(d.status)).map((d) => `- D-${d.n} ${d.status}: ${line(d.text)}`)), "",
+		"## Pointers", "", "| Need | Open |", "|---|---|", "| Work prompt and terrain | `prompts/S<n>.md` |", "| Every event | `status.md` |", "| Why a rule holds | `decisions.md` |", "| Open questions | `issues.md` |", "",
+	];
+	fs.writeFileSync(path.join(dir, "NOW.md"), now_.join("\n"));
+	return dir;
+};
+const lockFile = (name) => path.join(LOCKS, `${name}.lock`);
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; } };
+const readLock = (name) => { try { return JSON.parse(fs.readFileSync(lockFile(name), "utf8")); } catch { return null; } };
+// A holder is stale when its pid is gone or it is older than 30 minutes. An unreadable lock younger than 5 s is still being written.
+const staleLock = (name, h) => {
+	if (!h) { try { return Date.now() - fs.statSync(lockFile(name)).mtimeMs > 5000; } catch { return true; } }
+	return Date.now() - Date.parse(h.at) > LOCK_STALE_MS || (h.pid ? !alive(Number(h.pid)) : false);
+};
+const tryLock = (name, owner, pid) => {
+	fs.mkdirSync(LOCKS, { recursive: true });
+	let broke = null;
+	for (let i = 0; i < 3; i++) {
+		try {
+			const fd = fs.openSync(lockFile(name), "wx");
+			fs.writeSync(fd, JSON.stringify({ owner, pid: pid || null, host: require("os").hostname(), at: now() }));
+			fs.closeSync(fd);
+			return { got: true, broke };
+		} catch (e) {
+			if (e.code !== "EEXIST") throw e;
+			const h = readLock(name);
+			if (h?.owner === owner) return { got: true, again: true };
+			if (!staleLock(name, h)) return { got: false, holder: h };
+			fs.rmSync(lockFile(name), { force: true });
+			broke = h;
+		}
+	}
+	return { got: false, holder: readLock(name) };
+};
+const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 const REPOS = PATHS.repos;
 const SYNC_STAMP = path.join(require("os").tmpdir(), "qonflo-ledger-sync.stamp");
@@ -150,7 +273,7 @@ const sync = (only, quiet) => {
 	let changed = 0;
 	for (const k of keys) {
 		const s = load(k);
-		if (!s || s.kind === "review" || s.stage === "done" || s.stage === "blocked" || s.handedTo) continue;
+		if (!s || s.kind === "review" || s.kind === "card" || s.stage === "done" || s.stage === "blocked" || s.handedTo) continue;
 		const before = JSON.stringify(s);
 		const found = [];
 		for (const side of ["be", "fe"]) {
@@ -221,7 +344,9 @@ const offers = async () => {
 	} catch {}
 };
 
-const [cmd, key, ...rest] = process.argv.slice(2);
+const [cmd, rawKey, ...rest] = process.argv.slice(2);
+// A free-form card is CARD-<slug>: the prefix upper case, the slug lower case, as DOCK stores it.
+const key = /^card-/i.test(rawKey ?? "") ? `CARD-${rawKey.slice(5).toLowerCase()}` : rawKey;
 const optValue = (name) => { const i = rest.indexOf(name); return i >= 0 ? rest[i + 1] ?? "" : ""; };
 
 if (!cmd) {
@@ -241,7 +366,8 @@ if (!cmd) {
 	console.log(JSON.stringify(s, null, 2));
 } else if (cmd === "init") {
 	const [title, be, fe, beDir, feDir] = rest;
-	const s = load(key) ?? { key, ac: [], createdAt: now() };
+	if (key?.startsWith("CARD-") && !CARD_KEY.test(key)) return refuse(`a card key is CARD-<slug>, the slug a-z, 0-9 and -, at most 64 characters; got ${key}`);
+	const s = load(key) ?? { key, ac: [], createdAt: now(), ...(key?.startsWith("CARD-") ? { kind: "card" } : {}) };
 	Object.assign(s, { title, stage: s.stage ?? "gate", waiting: s.waiting ?? "", ports: { be: Number(be) || null, fe: Number(fe) || null }, dirs: { be: beDir || null, fe: feDir || null } });
 	save(key, s);
 	console.log(`init ${key}`);
@@ -254,6 +380,20 @@ if (!cmd) {
 		const v = pair.slice(i + 1);
 		if (k === "stage" && !STAGES.includes(v)) return console.log(`stage must be one of ${STAGES.join(", ")}`);
 		if (k === "type" && !TYPES.includes(v)) return console.log(`type must be one of ${TYPES.join(", ")}`);
+		if (k === "kind" && !KINDS.includes(v)) return refuse(`kind must be one of ${KINDS.join(", ")}`);
+		if (k === "kind" && (v === "card") !== CARD_KEY.test(key)) return refuse(v === "card" ? `kind=card needs a CARD-<slug> key, not ${key}` : `${key} is a card; its kind stays card`);
+		if (k === "engine" && !["sous", ""].includes(v)) return refuse("engine must be sous, or empty for the orchestrate flow");
+		if (BOOLEANS.includes(k) && !["true", "false"].includes(v)) return refuse(`${k} must be true or false`);
+		if (k === "rounds.max" && !(Number.isInteger(Number(v)) && Number(v) > 0)) return refuse("rounds.max must be a whole number above 0");
+		if (BOOLEANS.includes(k) || k === "rounds.max") {
+			setPath(s, k, k === "rounds.max" ? Number(v) : v === "true");
+			if (k === "productionData" && v === "true") s.draft = true;
+			continue;
+		}
+		if (k === "engine" && !v) {
+			delete s.engine;
+			continue;
+		}
 		if (k === "stage" && v === "done" && s.stage !== "done") {
 			if (s.source?.stale) return refuse(`${key} is stale (${s.source.stale.reason}); run ac-set again before closing`);
 			const reports = latestHandoffs(s);
@@ -361,11 +501,30 @@ if (!cmd) {
 } else if (cmd === "decide") {
 	const s = load(key);
 	if (!s) return console.log(`no status for ${key}; run init first`);
-	const text = rest.join(" ").trim();
+	if (/^\d+$/.test(rest[0] ?? "") && rest[1] === "cancel") {
+		const n = Number(rest[0]);
+		const d = (s.decisions ?? [])[n - 1];
+		if (!d) return refuse(`${key} has no D-${n}`);
+		const was = decisionsOf(s)[n - 1].status;
+		if (was === "CANCELLED") return refuse(`D-${n} is already cancelled`);
+		const why = rest.slice(2).join(" ").trim();
+		if (!why) return refuse("a cancel needs the owner's note");
+		Object.assign(d, { n, by: d.by ?? "owner", status: "CANCELLED", was, cancelNote: why, cancelledAt: now() });
+		save(key, s);
+		return console.log(`${key} D-${n}: CANCELLED`);
+	}
+	const { flags: f, words } = takeFlags(rest, ["--status", "--by", "--issue"]);
+	const status = f["--status"]?.[0] ?? "DECIDED";
+	const by = f["--by"]?.[0] ?? "owner";
+	if (!DECISION_SET.includes(status)) return refuse(`--status must be one of ${DECISION_SET.join(", ")}`);
+	if (!DECIDERS.includes(by)) return refuse(`--by must be one of ${DECIDERS.join(", ")}`);
+	if (f["--issue"] && !issueOf(s, f["--issue"][0])) return refuse(`${key} has no I-${f["--issue"][0]}`);
+	const text = words.join(" ").trim();
 	if (!text) return console.log("decide needs a text");
-	(s.decisions ??= []).push({ at: new Date().toISOString(), text });
+	const n = (s.decisions ?? []).length + 1;
+	(s.decisions ??= []).push({ n, at: new Date().toISOString(), text, status, by, ...(f["--issue"] ? { issue: Number(f["--issue"][0]) } : {}) });
 	save(key, s);
-	console.log(`${key} decision #${s.decisions.length}`);
+	console.log(`${key} decision #${n} (D-${n} ${status} by ${by})`);
 } else if (cmd === "ac-set") {
 	const s = load(key);
 	if (!s) return console.log(`no status for ${key}; run init first`);
@@ -492,13 +651,109 @@ if (!cmd) {
 } else if (cmd === "verdict") {
 	const s = load(key);
 	if (!s) return console.log(`no status for ${key}; run init first`);
-	const verdict = rest[0];
+	const { flags: f, words } = takeFlags(rest, ["--ticket", "--pr"]);
+	const verdict = words[0];
 	if (!VERDICTS.includes(verdict)) return refuse(`verdict must be one of ${VERDICTS.join(", ")}`);
 	const blockers = (s.findings ?? []).filter((f) => f.severity === "blocker").length;
 	if (verdict === "approve" && blockers) return refuse(`${key} has ${blockers} blocker finding(s); approve needs none`);
-	s.verdict = { at: now(), value: verdict };
+	const prs = f["--pr"]?.filter(Boolean) ?? [s.pr?.be, s.pr?.fe].filter(Boolean);
+	s.verdict = { at: now(), value: verdict, ticket: f["--ticket"]?.[0] || key, prs };
 	save(key, s);
 	console.log(`${key} verdict: ${verdict}`);
+} else if (cmd === "issue") {
+	const s = load(key);
+	if (!s) return console.log(`no status for ${key}; run init first`);
+	if (/^\d+$/.test(rest[0] ?? "")) {
+		const x = issueOf(s, rest[0]);
+		if (!x) return refuse(`${key} has no I-${rest[0]}`);
+		if (x.status !== "open") return refuse(`I-${x.n} is already resolved by D-${x.resolvedBy}`);
+		const [, verb, arg, ...more] = rest;
+		if (verb === "escalate") {
+			if (!["sous", "owner"].includes(arg)) return refuse("escalate to sous or owner");
+			const why = more.join(" ").trim();
+			if (!why) return refuse("an escalation needs the reason the level below could not resolve it");
+			x.level = arg;
+			(x.escalations ??= []).push({ at: now(), to: arg, why });
+			if (arg === "owner") {
+				s.waiting = `I-${x.n}: ${line(x.text)}${x.options?.length ? ` [${x.options.join("|")}]` : ""}`;
+				s.draft = true;
+			}
+			save(key, s);
+			return console.log(`${key} I-${x.n}: escalated to ${arg}${arg === "owner" ? "; waiting on the owner" : ""}`);
+		}
+		if (verb === "resolve") {
+			const d = decisionsOf(s).find((y) => y.n === Number(arg));
+			if (!d) return refuse(`${key} has no D-${arg}; record the decision first with decide ... --issue ${x.n}`);
+			if (d.status === "CANCELLED") return refuse(`D-${d.n} is cancelled and cannot resolve an issue`);
+			Object.assign(x, { status: "resolved", resolvedBy: d.n, resolvedAt: now() });
+			if ((s.waiting || "").startsWith(`I-${x.n}:`)) s.waiting = "";
+			save(key, s);
+			return console.log(`${key} I-${x.n}: resolved by D-${d.n}`);
+		}
+		return refuse("issue KEY <n> escalate sous|owner \"<why>\" | issue KEY <n> resolve <decisionN>");
+	}
+	const { flags: f, words } = takeFlags(rest, ["--options"]);
+	const [type, ...textWords] = words;
+	if (!ISSUE_TYPES.includes(type)) return refuse(`issue type must be one of ${ISSUE_TYPES.join(", ")}`);
+	const text = textWords.join(" ").trim();
+	if (!text) return refuse("an issue needs a text");
+	const n = (s.issues ?? []).length + 1;
+	const options = f["--options"] ? f["--options"][0].split("|").map((o) => o.trim()).filter(Boolean) : [];
+	(s.issues ??= []).push({ n, at: now(), type, text, level: "arbiter", status: "open", ...(options.length ? { options } : {}) });
+	save(key, s);
+	console.log(`${key} I-${n}: ${type} open at level arbiter`);
+} else if (cmd === "round") {
+	const s = load(key);
+	if (!s) return console.log(`no status for ${key}; run init first`);
+	const why = rest.join(" ").trim();
+	const r = (s.rounds ??= { used: 0, max: 4 });
+	r.used = Number(r.used ?? 0);
+	r.max = Number(r.max ?? 4);
+	if (r.used >= r.max) {
+		const spent = (s.issues ?? []).find((x) => x.status === "open" && x.text.startsWith("review rounds spent"));
+		if (spent) return refuse(`${key} review rounds spent (${r.used}/${r.max}); I-${spent.n} is already with the owner`);
+		const n = (s.issues ?? []).length + 1;
+		const text = `review rounds spent (${r.used}/${r.max})${why ? `: ${why}` : ""}`;
+		(s.issues ??= []).push({ n, at: now(), type: "BLOCKER", text, level: "owner", status: "open", escalations: [{ at: now(), to: "owner", why: "round budget spent" }] });
+		s.waiting = `I-${n}: ${text}`;
+		s.draft = true;
+		save(key, s);
+		return refuse(`${key} review rounds spent (${r.used}/${r.max}); I-${n} is with the owner and the PR opens as draft`);
+	}
+	r.used++;
+	(r.log ??= []).push({ at: now(), used: r.used, max: r.max, ...(why ? { why } : {}) });
+	save(key, s);
+	console.log(`${key} round ${r.used}/${r.max}`);
+} else if (cmd === "lock" || cmd === "unlock") {
+	const name = key;
+	const ownerRaw = rest[0];
+	const owner = /^card-/i.test(ownerRaw ?? "") ? `CARD-${ownerRaw.slice(5).toLowerCase()}` : ownerRaw;
+	if (!/^[a-z-]+$/.test(name ?? "") || !owner || owner.startsWith("--")) return console.log(`usage: status.cjs ${cmd} <name> KEY${cmd === "lock" ? " [--wait <seconds>] [--pid <n>]" : ""}`);
+	if (cmd === "unlock") {
+		const h = readLock(name);
+		if (!h) return console.log(`${name} is not held`);
+		if (h.owner !== owner) return refuse(`${name} is held by ${h.owner}, not ${owner}`);
+		fs.rmSync(lockFile(name), { force: true });
+		return console.log(`released ${name} for ${owner}`);
+	}
+	const wait = Number(optValue("--wait") || 0);
+	const pid = Number(optValue("--pid")) || null;
+	const deadline = Date.now() + wait * 1000;
+	let got = tryLock(name, owner, pid);
+	while (!got.got && Date.now() < deadline) {
+		sleep(Math.min(5000, Math.max(0, deadline - Date.now())));
+		got = tryLock(name, owner, pid);
+	}
+	if (!got.got) return refuse(`${name} is held by ${got.holder?.owner ?? "?"} since ${stamp(got.holder?.at)}; run lock again (or --wait <seconds>)`);
+	if (got.broke) console.log(`broke stale ${name} lock held by ${got.broke.owner ?? "?"}`);
+	console.log(got.again ? `${name} already held by ${owner}` : `acquired ${name} for ${owner}`);
+} else if (cmd === "render") {
+	const s = load(key);
+	if (!s) return console.log(`no status for ${key}; run init first`);
+	s.blackboard = fwd(path.join(BOARD, key));
+	save(key, s);
+	renderBoard(key, s);
+	console.log(`${key}: rendered ${s.blackboard}`);
 } else if (cmd === "metrics") {
 	const keys = fs.existsSync(ROOT) ? fs.readdirSync(ROOT).filter((k) => fs.existsSync(file(k))) : [];
 	const rows = keys.map(load).filter((s) => s.stage === "done").map((s) => ({ s, c: s.closing ?? closing(s, s.updatedAt) }));
@@ -521,5 +776,5 @@ if (!cmd) {
 		console.log(`| ${name} | ${list.length} | ${mean(tracked, (row) => row.c.fixRounds)} | ${mean(list, (row) => (row.s.findings ?? []).length)} | ${mean(timed, (row) => row.c.hours)} |`);
 	}
 } else {
-	console.log("usage: status.cjs [show KEY | init KEY title bePort fePort beDir feDir | set KEY k=v... | ac KEY n STATE text evidence | ac-set KEY @file [jiraUpdated] | stale [KEY jiraUpdated [@file]] | handoff KEY who k=v...|@file.json | fail KEY type evidence [what] | assume KEY text falsifier | assume KEY n confirmed|refuted evidence | replan KEY reason | finding KEY [--severity blocker|non-blocking|nit] text | lgtm KEY text | verdict KEY approve|request-change | metrics | brief KEY text|@file | decide KEY text | sync [KEY] | remote | handover KEY --to machine [--note text] | pull KEY [--force]]");
+	console.log("usage: status.cjs [show KEY | init KEY title bePort fePort beDir feDir | set KEY k=v... | ac KEY n STATE text evidence | ac-set KEY @file [jiraUpdated] | stale [KEY jiraUpdated [@file]] | handoff KEY who k=v...|@file.json | fail KEY type evidence [what] | assume KEY text falsifier | assume KEY n confirmed|refuted evidence | replan KEY reason | finding KEY [--severity blocker|non-blocking|nit] text | lgtm KEY text | verdict KEY approve|request-change [--ticket KEY] [--pr url]... | metrics | brief KEY text|@file | decide KEY text [--status SHOV|USULAN|DECIDED] [--by owner|arbiter|sous|agent] [--issue n] | decide KEY n cancel why | issue KEY TYPE text [--options \"A|B\"] | issue KEY n escalate sous|owner why | issue KEY n resolve decisionN | round KEY [why] | lock name KEY [--wait s] [--pid n] | unlock name KEY | render KEY | sync [KEY] | remote | handover KEY --to machine [--note text] | pull KEY [--force]]");
 }

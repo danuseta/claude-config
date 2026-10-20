@@ -5,6 +5,8 @@ description: Use when implementing a Qonflo ticket. Loads the fixed build order 
 
 # Implement a Qonflo ticket
 
+Building a ticket runs through the `sous` skill: load it and follow it (cron runs and DOCK continuations included). The steps below are the rules its agents carry; use them directly only when the owner asks to build without sous in this session.
+
 Create one todo per step below before starting. Do not collapse steps.
 
 ## Paths on this machine

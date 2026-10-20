@@ -6,6 +6,8 @@ argument-hint: "<QRD-KEY> | status"
 
 # Orchestrate $ARGUMENTS
 
+Building a ticket runs through the `sous` skill: load it and follow it. A ledger with `engine=sous` belongs to that flow; continue it there. This skill keeps `status` and the tickets the old flow already started.
+
 The user is the manager. They decide at three gates and nowhere else: **plan**, **evidence**, **commit**. Everything between gates runs without them. Everything stays local: nothing is committed or pushed without an explicit go.
 
 ## One session, one ticket - and it starts from the blackboard
