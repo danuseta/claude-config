@@ -30,7 +30,7 @@ Keep your own context small: pass paths, never paste whole files or reports into
 ## 1. Prepare
 1. `node K/status.cjs sync <KEY>`, then `node K/status.cjs show <KEY>`. A ledger at `done`, or a merged PR in `pr.be` / `pr.fe`, stops here: report it. An open PR means a revision on its branch, no new PR.
 2. `node K/status.cjs set <KEY> engine=sous`.
-3. No `BOARD/prompts/S<n>.md` yet: call `sous-planner` (model opus) with key, `S1` (or the next free S<n>), `BOARD`, `ROOT`, `K`. It writes the prompt with the AC rows, the contract and the **Terrain** section, writes `BOARD/ac.txt` (one capability per line), and returns Jira's `updated` time, the branch slug, the base branch per repo and the repos. Then `node K/status.cjs ac-set <KEY> @BOARD/ac.txt <updated>`, and one `decide ... --status SHOV --by sous` per planner decision.
+3. `node K/status.cjs set <KEY> stage=plan`. No `BOARD/prompts/S<n>.md` yet: call `sous-planner` (model opus) with key, `S1` (or the next free S<n>), `BOARD`, `ROOT`, `K`. It writes the prompt with the AC rows, the contract and the **Terrain** section, writes `BOARD/ac.txt` (one capability per line), and returns Jira's `updated` time, the branch slug, the base branch per repo and the repos. Then `node K/status.cjs ac-set <KEY> @BOARD/ac.txt <updated>`, and one `decide ... --status SHOV --by sous` per planner decision.
 4. Worktrees: `bash K/prep-ticket.sh <KEY> <slug> <be-base or -> <fe-base or -> "<title>"`. It creates `ROOT/wt-<n>-be|fe` on branch `feat/<KEY>-<slug>` and the ledger dirs and ports. Never `git worktree` directly.
 5. Planner asked for exploration it could not finish: `sous-explorer` with the question and the worktree paths.
 6. **Manual run:** `node K/status.cjs set <KEY> stage=plan waiting="GATE 1: plan in BOARD/prompts/S<n>.md"` and return `RESULT: GATE-1`. Stop. **Cron run:** go on.
@@ -46,11 +46,18 @@ For each task, in order (independent tasks may run in parallel):
 | REVIEW | `sous-reviewer` `LOOP` (sonnet): task, prompt, worktree, `git -C <wt> diff --stat` | FIX goes back to WORK, at most 2 loops per task; ESCALATE: the same review again with `model: opus` |
 | VERIFY | `node K/status.cjs lock verify <KEY> --wait 90` until acquired, `sous-verifier` (sonnet) with the worktree, changed files and the worker's `TEST-CMD` lines, then always `node K/status.cjs unlock verify <KEY>` | a failure the change caused goes back to WORK with the output |
 
-After a task passes: `node K/status.cjs handoff <KEY> T<k> status=done summary=".." evidence="<file that exists>" unverified=".."`.
+Record every step in the ledger as it happens, not at the end:
+- Before each step: `node K/status.cjs set <KEY> note="T<k> <WORK|REVIEW|VERIFY> loop <m>"`. While VERIFY runs the stage is `test` (`set <KEY> stage=test`), and back to `code` when the task returns to WORK.
+- A REVIEW `FIX`: `node K/status.cjs finding <KEY> --severity non-blocking "T<k>: <finding>"`. A REVIEW `PASS`: `node K/status.cjs lgtm <KEY> "T<k> loop review"`.
+- A VERIFY failure the change caused: `node K/status.cjs fail <KEY> defect "<command and output>" "T<k>: <what failed>"`. A failure of the stack, a login or a cache: `fail <KEY> env ...`; a timeout: `fail <KEY> transient ...`.
+- After a task passes: `node K/status.cjs handoff <KEY> T<k> status=done summary=".." evidence="<file that exists>" unverified=".."`.
 
 When every task passed: `node K/status.cjs set <KEY> stage=verify` and `sous-reviewer` `FINAL` with `model: opus`: every task, the prompt, the verification results. Each FINAL finding names the task it belongs to. For findings:
 1. `node K/status.cjs round <KEY> "<one line>"`. REFUSED means the rounds are spent: the ledger opened an owner issue and set `draft=true`; stop the loop and publish as draft.
-2. Send each finding back to its task: WORK, REVIEW LOOP, VERIFY again for that task only, then FINAL again.
+2. `node K/status.cjs finding <KEY> --severity <blocker|non-blocking> "T<k>: <finding>"` per finding.
+3. Send each finding back to its task: WORK, REVIEW LOOP, VERIFY again for that task only, then FINAL again.
+
+FINAL passes (or the rounds are spent): `node K/status.cjs lgtm <KEY> "FINAL"` when it passed, `node K/status.cjs set <KEY> stage=evidence`, then one `node K/status.cjs ac <KEY> <n> PASS|FAIL "<what>" "<path:line, test file or png>"` per AC row from FINAL's AC table. A row with no evidence stays TODO; never mark it PASS.
 
 ## 3. Issues and decisions
 - A worker or reviewer decision beyond the prompt: `node K/status.cjs decide <KEY> "<what and why>" --status SHOV --by sous`.
@@ -63,13 +70,13 @@ When every task passed: `node K/status.cjs set <KEY> stage=verify` and `sous-rev
 UI ticket only, after FINAL passed or rounds are spent:
 1. `bash K/stack.sh up <KEY> <be-dir> <fe-dir> <be-port> <fe-port>` (from the ledger).
 2. `browser-verifier` dry-run with the AC lines and the FE port; then `browser-verifier` record. The video goes to a public bucket: tell `browser-verifier` that no real person's name or email may appear on screen, and to rename such seed data to "Local Test" in the local stack before recording. A missing login state is an owner issue (`issue ... BLOCKER` then escalate owner); skip the video, do not stop the PR.
-3. `node K/demo-upload.cjs <KEY> EVIDENCE/<KEY>/evidence.mp4`; note the link for the PR body.
+3. `node K/demo-upload.cjs <KEY> EVIDENCE/<KEY>/evidence.mp4`; note the link for the PR body. Then `node K/status.cjs handoff <KEY> video status=done summary="demo uploaded" evidence="EVIDENCE/<KEY>/evidence.mp4" where="<link>" unverified="<what the video does not show, or none>"`; a skipped or refused video gets the same handoff with `status=blocked` and the reason in `summary`.
 4. `bash K/stack.sh down <be-port> <fe-port>`.
 
 ## 5. Publish
 1. `node K/status.cjs set <KEY> stage=commit`, then `node K/status.cjs show <KEY>`. The PR is a **draft** when the ledger has `draft=true` or any issue is still open; otherwise ready for review.
 2. Per repo write `EVIDENCE/<KEY>/pr-body-<be|fe>.md` (section 6), then call `sous-publisher` with: worktree, branch `feat/<KEY>-<slug>`, repo `<owner>/<repo>` (from `git -C <wt> remote get-url origin` read by the publisher), base branch, title `<KEY> <type>: <subject>`, commit message `<type>(<KEY>): <subject>`, the paths to stage (from `git -C <wt> status --porcelain`, minus `docs/`, `.omc/`, `.gitignore`), the body file, and draft yes/no.
-3. `node K/status.cjs sync <KEY>` fills `pr.be` / `pr.fe` and moves the stage to `pr`. Record `node K/status.cjs handoff <KEY> publisher ...` with the PR URL as evidence.
+3. `node K/status.cjs sync <KEY>` fills `pr.be` / `pr.fe` and moves the stage to `pr`. Record `node K/status.cjs handoff <KEY> publisher ...` with the PR URL as evidence, then `node K/status.cjs set <KEY> note= waiting="Ready for review: waiting for the owner"` (DOCK's PR gate text; `sync` clears it when the PR merges).
 
 ## 6. PR body (`EVIDENCE/<KEY>/pr-body-<repo>.md`)
 ```markdown
