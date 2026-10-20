@@ -358,7 +358,7 @@ s_plugins() {
 BRIDGE_JS='
 const fs = require("fs");
 const [file, cwd, mode, timeout] = process.argv.slice(1);
-const want = { managedBy: "claude-config linux/personalize.sh", cwd, configDir: null, claudeBin: "claude", permissionMode: mode || null, turnTimeoutMs: Number(timeout), keepAwake: { mechanism: "off" } };
+const want = { managedBy: "claude-config linux/personalize.sh", cwd, configDir: null, claudeBin: "claude", permissionMode: mode || null, turnTimeoutMs: Number(timeout), keepAwake: { mechanism: "off" }, passEnv: ["DOCK_INGEST_TOKEN"] };
 let cur = null;
 try { cur = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
 if (cur && !cur.managedBy) { console.log("kept"); process.exit(0); }
