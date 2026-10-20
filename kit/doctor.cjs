@@ -9,10 +9,17 @@ const path = require("path");
 const { execFileSync, execSync } = require("child_process");
 const PATHS = require("./paths.cjs").resolvePaths();
 
+// A non-login shell on Linux leaves ~/.local/bin off PATH, where rtk and ffmpeg live on the workspace.
+const probeEnv = () => {
+	if (process.platform === "win32") return process.env;
+	const extra = [path.join(os.homedir(), ".local", "bin"), path.join(os.homedir(), ".cargo", "bin")];
+	const have = (process.env.PATH || "").split(path.delimiter);
+	return { ...process.env, PATH: [...have, ...extra.filter((dir) => !have.includes(dir))].join(path.delimiter) };
+};
 const run = (cmd, args) => {
 	try {
 		const shim = process.platform === "win32" && cmd !== "git";
-		const out = shim ? execSync(`${cmd} ${args.join(" ")}`, { encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "pipe"], windowsHide: true }) : execFileSync(cmd, args, { encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+		const out = shim ? execSync(`${cmd} ${args.join(" ")}`, { encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "pipe"], windowsHide: true }) : execFileSync(cmd, args, { encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, env: probeEnv() });
 		return { ok: true, out: String(out).trim().split(/\r?\n/)[0] };
 	} catch (e) {
 		return { ok: false, out: String(e.stderr || e.message || "").trim().split(/\r?\n/)[0] };
