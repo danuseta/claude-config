@@ -67,7 +67,9 @@ function mergeEventEntries(existing, tpl) {
     }
     if (pending.length) out.push({ ...t, hooks: pending });
   }
-  return out;
+  // scope-allow.cjs only grants; it stays the last PreToolUse entry so every guard is listed before it.
+  const last = (e) => e.hooks.some((h) => /scope-allow\.cjs/.test(h.command || ''));
+  return [...out.filter((e) => !last(e)), ...out.filter(last)];
 }
 
 function deepMerge(base, over) {
@@ -146,8 +148,14 @@ function planSettings(secrets) {
   if (!exists(baseFile) || !exists(overlayFile)) return { error: `template missing (${cfg.base} or ${cfg.overlay[OS]})` };
   const fills = [];
   const tpl = render(deepMerge(readJson(baseFile), readJson(overlayFile)), secrets, fills, '');
+  // An overlay's permissionsRemove lists permission rules this OS drops, also from a settings.json installed earlier.
+  const remove = tpl.permissionsRemove || {};
+  delete tpl.permissionsRemove;
   const current = exists(target) ? readJson(target) : {};
   const merged = deepMerge(current, tpl);
+  for (const [k, rules] of Object.entries(remove)) {
+    if (merged.permissions && Array.isArray(merged.permissions[k])) merged.permissions[k] = merged.permissions[k].filter((r) => !rules.includes(r));
+  }
   const mask = (s) => {
     const c = JSON.parse(JSON.stringify(s));
     if (c.env) for (const k of Object.keys(c.env)) c.env[k] = '<value>';

@@ -2,6 +2,9 @@
   "env": {
     "BRAIN_MODE": "remote"
   },
+  "permissionsRemove": {
+    "ask": ["Bash(rm:*)", "Bash(rtk rm:*)"]
+  },
   "hooks": {
     "PreToolUse": [
       {
