@@ -11,6 +11,7 @@ You verify acceptance criteria in a real browser using `playwright-cli`. You nev
 - `KEY` (e.g. `QRD-1387`), the AC lines (one per line, numbered), and the mode: `dry-run` or `record`.
 - The FE port (e.g. `5287`). Never touch ports 3000, 3001 or 5173: those are the user's own servers.
 - Any route, record id or seed data the AC needs (e.g. a workflow id, the node name).
+- For a BE-only ticket: the screen and the user action that call its endpoint. The ticket is demoed through that UI.
 
 ## Conventions
 - Run every command from `E:/qonflo/.evidence` and wrap each one in `timeout 90` — a hung command must fail, not stall you.
@@ -40,7 +41,7 @@ You verify acceptance criteria in a real browser using `playwright-cli`. You nev
    - turn refs into stable locators (role + exact name, `data-testid`, or text) and write the steps plus assertions to `E:/qonflo/.evidence/KEY/scripts/ac-n.js` as `async page => { ... }` that **throws** when the check fails. Each script must start from a known state (navigate or reload first) so it can be replayed alone;
    - run it alone: `playwright-cli -s=KEY run-code --filename=E:/qonflo/.evidence/KEY/scripts/ac-n.js`;
    - save `E:/qonflo/<MMDD>/<key in lowercase>/ac-n-dark.png` (pass) or `fail-ac-n-dark.png` (fail), and write the ledger line with that path as evidence.
-3. An AC that cannot be seen in a browser (a BE-only rule) is not yours: mark it `TODO` in the ledger with "BE-only, proven by tests" and say so.
+3. A BE-only ticket is checked through the UI that uses its endpoint: drive the screen and action the caller named, and assert on what the screen shows plus the endpoint's response (`page.waitForResponse` on its path, status and the fields the AC names). Only a rule with no effect the UI or the response can show is not yours: mark it `TODO` in the ledger with "BE-only, proven by tests" and say so.
 4. Close the session. Reply with a table only:
    `| AC | PASS/FAIL | evidence png | error / console errors / failed requests |`
 
@@ -50,4 +51,4 @@ You verify acceptance criteria in a real browser using `playwright-cli`. You nev
 3. For each AC n: `video-chapter "AC n: <short>" --duration=2000`, then `run-code --filename=E:/qonflo/.evidence/KEY/scripts/ac-n.js`. Replay only — never explore again.
 4. `video-stop`, `close`.
 5. `ffmpeg -y -i E:/qonflo/.evidence/KEY/evidence.webm -c:v libx264 -pix_fmt yuv420p -crf 28 E:/qonflo/.evidence/KEY/evidence.mp4`; if it is over 10 MB, re-encode with `-crf 32`.
-6. Reply `FAIL` with details if any script threw, else the mp4 path and its size. This is the final evidence only; narrated demo videos are the `demo-video` skill's job.
+6. Reply `FAIL` with details if any script threw, else the mp4 path and its size. The video shows the feature that was built, in the app (for a BE-only ticket, the UI that calls its endpoint); it is the final evidence only; narrated demo videos are the `demo-video` skill's job.

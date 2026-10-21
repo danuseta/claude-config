@@ -5,6 +5,8 @@
 //   node status.cjs set KEY stage=<stage> [waiting="..."] [pr.be=..] [note="..."] [kind=ticket|review|card] [engine=sous]
 //                       [productionData=true|false] [draft=true|false] [rounds.max=<n>]   (kind=card needs a CARD-<slug> key)
 //                       [stackedOn=<PARENT>] -> base each repo on the parent's open PR head (gh pr view); stackedOn= clears it
+//                       [board=<EPIC>]   -> the ticket's board moves into its epic's: <evidence>/blackboard/<EPIC>/tickets/KEY, with
+//                                           prompts/, materials/ and EPIC.md at the epic root; board= clears it
 //   node status.cjs ac KEY <n> <PASS|FAIL|TODO> "<text>" ["<evidence>"]
 //   node status.cjs brief KEY "<text>" | @<file>   -> the working brief a fresh session starts from
 //   node status.cjs decide KEY "<decision and why>" [--status SHOV|USULAN|DECIDED] [--by owner|arbiter|sous|agent] [--issue n]
@@ -15,7 +17,8 @@
 //   node status.cjs issue KEY <n> resolve <decisionN> -> resolved by D-<decisionN>; clears waiting when it was this issue
 //   node status.cjs round KEY ["<why>"]             -> one review-to-task return round; past rounds.max (default 4) an owner issue and draft
 //   node status.cjs lock <name> KEY [--wait <s>] [--pid <n>] | unlock <name> KEY -> one heavy step per machine (stale: dead pid or 30 min)
-//   node status.cjs render KEY                       -> status.md, decisions.md, issues.md, NOW.md under <evidence>/blackboard/KEY (generated)
+//   node status.cjs render KEY                       -> status.md, decisions.md, issues.md, NOW.md under <evidence>/blackboard/KEY (generated);
+//                                                     with board=<EPIC> under <EPIC>/tickets/KEY, plus <EPIC>/EPIC.md
 //   node status.cjs sync [KEY] [--hook]            -> pull PR state from GitHub: fills pr.be / pr.fe, retargets a stacked PR once its parent merged, moves commit -> pr when a PR
 //                                                     exists and pr -> done when every PR is merged. Two gh calls whatever the ticket count.
 //   node status.cjs ac-set KEY @<file> [jiraUpdated] -> AC rows from Jira, one capability per line; stamps the source and locks the row count
@@ -60,6 +63,7 @@ const DECIDERS = ["owner", "arbiter", "sous", "agent"];
 const ISSUE_TYPES = ["BLOCKER", "QUESTION", "RISK", "DISPUTE"];
 const BOOLEANS = ["productionData", "draft"];
 const BOARD = path.join(ROOT, "blackboard");
+const EPIC_KEY = /^[A-Z][A-Z0-9]*-\d+$/;
 const LOCKS = path.join(ROOT, ".locks");
 const LOCK_STALE_MS = 30 * 60 * 1000;
 const file = (key) => path.join(ROOT, key, "status.json");
@@ -69,7 +73,7 @@ const save = (key, s, allowHanded = false) => {
 	if (prev?.handedTo) return refuse(`${key} was handed over to ${prev.handedTo}; it is changed there. \`status.cjs pull ${key}\` takes it back`);
 	fs.mkdirSync(path.dirname(file(key)), { recursive: true });
 	s.updatedAt = new Date().toISOString();
-	if (s.engine === "sous") s.blackboard = fwd(path.join(BOARD, key));
+	if (s.engine === "sous") stampBoard(key, s);
 	fs.writeFileSync(file(key), JSON.stringify(s, null, 2));
 	if (s.engine === "sous") try { renderBoard(key, s); } catch {}
 	// Mirror the ledger to DOCK when it is configured; a no-op otherwise.
@@ -167,9 +171,36 @@ const stamp = (iso) => (iso ? String(iso).slice(0, 16).replace("T", " ") : "-");
 const line = (t) => String(t ?? "").replace(/\r?\n/g, " ");
 const cell = (t) => line(t).replace(/\|/g, "\\|");
 const IN_FORCE = ["DECIDED", "SHOV", "USULAN"];
+// Where a ticket's board lives: its own folder, or tickets/KEY inside its epic's board, whose root holds the shared files.
+const boardOf = (key, s) => {
+	if (!s?.board) return { dir: path.join(BOARD, key), root: null };
+	const root = path.join(BOARD, s.board);
+	return { dir: path.join(root, "tickets", key), root };
+};
+const stampBoard = (key, s) => {
+	const b = boardOf(key, s);
+	s.blackboard = fwd(b.dir);
+	if (b.root) s.epicBoard = fwd(b.root);
+	else delete s.epicBoard;
+};
+// The epic index: every ledger on this epic's board, with the sessions whose prompt names the ticket on its first line.
+const renderEpic = (epic, root) => {
+	const keys = fs.existsSync(ROOT) ? fs.readdirSync(ROOT).filter((k) => fs.existsSync(file(k))) : [];
+	const dir = path.join(root, "prompts");
+	const prompts = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => /^S\d+\.md$/.test(f)).sort((a, b) => parseInt(a.slice(1)) - parseInt(b.slice(1))) : [];
+	const heads = prompts.map((f) => { try { return [f.slice(0, -3), fs.readFileSync(path.join(dir, f), "utf8").split(/\r?\n/)[0]]; } catch { return [f.slice(0, -3), ""]; } });
+	const rows = keys.map(load).filter((t) => t?.board === epic).map((t) => {
+		const own = new RegExp(`(^|[^0-9A-Za-z])${t.key}([^0-9]|$)`);
+		const sessions = heads.filter(([, h]) => own.test(h)).map(([n]) => n).join(", ") || "-";
+		return `| ${t.key} | ${cell(t.title)} | ${sessions} | ${t.stage ?? "-"} | ${cell(t.waiting || "-")} | \`tickets/${t.key}/NOW.md\` |`;
+	});
+	const head = `<!-- generated, do not edit: \`status.cjs render <KEY>\` of any ticket on this board rebuilds this file from the ledgers -->\n`;
+	const intro = "Shared here: `materials/` and `prompts/S<n>.md` (numbered across the epic; each prompt names its ticket on its first line). Per ticket: `tickets/<KEY>/`.";
+	fs.writeFileSync(path.join(root, "EPIC.md"), `${head}# EPIC - ${epic}\n\n${intro}\n\n| Ticket | Title | Sessions | Stage | Waiting on the owner | Board |\n|---|---|---|---|---|---|\n${rows.join("\n")}\n`);
+};
 // The blackboard files a session reads, rebuilt whole from the ledger; nobody edits them.
 const renderBoard = (key, s) => {
-	const dir = path.join(BOARD, key);
+	const { dir, root } = boardOf(key, s);
 	fs.mkdirSync(dir, { recursive: true });
 	const head = `<!-- generated, do not edit: \`status.cjs render ${key}\` rebuilds this file from the ledger -->\n`;
 	const decisions = decisionsOf(s);
@@ -211,6 +242,7 @@ const renderBoard = (key, s) => {
 		["Review rounds", s.rounds ? `${s.rounds.used ?? 0}/${s.rounds.max ?? 4}` : "-"], ["Draft PR", s.draft ? "yes" : "no"],
 		["Production data", s.productionData ? "yes" : "no"], ["PR", [s.pr?.be, s.pr?.fe].filter(Boolean).join(" ") || "-"],
 		["Worktrees", [s.dirs?.be, s.dirs?.fe].filter((d) => d && d !== "-").join(" ") || "-"],
+		...(root ? [["Epic board", fwd(root)]] : []),
 	];
 	const now_ = [
 		`${head}# NOW - ${key} ${s.title ?? ""} · per ${stamp(s.updatedAt)}`, "",
@@ -218,9 +250,10 @@ const renderBoard = (key, s) => {
 		"## Acceptance criteria", "", "| AC | State | Text |", "|---|---|---|", ...(s.ac ?? []).map((a) => `| ${a.n} | ${a.state} | ${cell(a.text)} |`), "",
 		"## Open issues", "", ...(open.length ? open.map((x) => `- I-${x.n} ${x.type} (level ${x.level}): ${line(x.text)}`) : ["none"]), "",
 		"## Decisions in force", "", ...(decisions.filter((d) => IN_FORCE.includes(d.status)).map((d) => `- D-${d.n} ${d.status}: ${line(d.text)}`)), "",
-		"## Pointers", "", "| Need | Open |", "|---|---|", "| Work prompt and terrain | `prompts/S<n>.md` |", "| Every event | `status.md` |", "| Why a rule holds | `decisions.md` |", "| Open questions | `issues.md` |", "",
+		"## Pointers", "", "| Need | Open |", "|---|---|", `| Work prompt and terrain | \`${root ? `${fwd(root)}/` : ""}prompts/S<n>.md\` |`, ...(root ? [`| Sibling tickets, shared materials | \`${fwd(root)}/EPIC.md\`, \`${fwd(root)}/materials/\` |`] : []), "| Every event | `status.md` |", "| Why a rule holds | `decisions.md` |", "| Open questions | `issues.md` |", "",
 	];
 	fs.writeFileSync(path.join(dir, "NOW.md"), now_.join("\n"));
+	if (root) renderEpic(s.board, root);
 	return dir;
 };
 const lockFile = (name) => path.join(LOCKS, `${name}.lock`);
@@ -443,6 +476,24 @@ if (!cmd) {
 			if (/^Blocked: prerequisite/i.test(s.waiting || "")) s.waiting = "";
 			const bases = ["be", "fe"].filter((d) => r.stack[d]).map((d) => `${d} ${r.stack[d].branch}`).join(", ");
 			(s.decisions ??= []).push({ n: s.decisions.length + 1, at: now(), text: `stacked on ${v}: base ${bases}; ${v}'s PR merges first`, status: "DECIDED", by: "agent" });
+			continue;
+		}
+		if (k === "board") {
+			if (v && !EPIC_KEY.test(v)) return refuse(`board must be an epic key like QRD-100, or empty for the ticket's own board; got ${v}`);
+			if ((s.board ?? "") === v) continue;
+			const from = boardOf(key, s).dir;
+			const to = boardOf(key, { board: v }).dir;
+			const prompts = path.join(from, "prompts");
+			if (fs.existsSync(prompts) && fs.readdirSync(prompts).length) return refuse(`${key} already has prompts in ${fwd(prompts)}; its board stays where it is`);
+			if (fs.existsSync(from) && fs.existsSync(to)) console.log(`${fwd(to)} exists; ${fwd(from)} left in place`);
+			else if (fs.existsSync(from)) {
+				fs.mkdirSync(path.dirname(to), { recursive: true });
+				fs.renameSync(from, to);
+				console.log(`moved ${fwd(from)} to ${fwd(to)}`);
+			}
+			if (v) s.board = v;
+			else delete s.board;
+			if (s.blackboard) stampBoard(key, s);
 			continue;
 		}
 		if (k === "engine" && !v) {
@@ -806,7 +857,7 @@ if (!cmd) {
 } else if (cmd === "render") {
 	const s = load(key);
 	if (!s) return console.log(`no status for ${key}; run init first`);
-	s.blackboard = fwd(path.join(BOARD, key));
+	stampBoard(key, s);
 	save(key, s);
 	renderBoard(key, s);
 	console.log(`${key}: rendered ${s.blackboard}`);

@@ -169,6 +169,63 @@ test('render writes the generated board and engine=sous keeps it current', async
   }
 });
 
+test('board=<EPIC> moves a ticket board under the epic, renders tickets/<KEY> and EPIC.md, and board= brings it back', async () => {
+  const { base, evidence, status, ledger } = scratch('sous-epic');
+  try {
+    const bb = path.join(evidence, 'blackboard');
+    const fwd = (p) => p.replace(/\\/g, '/');
+    await status('init', 'ZED-410', 'First child', '-', '-', '-', '-');
+    await status('set', 'ZED-410', 'engine=sous');
+    let s = ledger('ZED-410');
+    assert.equal(s.blackboard, fwd(path.join(bb, 'ZED-410')), 'default path unchanged');
+    assert.equal(s.epicBoard, undefined);
+    assert.equal(s.board, undefined);
+    fs.writeFileSync(path.join(bb, 'ZED-410', 'ac.txt'), 'one\n');
+    fs.mkdirSync(path.join(bb, 'ZED-410', 'materials'));
+    fs.writeFileSync(path.join(bb, 'ZED-410', 'materials', 'jira.md'), 'x\n');
+
+    assert.equal((await status('set', 'ZED-410', 'board=epic')).code, 2);
+    let r = await status('set', 'ZED-410', 'board=ZED-400');
+    assert.match(r.stdout, /moved .*ZED-410 to .*ZED-400\/tickets\/ZED-410/);
+    const own = path.join(bb, 'ZED-400', 'tickets', 'ZED-410');
+    s = ledger('ZED-410');
+    assert.deepEqual([s.board, s.blackboard, s.epicBoard], ['ZED-400', fwd(own), fwd(path.join(bb, 'ZED-400'))]);
+    assert.ok(!fs.existsSync(path.join(bb, 'ZED-410')));
+    assert.equal(fs.readFileSync(path.join(own, 'ac.txt'), 'utf8'), 'one\n');
+    assert.ok(fs.existsSync(path.join(own, 'materials', 'jira.md')));
+    for (const f of ['status.md', 'decisions.md', 'issues.md', 'NOW.md']) assert.match(fs.readFileSync(path.join(own, f), 'utf8'), /^<!-- generated, do not edit/, f);
+    for (const f of ['status.md', 'decisions.md', 'issues.md', 'NOW.md']) assert.ok(!fs.existsSync(path.join(bb, 'ZED-400', f)), `no ${f} at the epic root`);
+    assert.match(fs.readFileSync(path.join(own, 'NOW.md'), 'utf8'), /ZED-400\/prompts\/S<n>\.md/);
+
+    await status('init', 'ZED-411', 'Second child', '-', '-', '-', '-');
+    await status('set', 'ZED-411', 'board=ZED-400', 'engine=sous', 'stage=plan');
+    fs.mkdirSync(path.join(bb, 'ZED-400', 'prompts'), { recursive: true });
+    fs.writeFileSync(path.join(bb, 'ZED-400', 'prompts', 'S1.md'), '# Prompt S1 - ZED-410 "First child"\n');
+    fs.writeFileSync(path.join(bb, 'ZED-400', 'prompts', 'S2.md'), '# Prompt S2 - ZED-411 "Second child"\n');
+    await status('render', 'ZED-411');
+    const epic = fs.readFileSync(path.join(bb, 'ZED-400', 'EPIC.md'), 'utf8');
+    assert.match(epic, /^<!-- generated, do not edit/);
+    assert.match(epic, /\| ZED-410 \| First child \| S1 \| gate \|/);
+    assert.match(epic, /\| ZED-411 \| Second child \| S2 \| plan \|/);
+    assert.ok(fs.existsSync(path.join(bb, 'ZED-400', 'tickets', 'ZED-411', 'NOW.md')));
+
+    r = await status('set', 'ZED-410', 'board=');
+    assert.match(r.stdout, /moved .*tickets\/ZED-410 to .*blackboard\/ZED-410/);
+    s = ledger('ZED-410');
+    assert.deepEqual([s.board, s.epicBoard, s.blackboard], [undefined, undefined, fwd(path.join(bb, 'ZED-410'))]);
+    assert.ok(fs.existsSync(path.join(bb, 'ZED-410', 'ac.txt')));
+
+    fs.mkdirSync(path.join(bb, 'ZED-410', 'prompts'));
+    fs.writeFileSync(path.join(bb, 'ZED-410', 'prompts', 'S1.md'), 'x\n');
+    r = await status('set', 'ZED-410', 'board=ZED-400');
+    assert.equal(r.code, 2);
+    assert.match(r.stdout, /already has prompts/);
+    assert.equal(ledger('ZED-410').board, undefined);
+  } finally {
+    rmrf(base);
+  }
+});
+
 test('set validates kind, engine, booleans; CARD keys are normalised; sync and verdict carry what DOCK needs', async () => {
   const { base, status, ledger } = scratch('sous-set');
   try {
