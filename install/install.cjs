@@ -47,7 +47,7 @@ function isPlainObject(v) {
 }
 const isEventEntries = (a) => a.length > 0 && a.every((e) => isPlainObject(e) && Array.isArray(e.hooks));
 
-// Hook entries are keyed by (matcher, command) so a second run changes nothing.
+// Hook entries are keyed by (matcher, command) so a second run changes nothing. An entry that only gained ` || exit 2` replaces the old one.
 function mergeEventEntries(existing, tpl) {
   const out = existing.map((e) => ({ ...e, hooks: e.hooks.slice() }));
   for (const t of tpl) {
@@ -56,7 +56,7 @@ function mergeEventEntries(existing, tpl) {
       let placed = false;
       for (const e of out) {
         if ((e.matcher || '') !== (t.matcher || '')) continue;
-        const i = e.hooks.findIndex((x) => x.command === h.command);
+        const i = e.hooks.findIndex((x) => x.command === h.command || `${x.command} || exit 2` === h.command);
         if (i >= 0) {
           e.hooks[i] = h;
           placed = true;

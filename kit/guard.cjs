@@ -564,9 +564,15 @@ function answer(command, cwd, { guard = createGuard(), env = process.env, cfg = 
 	return JSON.stringify({ hookSpecificOutput: out });
 }
 
+// A guard that cannot do its check blocks the call: exit 2 with the reason on stderr.
+function fail(why) {
+	process.stderr.write(`guard: ${why}; refusing\n`);
+	process.exitCode = 2;
+}
+
 function main() {
 	let payload;
-	try { payload = JSON.parse(fs.readFileSync(0, "utf8")); } catch { return; }
+	try { payload = JSON.parse(fs.readFileSync(0, "utf8")); } catch (e) { return fail(`cannot read the hook input (${e.message})`); }
 	const command = payload?.tool_input?.command;
 	if (typeof command !== "string" || !command.trim()) return;
 	const out = answer(command, payload.cwd, { agent: payload.agent_type ?? "lead" });
@@ -574,7 +580,7 @@ function main() {
 }
 
 if (require.main === module) {
-	try { main(); } catch {}
+	try { main(); } catch (e) { fail(`internal error (${e.message})`); }
 } else {
 	module.exports = { check: (command, cwd) => createGuard().check(command, cwd), createGuard, answer };
 }

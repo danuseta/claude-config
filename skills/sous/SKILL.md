@@ -74,7 +74,7 @@ Owner `DECIDED` > `SHOV` > contract > Jira AC > `USULAN`. A `D-n` from arbiter o
 
 ## 7. Rules that hold in every mode
 - The ledger is the only status. Never edit `status.json`, `NOW.md`, `status.md`, `decisions.md` or `issues.md` by hand; a `REFUSED` from status.cjs is followed, not bypassed.
-- Review rounds: at most 4 returns from FINAL to a task (`status.cjs round`); past that the ledger opens an owner issue and the PR goes out as draft.
+- Review rounds: at most 2 returns from FINAL to a task (`status.cjs round`); past that the ledger opens an owner issue and the PR goes out as draft. Verify rounds: at most 2 per task. Only the owner changes `rounds.max` or clears `draft`; the runner guard refuses both.
 - PR is a draft when rounds are spent, an issue is still open, or production data is touched (`set <KEY> productionData=true`); otherwise ready for review.
 - One heavy step per machine: tests, tsc and builds run only inside `status.cjs lock verify <KEY>`.
 - Agents run in the foreground: dispatch a runner and wait for its return, never `run_in_background`, and never end the turn while an agent or a Monitor still runs. A DOCK turn that ends kills them (QRD-1346 lost two workers that way); the runner guard refuses background calls.

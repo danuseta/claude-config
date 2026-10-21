@@ -43,6 +43,8 @@ function resolvePaths({ platform = process.platform, env = process.env, kitDir =
     root,
     evidence: over.evidence || `${root}/.evidence`,
     repos: { be: `${root}/ms-admin-worker-backend`, fe: `${root}/ms-client-dashboard-frontend`, ...(over.repos || {}) },
+    github: { ...(over.github || {}) },
+    bases: over.bases || ['develop'],
     kitDir,
     configDir,
     sessionsDir: over.sessionsDir || P.join(configDir, 'projects', slugOf(root)),

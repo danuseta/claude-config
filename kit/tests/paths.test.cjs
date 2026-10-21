@@ -50,13 +50,16 @@ test('kit.local.json style overrides win over the defaults', () => {
   const p = linux({ local: { ticketPortBase: { be: 3900 }, protectedPorts: ['1'] } });
   assert.deepEqual(p.ticketPortBase, { be: 3900, fe: 5300 });
   assert.deepEqual(p.protectedPorts, ['1']);
+  assert.deepEqual([p.github, p.bases], [{}, ['develop']], 'no GitHub names by default; develop is the only PR base');
+  const o = linux({ local: { github: { be: 'o/be' }, bases: ['develop', 'feat/V1-Playbook'] } });
+  assert.deepEqual([o.github, o.bases], [{ be: 'o/be' }, ['develop', 'feat/V1-Playbook']]);
 });
 
 test('--print contract: JSON of the F.1 keys with forward slashes', async () => {
   const r = await runNode([path.join(KIT, 'paths.cjs'), '--print'], { env: { QONFLO_ROOT: '', CLAUDE_CONFIG_DIR: '' } });
   assert.equal(r.code, 0);
   const out = JSON.parse(r.stdout);
-  assert.deepEqual(Object.keys(out).sort(), ['configDir', 'evidence', 'kitDir', 'protectedPorts', 'repos', 'root', 'sessionsDir', 'ticketPortBase']);
+  assert.deepEqual(Object.keys(out).sort(), ['bases', 'configDir', 'evidence', 'github', 'kitDir', 'protectedPorts', 'repos', 'root', 'sessionsDir', 'ticketPortBase']);
   assert.ok(!/\\/.test(r.stdout.replace(/\\n/g, '')), 'no backslash in the printed paths');
   assert.deepEqual(Object.keys(out.repos), ['be', 'fe']);
   assert.deepEqual(Object.keys(out.ticketPortBase), ['be', 'fe']);

@@ -48,7 +48,7 @@ For each task, in order (independent tasks may run in parallel, as several Agent
 |---|---|---|
 | WORK | `sous-ticket-worker` (sonnet): `BOARD`, the prompt path `PROMPTS/S<n>.md`, task `T<k>` from `tasks.md`, its worktree path; on a later loop the findings or failing output | its `ISSUE` lines go to section 3 |
 | REVIEW | `sous-reviewer` `LOOP` (sonnet): task, prompt, worktree, `git -C <wt> diff --stat` | FIX goes back to WORK, at most 2 loops per task; ESCALATE: the same review again with `model: opus` |
-| VERIFY | `node K/status.cjs lock verify <KEY> --wait 90` until acquired, `sous-verifier` (sonnet) with the worktree, changed files and the worker's `TEST-CMD` lines, then always `node K/status.cjs unlock verify <KEY>` | a failure the change caused goes back to WORK with the output |
+| VERIFY | `node K/status.cjs lock verify <KEY> --wait 90` until acquired, `sous-verifier` (sonnet) with the worktree, changed files and the worker's `TEST-CMD` lines, then always `node K/status.cjs unlock verify <KEY>` | a failure the change caused goes back to WORK with the output, at most 2 verify rounds per task; a third failure is a `BLOCKER` issue escalated to the owner and that task stops |
 
 Record every step in the ledger as it happens, not at the end:
 - Before each step: `node K/status.cjs set <KEY> note="T<k> <WORK|REVIEW|VERIFY> loop <m>"`. While VERIFY runs the stage is `test` (`set <KEY> stage=test`), and back to `code` when the task returns to WORK.
@@ -57,7 +57,7 @@ Record every step in the ledger as it happens, not at the end:
 - After a task passes: `node K/status.cjs handoff <KEY> T<k> status=done summary=".." evidence="<file that exists>" unverified=".."`.
 
 When every task passed: `node K/status.cjs set <KEY> stage=verify` and `sous-reviewer` `FINAL` with `model: opus`: every task, the prompt, the verification results. Each FINAL finding names the task it belongs to. For findings:
-1. `node K/status.cjs round <KEY> "<one line>"`. REFUSED means the rounds are spent: the ledger opened an owner issue and set `draft=true`; stop the loop and publish as draft.
+1. `node K/status.cjs round <KEY> "<one line>"`. REFUSED means the rounds are spent (2 unless the owner set another `rounds.max`): the ledger opened an owner issue and set `draft=true`; stop the loop and publish as draft. Never `set rounds.max` or `draft=false` yourself: the guard refuses both, only the owner changes them.
 2. `node K/status.cjs finding <KEY> --severity <blocker|non-blocking> "T<k>: <finding>"` per finding.
 3. Send each finding back to its task: WORK, REVIEW LOOP, VERIFY again for that task only, then FINAL again.
 
@@ -85,6 +85,7 @@ A video is required for every ticket; it shows the feature that was built, in th
 1. `node K/status.cjs set <KEY> stage=commit`, then `node K/status.cjs show <KEY>`. The PR is a **draft** when the ledger has `draft=true` or any issue is still open; otherwise ready for review.
 2. Per repo write `EVIDENCE/<KEY>/pr-body-<be|fe>.md` (section 6), then call `sous-publisher` with: worktree, branch `feat/<KEY>-<slug>`, repo `<owner>/<repo>` (from `git -C <wt> remote get-url origin` read by the publisher), base branch (`stackedOn.<repo>.branch` for a stacked repo), title `<KEY> <type>: <subject>`, commit message `<type>(<KEY>): <subject>`, the paths to stage (from `git -C <wt> status --porcelain`, minus `docs/`, `.omc/`, `.gitignore`), the body file, and draft yes/no.
 3. `node K/status.cjs sync <KEY>` fills `pr.be` / `pr.fe` and moves the stage to `pr`. Record `node K/status.cjs handoff <KEY> publisher ...` with the PR URL as evidence, then `node K/status.cjs set <KEY> note= waiting="Ready for review: waiting for the owner"` (DOCK's PR gate text; `sync` clears it when the PR merges).
+4. Per PR `gh pr checks <number> --repo <owner>/<repo>`: CI is `pass` when every check passed, `fail` when one failed, `pending` otherwise. It goes on the `CI:` line of your return with the PR URL; a failing check is named in `NOTE`.
 
 ## 6. PR body (`EVIDENCE/<KEY>/pr-body-<repo>.md`)
 ```markdown
@@ -118,6 +119,7 @@ No AI attribution line, no "Generated with" footer, no Co-Authored-By.
 ```
 TICKET: <key>   RESULT: DONE | DRAFT | GATE-1 | WAITING-OWNER | BLOCKED | SKIPPED
 PR: <urls or ->
+CI: <pass|fail|pending> <PR url>   (one per PR, or -)
 ROUNDS: <used>/<max>
 DECISIONS: <D-numbers taken without the owner, or ->
 ISSUES: <open I-numbers with level, or ->

@@ -122,7 +122,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "{{kit:guard.cjs}}",
+            "command": "{{kit:guard.cjs}} || exit 2",
             "timeout": 5
           }
         ]
