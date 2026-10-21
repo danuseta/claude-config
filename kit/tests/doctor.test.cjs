@@ -7,7 +7,7 @@ const path = require('path');
 const { report, table } = require('../doctor.cjs');
 const { KIT, tmp, rmrf, startServer, runNode, sandboxEnv } = require('./helpers.cjs');
 
-const NAMES = ['rtk', 'ffmpeg', 'ffprobe', 'dock-config', 'passEnv', 'hooks', 'playwright', 'chromium', 's3-demo', 'node', 'python'];
+const NAMES = ['rtk', 'ffmpeg', 'ffprobe', 'dock-config', 'passEnv', 'hooks', 'playwright', 'chromium', 's3-demo', 'demo-video', 'elevenlabs', 'node', 'python'];
 const fakeToken = (word) => ['dock', 'ing', word].join('_');
 const fakeProbe = (missing = []) => (name) => ({ name, ok: !missing.includes(name), detail: missing.includes(name) ? `not found or failed: ${name}` : `${name} 1.0` });
 
@@ -25,13 +25,17 @@ test('a configured machine reports every check ok and never the token', () => {
     fs.writeFileSync(path.join(cfg, 'settings.json'), JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ command: `node "${kit}/guard.cjs"` }, { command: `node "${kit}/dock-push.cjs" hook` }] }], SessionStart: [{ hooks: [{ command: `node "${kit}/status.cjs" sync --hook` }] }] } }));
     const home = path.join(base, 'home');
     fs.mkdirSync(path.join(home, '.cache', 'ms-playwright', 'chromium-1200'), { recursive: true });
-    const r = report({ env: { ZED_A: 'x', ZED_B: 'y' }, kitDir: kit, configDir: cfg, home, probe: fakeProbe() });
+    fs.mkdirSync(path.join(base, 'root', '.claude', 'skills', 'demo-video'), { recursive: true });
+    fs.writeFileSync(path.join(base, 'root', '.claude', 'skills', 'demo-video', 'SKILL.md'), '');
+    const r = report({ env: { ZED_A: 'x', ZED_B: 'y' }, kitDir: kit, configDir: cfg, root: path.join(base, 'root'), home, probe: fakeProbe(), elKey: () => ({ ok: true }) });
     assert.deepEqual(r.checks.map((c) => c.name), NAMES);
     assert.deepEqual(Object.keys(r).sort(), ['at', 'checks', 'kitVersion', 'machine', 'os']);
     for (const c of r.checks.filter((x) => x.name !== 'node')) assert.equal(c.ok, true, `${c.name}: ${c.detail}`);
     assert.match(r.checks.find((c) => c.name === 'dock-config').detail, /dock\.example\.test/);
     assert.match(r.checks.find((c) => c.name === 'passEnv').detail, /2\/2 set/);
     assert.match(r.checks.find((c) => c.name === 'chromium').detail, /chromium-1200/);
+    assert.match(r.checks.find((c) => c.name === 'demo-video').detail, /root\/\.claude\/skills\/demo-video/);
+    assert.equal(r.checks.find((c) => c.name === 'elevenlabs').warn, undefined);
     assert.doesNotMatch(JSON.stringify(r) + table(r), /SECRETVALUE/);
   } finally {
     rmrf(base);
@@ -46,7 +50,7 @@ test('missing pieces are FAIL with what is missing, by name only', () => {
     fs.mkdirSync(kit, { recursive: true });
     fs.writeFileSync(path.join(kit, 'dock-chat.json'), JSON.stringify({ passEnv: ['ZED_SET', 'ZED_GONE'] }));
     fs.writeFileSync(path.join(cfg, 'settings.json'), JSON.stringify({ hooks: {} }));
-    const r = report({ env: { ZED_SET: 'value-not-printed' }, kitDir: kit, configDir: cfg, home: path.join(base, 'home'), probe: fakeProbe(['ffmpeg', 'rtk']) });
+    const r = report({ env: { ZED_SET: 'value-not-printed' }, kitDir: kit, configDir: cfg, home: path.join(base, 'home'), root: path.join(base, 'root'), probe: fakeProbe(['ffmpeg', 'rtk']), elKey: () => assert.fail('no key asked without DOCK') });
     const by = Object.fromEntries(r.checks.map((c) => [c.name, c]));
     assert.equal(by.rtk.ok, false);
     assert.equal(by.ffmpeg.ok, false);
@@ -57,6 +61,9 @@ test('missing pieces are FAIL with what is missing, by name only', () => {
     assert.equal(by.hooks.ok, false);
     assert.match(by.hooks.detail, /missing: guard\.cjs, dock-push\.cjs hook, status\.cjs sync/);
     assert.equal(by['s3-demo'].ok, false);
+    assert.equal(by['demo-video'].ok, false);
+    assert.deepEqual([by.elevenlabs.ok, by.elevenlabs.warn], [true, true], 'no DOCK is a warning, not a failure');
+    assert.match(table(r), /\| elevenlabs \| WARN \| DOCK not configured/);
     assert.doesNotMatch(table(r), /value-not-printed/);
     assert.match(table(r), /\| rtk \| FAIL \|/);
   } finally {
@@ -72,13 +79,30 @@ test('--push sends the report to /doctor with the ingest token', async () => {
     assert.equal(r.code, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /push: sent to DOCK \/doctor/);
     assert.doesNotMatch(r.stdout, /TESTTOKEN/);
-    assert.equal(dock.requests.length, 1);
-    const q = dock.requests[0];
+    const pushed = dock.requests.filter((q) => q.url.endsWith('/doctor'));
+    assert.equal(pushed.length, 1);
+    const q = pushed[0];
     assert.equal(q.url, '/ingest/orchestrator/doctor');
     assert.equal(q.headers.authorization, `Bearer ${fakeToken('TESTTOKEN')}`);
     assert.deepEqual(q.body.checks.map((c) => c.name), NAMES);
     assert.equal(q.body.os, process.platform);
     assert.doesNotMatch(JSON.stringify(q.body), /TESTTOKEN/);
+  } finally {
+    await dock.close();
+    rmrf(base);
+  }
+});
+
+test('the elevenlabs check asks el-rotate.cjs for a key through DOCK and never prints it', async () => {
+  const base = tmp('doctor-el');
+  const key = ['sk', 'FAKEELEVENKEY', '0123456789'].join('_');
+  const dock = await startServer((q) => (q.url.endsWith('/elevenlabs/store') ? { json: { ok: true, result: { keys: { a: key }, order: ['a'], current: 0, cooldowns: {} } } } : null));
+  try {
+    const r = await runNode([path.join(KIT, 'doctor.cjs'), '--json'], { env: { ...sandboxEnv(base), DOCK_INGEST_URL: `${dock.url}/ingest/orchestrator`, DOCK_INGEST_TOKEN: fakeToken('TESTTOKEN') } });
+    const el = JSON.parse(r.stdout).checks.find((c) => c.name === 'elevenlabs');
+    assert.deepEqual([el.ok, el.detail], [true, 'el-rotate.cjs get gives a key']);
+    assert.doesNotMatch(r.stdout + r.stderr, /FAKEELEVENKEY/);
+    assert.ok(dock.requests.some((q) => q.url === '/ingest/orchestrator/elevenlabs/store'));
   } finally {
     await dock.close();
     rmrf(base);

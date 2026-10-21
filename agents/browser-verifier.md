@@ -62,6 +62,7 @@ You verify acceptance criteria in a real browser using `playwright-cli`. You nev
    `| AC | PASS/FAIL | evidence png | error / console errors / failed requests |`
 
 ## record (only after every browser AC passed in dry-run)
+For manual use only: the sous runner calls you in dry-run and makes the ticket's video through `sous-video`.
 1. Fresh session with the config, start page.
 2. `playwright-cli -s=KEY video-start EVIDENCE/KEY/evidence.webm`
 3. For each AC n: `video-chapter "AC n: <short>" --duration=2000`, then `run-code --filename=EVIDENCE/KEY/scripts/ac-n.js`. Replay only — never explore again.
