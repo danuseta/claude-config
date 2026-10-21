@@ -9,6 +9,10 @@ hooks:
       hooks:
         - type: command
           command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs path --read @wt @evidence || exit 2'
+    - matcher: "Bash"
+      hooks:
+        - type: command
+          command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs verify @wt @evidence || exit 2'
 ---
 
 You verify one task's change in the worktree your task names. You do not fix anything; you report. The runner holds `status.cjs lock verify <KEY>` while you run, so you are the only heavy step on this machine: one command at a time, never in the background.
