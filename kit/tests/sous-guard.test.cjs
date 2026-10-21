@@ -77,7 +77,7 @@ test('bash guard: one read-only command under the roots', () => {
 test('runner guard: sous agents and browser-verifier only; kit scripts by their installed path', () => {
   const g = winGuard();
   const roots = ['@root', '@evidence', '@config'];
-  for (const t of ['sous-planner', 'sous-ticket-worker', 'sous-reviewer', 'sous-verifier', 'sous-arbiter', 'sous-publisher', 'sous-explorer', 'sous-jira', 'browser-verifier']) {
+  for (const t of ['sous-intake', 'sous-planner', 'sous-ticket-worker', 'sous-reviewer', 'sous-verifier', 'sous-arbiter', 'sous-publisher', 'sous-explorer', 'sous-jira', 'browser-verifier']) {
     assert.equal(g.check('runner', roots, { tool_name: 'Agent', tool_input: { subagent_type: t } }), null, t);
   }
   for (const t of ['general-purpose', 'oh-my-claudecode:executor', 'sous-ticket-runner', undefined]) {
@@ -160,7 +160,7 @@ test('the hook command answers deny JSON, fails closed on bad input, and every s
 
   const agents = path.join(KIT, '..', 'agents');
   const files = fs.readdirSync(agents).filter((f) => f.startsWith('sous-'));
-  assert.equal(files.length, 13);
+  assert.equal(files.length, 14);
   const form = /^ {10}command: '"\$\{CLAUDE_CONFIG_DIR:-\$HOME\/\.claude\}\/kit\/bin\/kit-node" sous-guard\.cjs (path|bash|runner|publish|jira)( [^']*)?'$/;
   for (const f of files) {
     const text = fs.readFileSync(path.join(agents, f), 'utf8');

@@ -6,7 +6,7 @@ Batas berkas ini 4 KB. Status, keputusan dan isu ada di ledger; `NOW.md` di fold
 ## Baca dulu
 
 1. `NOW.md`: seluruhnya (keputusan yang berlaku, isu terbuka)
-2. `materials/02-contract.md` §<n>: <kenapa bagian ini>
+2. `materials/contract.md` §<n>: <kenapa bagian ini>
 3. `tasks.md`: baris task-mu
 4. `CLAUDE.md` repo yang disentuh
 

@@ -1,6 +1,6 @@
 ---
 name: sous-ticket-runner
-description: sous agent. Runs one Qonflo ticket end to end - terrain, worktrees, tasks (worker, review loop, verify), final review, video, publish - by dispatching the other sous-* agents, keeping the ledger current with status.cjs, and returns a short summary. Only use when the sous main session dispatches a ticket.
+description: sous agent. Runs one Qonflo ticket end to end - intake, terrain, worktrees, tasks (worker, review loop, verify), final review, video, publish - by dispatching the other sous-* agents, keeping the ledger current with status.cjs, and returns a short summary. Only use when the sous main session dispatches a ticket.
 tools: Agent, Read, Write, Edit, Bash
 model: opus
 hooks:
@@ -30,7 +30,10 @@ Keep your own context small: pass paths, never paste whole files or reports into
 ## 1. Prepare
 1. `node K/status.cjs sync <KEY>`, then `node K/status.cjs show <KEY>`. A ledger at `done`, or a merged PR in `pr.be` / `pr.fe`, stops here: report it. An open PR means a revision on its branch, no new PR.
 2. `node K/status.cjs set <KEY> engine=sous`. A stack parent in your task, or a `stackedOn` already in the ledger: run (again) `node K/status.cjs set <KEY> stackedOn=<PARENT>` so the branches are current. From then on, for each repo with a `stackedOn.<be|fe>` entry, the base is `origin/<stackedOn.<repo>.branch>` for `prep-ticket.sh` and `<stackedOn.<repo>.branch>` for the PR; other repos keep the planner's base. A REFUSED stack is a `BLOCKER` issue escalated to the owner.
-3. `node K/status.cjs set <KEY> stage=plan`. No `BOARD/prompts/S<n>.md` yet: call `sous-planner` (model opus) with key, `S1` (or the next free S<n>), `BOARD`, `ROOT`, `K`. It writes the prompt with the AC rows, the contract and the **Terrain** section, writes `BOARD/ac.txt` (one capability per line), and returns Jira's `updated` time, the branch slug, the base branch per repo and the repos. Then `node K/status.cjs ac-set <KEY> @BOARD/ac.txt <updated>`, and pass the stack parent to the planner when there is one, and one `decide ... --status SHOV --by sous` per planner decision.
+3. `node K/status.cjs set <KEY> stage=plan`. No `BOARD/prompts/S<n>.md` yet, in this order:
+   1. **Intake:** `sous-intake` (sonnet) with key, `BOARD`, `ROOT`, `K`, `configDir`. It reads the Jira ticket, its epic, remote links and the contract, and writes `BOARD/ac.txt` (one capability per line), `BOARD/materials/jira.md` and `BOARD/materials/contract.md`. It returns Jira's `updated` time, the epic key, the Figma link, the `Contract:` line and the AC count. `CONTRACT-UNREADABLE`: `node K/status.cjs issue <KEY> BLOCKER "contract <page> cannot be read: <reason>"`, then `issue <KEY> <n> escalate owner "<reason>"`, and return `RESULT: WAITING-OWNER`. Stop: no planner, no code.
+   2. `node K/status.cjs ac-set <KEY> @BOARD/ac.txt <updated>`.
+   3. **Planner:** `sous-planner` (model opus) with key, `S1` (or the next free S<n>), `BOARD`, `ROOT`, `K`, the stack parent when there is one, and the intake's ambiguities. It reads `ac.txt` and `materials/`, writes the prompt with the AC rows, the contract and the **Terrain** section, and returns the branch slug, the base branch per repo and the repos. One `decide ... --status SHOV --by sous` per planner decision.
 4. Worktrees: `bash K/prep-ticket.sh <KEY> <slug> <be-base or -> <fe-base or -> "<title>"`. It creates `ROOT/wt-<n>-be|fe` on branch `feat/<KEY>-<slug>` and the ledger dirs and ports. Never `git worktree` directly.
 5. Planner asked for exploration it could not finish: `sous-explorer` with the question and the worktree paths.
 6. **Manual run:** `node K/status.cjs set <KEY> stage=plan waiting="GATE 1: plan in BOARD/prompts/S<n>.md"` and return `RESULT: GATE-1`. Stop. **Cron run:** go on.
