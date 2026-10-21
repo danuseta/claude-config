@@ -31,7 +31,7 @@ const GIT_READ = new Set(["status", "diff", "log", "show", "rev-parse", "merge-b
 const GH_READ = new Set(["pr list", "pr view", "pr diff", "pr checks", "pr status", "run list", "run view", "repo view"]);
 const TEST_TOOLS = new Set(["vitest", "jest", "tsc", "eslint", "playwright"]);
 const PKG_DENY = /^(i|install|ci|add|remove|rm|uninstall|un|update|up|upgrade|link|ln|publish|exec|dlx|x|create|init|dev|start|serve|preview|watch|deploy)(:|$)/;
-const KIT_NODE = new Set(["status.cjs", "demo-upload.cjs", "paths.cjs", "doctor.cjs"]);
+const KIT_NODE = new Set(["status.cjs", "demo-upload.cjs", "paths.cjs", "doctor.cjs", "login-state.cjs"]);
 const KIT_BASH = { "prep-ticket.sh": null, "stack.sh": new Set(["status", "up", "down"]), "wt.sh": new Set(["add", "check"]) };
 const PROTECTED_BRANCHES = new Set(["develop", "development", "main", "master"]);
 const BRANCH = /^(feat|fix)\/[A-Z][A-Z0-9]*-\d+(-[A-Za-z0-9._-]+)?$/;
@@ -156,7 +156,7 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 		const kitNode = /(^|\/)kit-node$/.test(fwd(prog)) && norm(prog) === `${kit}/bin/kit-node`;
 		if (prog === "node" || kitNode) {
 			if (kitNode ? KIT_NODE.has(file) : own && KIT_NODE.has(base)) return null;
-			return "node only runs the kit's status.cjs, demo-upload.cjs, paths.cjs and doctor.cjs";
+			return "node only runs the kit's status.cjs, demo-upload.cjs, paths.cjs, doctor.cjs and login-state.cjs";
 		}
 		if (prog === "bash" && own && Object.hasOwn(KIT_BASH, base)) {
 			const allowed = KIT_BASH[base];
