@@ -323,6 +323,8 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 		if (mode === "path") return checkPath(tool, ti, roots, read || /^(Read|Grep|Glob)$/.test(tool));
 		if (mode === "bash") return tool === "Bash" ? checkBash(String(ti.command || ""), roots, false) : null;
 		if (mode === "runner") {
+			// A DOCK turn ends when the runner's caller answers, and that kills whatever still runs in the background.
+			if (ti.run_in_background === true) return "no background agents or commands: wait for each one, a DOCK turn that ends kills what still runs";
 			if (tool === "Agent" || tool === "Task") return AGENTS.has(ti.subagent_type) ? null : `subagent type not allowed: ${ti.subagent_type || "(none)"}; a runner calls sous-* agents and browser-verifier only`;
 			return tool === "Bash" ? checkBash(String(ti.command || ""), roots, true) : null;
 		}

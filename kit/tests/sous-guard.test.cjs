@@ -81,6 +81,9 @@ test('runner guard: sous agents and browser-verifier only; kit scripts by their 
   for (const t of ['sous-intake', 'sous-planner', 'sous-ticket-worker', 'sous-reviewer', 'sous-verifier', 'sous-arbiter', 'sous-publisher', 'sous-explorer', 'sous-jira', 'browser-verifier']) {
     assert.equal(g.check('runner', roots, { tool_name: 'Agent', tool_input: { subagent_type: t } }), null, t);
   }
+  assert.match(g.check('runner', roots, { tool_name: 'Agent', tool_input: { subagent_type: 'sous-ticket-worker', run_in_background: true } }), /no background agents/, 'QRD-1346: background workers died with the turn');
+  assert.match(g.check('runner', roots, { tool_name: 'Bash', tool_input: { command: 'rtk ls E:/qonflo', run_in_background: true } }), /no background/);
+  assert.equal(g.check('runner', roots, { tool_name: 'Agent', tool_input: { subagent_type: 'sous-ticket-worker', run_in_background: false } }), null);
   for (const t of ['general-purpose', 'oh-my-claudecode:executor', 'sous-ticket-runner', undefined]) {
     assert.match(g.check('runner', roots, { tool_name: 'Task', tool_input: { subagent_type: t } }), /subagent type not allowed/, String(t));
   }

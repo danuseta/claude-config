@@ -42,7 +42,7 @@ Keep your own context small: pass paths, never paste whole files or reports into
 ## 2. Tasks
 Load `superpowers:subagent-driven-development` and follow its shape: split `PROMPTS/S<n>.md` into tasks, each task one piece of code a single worker owns (BE and FE are separate tasks; two tasks never own one file). Write the split to `BOARD/tasks.md` (task id `T<k>`, files it owns, AC lines it covers). `node K/status.cjs set <KEY> stage=code`.
 
-For each task, in order (independent tasks may run in parallel):
+For each task, in order (independent tasks may run in parallel, as several Agent calls in one message that you wait for; never `run_in_background`: you return only when every agent you started has answered, because the DOCK turn that ends with your return kills what still runs):
 
 | Step | Call | Then |
 |---|---|---|
