@@ -724,11 +724,13 @@ test('an old DOCK (404 on /chat/wait): the turn runs the legacy way with the sam
   assert.match(old.r.stdout, /older server/);
 });
 
-test('"interactive": false in dock-chat.json keeps the legacy path and offers no features', async () => {
+const legacyCaps = (t) => { const c = t.state.requests.find((q) => q.route === '/chat/claim').body.caps; return [c.features, c.modes]; };
+
+test('"interactive": false in dock-chat.json keeps the legacy path and offers no interactive features', async () => {
   const t = await turn({ script: SAY, config: { interactive: false } });
   assert.deepEqual(t.argv.slice(0, 5), ['-p', 'hello', '--output-format', 'stream-json', '--verbose']);
   assert.equal(t.state.waits.length, 0);
-  assert.ok(!('caps' in t.state.requests.find((q) => q.route === '/chat/claim').body), 'a legacy bridge sends no caps at all');
+  assert.deepEqual(legacyCaps(t), [['agents'], []], 'a legacy bridge offers the agent library only, no modes');
   assert.equal(t.procs.length, 1, 'no probe process was started');
 });
 
@@ -736,7 +738,7 @@ test('a claude without --input-format or --permission-prompts in --help takes th
   const t = await turn({ script: SAY, env: { FAKE_NO_INTERACTIVE: '1' } });
   assert.ok(!t.argv.includes('--input-format'));
   assert.equal(t.state.waits.length, 0);
-  assert.ok(!('caps' in t.state.requests.find((q) => q.route === '/chat/claim').body), 'a legacy bridge sends no caps at all');
+  assert.deepEqual(legacyCaps(t), [['agents'], []], 'a legacy bridge offers the agent library only, no modes');
   assert.equal(t.last.done, true);
 });
 
@@ -770,7 +772,7 @@ test('dock-chat.cjs check prints the detected features and never the token', asy
     assert.match(r.stdout, /token: set/);
     assert.ok(!r.stdout.includes('SECRETSECRET'));
     const off = await runNode([path.join(KIT, 'dock-chat.cjs'), 'check'], { env: { ...sandboxEnv(dir), DOCK_CHAT_CONFIG: path.join(dir, 'dock-chat.json'), DOCK_INGEST_URL: 'http://127.0.0.1:9/ingest/orchestrator', DOCK_INGEST_TOKEN: 'dock_ing_SECRETSECRETSECRET1234', FAKE_NO_INTERACTIVE: '1' } });
-    assert.match(off.stdout, /features: \(none\)/);
+    assert.match(off.stdout, /features: agents\nmodes: \(none\)/);
   } finally { rmrf(dir); }
 });
 

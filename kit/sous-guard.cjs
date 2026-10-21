@@ -4,7 +4,8 @@
 //   sous-guard.cjs path --read <root>...   Read/Grep/Glob: only under a root, never a secret file
 //   sous-guard.cjs bash <root>...          Bash for agents that only read: one simple command, read-only file commands under a root,
 //                                          read-only git inside a worktree, read-only gh
-//   sous-guard.cjs runner <root>...        Agent/Task: only sous-* agents and browser-verifier. Bash: what `bash` allows, plus the kit's
+//   sous-guard.cjs runner <root>...        Agent/Task: only sous-* agents and browser-verifier, plus a custom agent listed in kit/agents-allow.json
+//                                          whose file has a fail-closed hooks block. Bash: what `bash` allows, plus the kit's
 //                                          status, prep, worktree, stack and demo scripts
 //   sous-guard.cjs verify <root>...        Bash for sous-verifier: [cd <root> &&] one test or type-check command (vitest, jest, tsc, eslint,
 //                                          playwright, npm|pnpm|yarn test/run, node --test), read-only file commands and git; no installs,
@@ -61,7 +62,7 @@ const VIDEO_DELEGATE = new Set(["playwright-cli", "ffmpeg", "ffprobe", "mkdir"])
 const VIDEO_ENV = /^(NO_COLOR|FORCE_COLOR|CI|npm_config_cache|DEMO_FE|DEMO_API|DEMO_PASSWORD_FILE)=/;
 const EL_KEY = /^ELEVENLABS_API_KEY="\$\(node ([^\s"'$`()]+) get\)" +/;
 
-function createSousGuard({ platform = process.platform, paths = resolvePaths(), cwd = process.cwd(), ledgerFile = path.join(__dirname, "sous-jira-created.log") } = {}) {
+function createSousGuard({ platform = process.platform, paths = resolvePaths(), cwd = process.cwd(), ledgerFile = path.join(__dirname, "sous-jira-created.log"), allowFile = path.join(paths.kitDir, "agents-allow.json") } = {}) {
 	const win = platform === "win32";
 	const P = win ? path.win32 : path.posix;
 	const fwd = (p) => String(p).replace(/\\/g, "/");
@@ -526,6 +527,23 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 		return key;
 	}
 
+	// A custom agent from DOCK's library (kit/agents.cjs) is dispatchable when listed in agents-allow.json and its file carries a hooks block
+	// whose every command runs sous-guard.cjs and fails closed.
+	function customAllowed(slug) {
+		if (typeof slug !== "string" || !/^[a-z0-9][a-z0-9-]{1,47}$/.test(slug) || slug.startsWith("sous-")) return false;
+		let allow, text;
+		try { allow = JSON.parse(fs.readFileSync(allowFile, "utf8")); text = fs.readFileSync(path.join(paths.configDir, "agents", `${slug}.md`), "utf8").replace(/\r\n/g, "\n"); } catch { return false; }
+		if (!Array.isArray(allow) || !allow.includes(slug)) return false;
+		const head = /^---\n([\s\S]*?)\n---(\n|$)/.exec(text);
+		const lines = head ? head[1].split("\n") : [];
+		const at = lines.indexOf("hooks:");
+		if (at < 0) return false;
+		const block = [];
+		for (const l of lines.slice(at + 1)) { if (!/^\s/.test(l)) break; block.push(l); }
+		const commands = block.filter((l) => /^\s+command:/.test(l));
+		return commands.length > 0 && commands.every((l) => l.includes(" sous-guard.cjs ") && /\|\| exit 2'$/.test(l.trim()));
+	}
+
 	// The deny reason for one hook payload, or null.
 	function check(mode, args, payload) {
 		const tool = payload.tool_name || "";
@@ -537,7 +555,7 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 		if (mode === "runner") {
 			// A DOCK turn ends when the runner's caller answers, and that kills whatever still runs in the background.
 			if (ti.run_in_background === true) return "no background agents or commands: wait for each one, a DOCK turn that ends kills what still runs";
-			if (tool === "Agent" || tool === "Task") return AGENTS.has(ti.subagent_type) ? null : `subagent type not allowed: ${ti.subagent_type || "(none)"}; a runner calls sous-* agents and browser-verifier only`;
+			if (tool === "Agent" || tool === "Task") return AGENTS.has(ti.subagent_type) || customAllowed(ti.subagent_type) ? null : `subagent type not allowed: ${ti.subagent_type || "(none)"}; a runner calls sous-* agents, browser-verifier and the guarded custom agents of kit/agents-allow.json only`;
 			return tool === "Bash" ? checkBash(String(ti.command || ""), roots, true) : null;
 		}
 		if (mode === "verify") return tool === "Bash" ? checkVerify(String(ti.command || ""), roots) : null;
@@ -568,5 +586,5 @@ function main() {
 if (require.main === module) {
 	try { main(); } catch (e) { process.stdout.write(deny(`internal error (${e.message}); refusing`)); }
 } else {
-	module.exports = { createSousGuard, deny };
+	module.exports = { createSousGuard, deny, AGENTS };
 }
