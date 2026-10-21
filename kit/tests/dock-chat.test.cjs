@@ -58,6 +58,24 @@ test('childEnv: without the kit\'s proxy marker a machine\'s own proxy settings 
   assert.equal(env.HTTPS_PROXY, 'http://corp:8080');
 });
 
+test('childEnv: on a Coder workspace git goes over HTTPS with the gh login, since the turn has no CODER_AGENT_TOKEN', () => {
+  const base = { GIT_SSH_COMMAND: '/tmp/coder.x/coder gitssh --', GIT_ASKPASS: '/tmp/coder.x/coder', CODER_AGENT_TOKEN: 't', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.x', GIT_CONFIG_VALUE_0: 'y' };
+  const env = chat.childEnv({ configDir: null }, base);
+  assert.ok(!('GIT_SSH_COMMAND' in env) && !('GIT_ASKPASS' in env) && !('CODER_AGENT_TOKEN' in env));
+  assert.equal(env.GIT_CONFIG_COUNT, '5');
+  assert.equal(env.GIT_CONFIG_KEY_0, 'core.x', 'existing GIT_CONFIG entries stay');
+  assert.deepEqual([1, 2, 3, 4].map((i) => `${env[`GIT_CONFIG_KEY_${i}`]}=${env[`GIT_CONFIG_VALUE_${i}`]}`), [
+    'url.https://github.com/.insteadOf=git@github.com:',
+    'url.https://github.com/.insteadOf=ssh://git@github.com/',
+    'credential.https://github.com.helper=',
+    'credential.https://github.com.helper=!gh auth git-credential',
+  ]);
+  assert.equal(env.GIT_TERMINAL_PROMPT, '0');
+  const kept = chat.childEnv({ configDir: null, passEnv: ['CODER_AGENT_TOKEN'] }, base);
+  assert.equal(kept.GIT_SSH_COMMAND, base.GIT_SSH_COMMAND, 'a turn that keeps the token keeps coder gitssh');
+  assert.ok(!('GIT_CONFIG_COUNT' in chat.childEnv({ configDir: 'C:/c' }, { PATH: 'p' })), 'the laptop is untouched');
+});
+
 test('killTree on Windows still uses taskkill /T /F', () => {
   const calls = [];
   chat.killTree({ pid: 4242, kill() { calls.push('child.kill'); } }, { platform: 'win32', run: (cmd, args) => { calls.push([cmd, ...args]); return {}; } });
