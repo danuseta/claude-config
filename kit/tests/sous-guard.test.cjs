@@ -1,5 +1,5 @@
 'use strict';
-// kit/sous-guard.cjs: the path, bash, runner, publish and jira guards of the sous agents, on both systems' paths, plus the hook command form.
+// kit/sous-guard.cjs: the path, bash, runner, verify, publish and jira guards of the sous agents, on both systems' paths, plus the hook command form.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
@@ -149,6 +149,26 @@ test('jira guard: QRD only, no sprint or assignee, edits only on tickets it crea
   }
 });
 
+test('verify guard: tests and type checks inside a worktree, no installs, servers, network or inline code', () => {
+  for (const [g, wt] of [[winGuard(), 'E:/qonflo/wt-1387-be'], [linuxGuard(), '/home/coder/projects/wt-1387-be']]) {
+    const v = (c) => g.check('verify', ['@wt'], bash(c));
+    for (const c of ['npx vitest run src/a.test.ts --maxWorkers=40%', 'npx jest src/a.test.ts', 'npx tsc --noEmit -p tsconfig.json', 'npm test', 'npm run test:unit', 'pnpm vitest run', 'pnpm exec tsc --noEmit', 'rtk vitest run', 'node --test test/a.test.cjs', `git -C ${wt} diff --stat`, 'ls src', 'rtk rg foo src']) {
+      assert.equal(v(`cd ${wt} && ${c}`), null, c);
+    }
+    for (const [c, re] of [['npm i', /no installs/], ['npm ci', /no installs/], ['pnpm add lodash', /no installs/], ['npm run dev', /dev servers/], ['npx -y cowsay hi', /only vitest/], ['npx cowsay', /only vitest/], ['node -e 1', /inline code/], ['curl http://x', /not allowed for the verifier/], ['gh pr list', /not allowed for the verifier/], ['rm src/a.ts', /not allowed for the verifier/], [`git -C ${wt} commit -m x`, /not a read-only git/], ['npm test | tail', /operator/], ['bash -c "npm test"', /not allowed for the verifier/]]) {
+      assert.match(v(`cd ${wt} && ${c}`), re, c);
+    }
+    assert.match(v('npm test'), /run inside a ticket worktree/, 'the cwd is the workspace root, not a worktree');
+    assert.match(v(`cd ${path.posix.dirname(wt)}/ms-admin-worker-backend && npm test`), /run inside a ticket worktree/);
+    assert.match(v(`cd ${wt} && npx vitest run ../../etc/x.test.ts`), /outside/);
+    assert.equal(g.check('verify', ['@wt'], read(`${wt}/a.ts`)), null, 'only Bash is checked here');
+    const ev = `${path.posix.dirname(wt)}/.evidence/QRD-1387/jest.json`;
+    assert.equal(g.check('verify', ['@wt', '@evidence'], bash(`cd ${wt} && NO_COLOR=1 rtk jest src/a.test.ts --outputFile=${ev}`)), null, 'the agent prompt form');
+    assert.match(v(`cd ${wt} && npx jest --outputFile=${ev}`), /outside/, 'evidence only when the hook names it');
+    assert.match(v(`cd ${wt} && NODE_OPTIONS=--require=x npm test`), /not allowed for the verifier/);
+  }
+});
+
 test('the hook command answers deny JSON, fails closed on bad input, and every sous agent wires it', async () => {
   const deny = (r) => JSON.parse(r.stdout).hookSpecificOutput.permissionDecision;
   let r = await runNode([path.join(KIT, 'sous-guard.cjs'), 'path', '@wt'], { input: JSON.stringify(write('E:\\qonflo\\wt-1-be\\package.json')), env: { QONFLO_ROOT: 'E:/qonflo', SOUS_GUARD_NOLOG: '1' } });
@@ -161,7 +181,7 @@ test('the hook command answers deny JSON, fails closed on bad input, and every s
   const agents = path.join(KIT, '..', 'agents');
   const files = fs.readdirSync(agents).filter((f) => f.startsWith('sous-'));
   assert.equal(files.length, 13);
-  const form = /^ {10}command: '"\$\{CLAUDE_CONFIG_DIR:-\$HOME\/\.claude\}\/kit\/bin\/kit-node" sous-guard\.cjs (path|bash|runner|publish|jira)( [^']*)?'$/;
+  const form = /^ {10}command: '"\$\{CLAUDE_CONFIG_DIR:-\$HOME\/\.claude\}\/kit\/bin\/kit-node" sous-guard\.cjs (path|bash|runner|publish|jira|verify)( [^']*)?'$/;
   for (const f of files) {
     const text = fs.readFileSync(path.join(agents, f), 'utf8');
     const head = text.split('\n---\n')[0];
