@@ -88,7 +88,7 @@ test('runner guard: sous agents and browser-verifier only; kit scripts by their 
     assert.match(g.check('runner', roots, { tool_name: 'Task', tool_input: { subagent_type: t } }), /subagent type not allowed/, String(t));
   }
   const K = 'C:/Users/danus/.claude-kantor/kit';
-  for (const c of [`node ${K}/status.cjs show QRD-1`, `node "${K}/status.cjs" decide QRD-1 "x" --status SHOV --by sous`, `node ${K}/demo-upload.cjs QRD-1 E:/qonflo/.evidence/QRD-1/evidence.mp4`, `bash ${K}/prep-ticket.sh QRD-1 slug origin/develop - "t"`, `bash ${K}/wt.sh add be E:/qonflo/wt-1-be feat/QRD-1-x origin/develop`, `bash ${K}/stack.sh up QRD-1 a b 3101 5201`, `${K}/bin/kit-node status.cjs show QRD-1`, `rtk read E:/qonflo/.evidence/blackboard/QRD-1/NOW.md`]) {
+  for (const c of [`node ${K}/status.cjs show QRD-1`, `node "${K}/status.cjs" decide QRD-1 "x" --status SHOV --by sous`, `node ${K}/demo-upload.cjs QRD-1 E:/qonflo/.evidence/QRD-1/evidence.mp4`, `bash ${K}/prep-ticket.sh QRD-1 slug origin/develop - "t"`, `bash ${K}/wt.sh add be E:/qonflo/wt-1-be feat/QRD-1-x origin/develop`, `bash ${K}/stack.sh up QRD-1 a b 3101 5201`, `${K}/bin/kit-node status.cjs show QRD-1`, `node ${K}/login-state.cjs 5346`, `rtk read E:/qonflo/.evidence/blackboard/QRD-1/NOW.md`]) {
     assert.equal(g.check('runner', roots, bash(c)), null, c);
   }
   for (const c of [`node ${K}/dock-chat.cjs`, `node E:/qonflo/evil/status.cjs show`, `bash ${K}/wt.sh remove E:/qonflo/wt-1-be`, `bash ${K}/stack.sh kill`, 'npx jest', `node ${K}/status.cjs show QRD-1 && rm -rf x`]) {
