@@ -20,7 +20,7 @@ Take `kitDir` as `K`, `root` as `ROOT`, `evidence` as `EVIDENCE`, `configDir`. T
 
 | Board | Key | Runner (`subagent_type`) | It dispatches |
 |---|---|---|---|
-| Jira ticket | `QRD-<n>` | `sous-ticket-runner` | `sous-planner`, `sous-explorer`, `sous-ticket-worker`, `sous-reviewer`, `sous-verifier`, `sous-arbiter`, `browser-verifier`, `sous-publisher`, `sous-jira` |
+| Jira ticket | `QRD-<n>` | `sous-ticket-runner` | `sous-intake`, `sous-planner`, `sous-explorer`, `sous-ticket-worker`, `sous-reviewer`, `sous-verifier`, `sous-arbiter`, `browser-verifier`, `sous-publisher`, `sous-jira` |
 | Review of a teammate's PR | the reviewed `QRD-<n>`, `kind=review` | `sous-review-runner` | `sous-pr-reviewer`, `sous-explorer`, `browser-verifier` |
 | Free form | `CARD-<slug>` (prefix upper case, slug lower case `a-z0-9-`, at most 64), `kind=card` | `sous-work-runner` | `sous-analyst`, `sous-verifier`, `sous-explorer`, `sous-jira` |
 
@@ -42,7 +42,7 @@ Read the first prompt of the session:
 | A greeting or "what's cookin'?" only | progress | Section 6, then wait. |
 
 ## 3. Starting a ticket
-1. Contract and readiness are the runner's job (its planner applies `rules/ticket-contract.md` and the Jira custom fields). You only check: `node K/status.cjs show <KEY>`. A ledger at `pr` or `done`, or waiting on the owner, is reported, not restarted. A ledger made by the old orchestrate flow (no `engine`) is continued from its stage: tell the runner the stage.
+1. Contract and readiness are the runner's job (its `sous-intake` reads the Jira custom fields and applies `rules/ticket-contract.md` before the planner maps the terrain). You only check: `node K/status.cjs show <KEY>`. A ledger at `pr` or `done`, or waiting on the owner, is reported, not restarted. A ledger made by the old orchestrate flow (no `engine`) is continued from its stage: tell the runner the stage.
 2. **Stacked ticket.** The prompt says `Stack on <PARENT>`, or the ticket depends on a ticket whose PR is open but not merged (its ledger has `pr.be` / `pr.fe`, or its Jira status is PR Review): `node K/status.cjs set <KEY> stackedOn=<PARENT>`. It reads the parent's open PRs with `gh pr view` and stores, per repo, the parent PR, its head branch and its base; a repo the parent has no open PR in keeps its normal base. It also clears an old `Blocked: prerequisite ...` waiting, so a ledger waiting only on that prerequisite is started, not reported. A REFUSED means the parent cannot carry a stack: the ticket stays blocked. A dependency that is merged (UAT CHECK, readyforproduction, done) needs no stack.
 3. `node K/status.cjs set <KEY> engine=sous` (makes `render` automatic: `NOW.md`, `status.md`, `decisions.md`, `issues.md` under the blackboard follow every ledger write).
 4. Dispatch `sous-ticket-runner` (model opus) with: key, `K`, `ROOT`, `EVIDENCE`, `configDir`, mode (cron / manual / continuation), the stack parent when there is one, and on a continuation the owner's answer or cancel note.
