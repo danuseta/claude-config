@@ -6,6 +6,9 @@
 //                                          read-only git inside a worktree, read-only gh
 //   sous-guard.cjs runner <root>...        Agent/Task: only sous-* agents and browser-verifier. Bash: what `bash` allows, plus the kit's
 //                                          status, prep, worktree, stack and demo scripts
+//   sous-guard.cjs verify <root>...        Bash for sous-verifier: [cd <root> &&] one test or type-check command (vitest, jest, tsc, eslint,
+//                                          playwright, npm|pnpm|yarn test/run, node --test), read-only file commands and git; no installs,
+//                                          dev servers, inline node code or network tools
 //   sous-guard.cjs publish                 Bash for sous-publisher: git inside a worktree, add per path, commit -m, push of the current
 //                                          feat|fix/<KEY>-... branch, gh pr create|list|view; never add -A or ., never develop/main/master
 //   sous-guard.cjs jira [--record]         createJiraIssue / editJiraIssue for sous-jira: project QRD, content fields only, edits only on
@@ -26,6 +29,8 @@ const READ_CMDS = new Set(["ls", "cat", "head", "tail", "wc", "grep", "rg", "fin
 const FIND_DENY = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"]);
 const GIT_READ = new Set(["status", "diff", "log", "show", "rev-parse", "merge-base", "ls-files", "blame"]);
 const GH_READ = new Set(["pr list", "pr view", "pr diff", "pr checks", "pr status", "run list", "run view", "repo view"]);
+const TEST_TOOLS = new Set(["vitest", "jest", "tsc", "eslint", "playwright"]);
+const PKG_DENY = /^(i|install|ci|add|remove|rm|uninstall|un|update|up|upgrade|link|ln|publish|exec|dlx|x|create|init|dev|start|serve|preview|watch|deploy)(:|$)/;
 const KIT_NODE = new Set(["status.cjs", "demo-upload.cjs", "paths.cjs", "doctor.cjs"]);
 const KIT_BASH = { "prep-ticket.sh": null, "stack.sh": new Set(["status", "up", "down"]), "wt.sh": new Set(["add", "check"]) };
 const PROTECTED_BRANCHES = new Set(["develop", "development", "main", "master"]);
@@ -175,6 +180,49 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 		return `${w[0]} is not allowed here: read-only file commands, read-only git inside a worktree, read-only gh${runner ? " and the kit scripts" : ""}`;
 	}
 
+	// The verifier's tests: `cd <worktree> && <command>`, the command one of the test, type-check and read-only tools, every path inside a root.
+	function checkVerify(cmd, roots) {
+		let dir = cwd;
+		let rest = cmd;
+		const cd = /^\s*cd\s+("[^"$`]*"|'[^']*'|[^\s;&|<>()`$]+)\s*&&\s*/.exec(cmd);
+		if (cd) { dir = split(cd[1])[0]; rest = cmd.slice(cd[0].length); }
+		const bad = simple(rest);
+		if (bad) return bad;
+		const here = norm(dir);
+		if (!rootOf(here, roots)) return `run inside a ticket worktree: cd ${paths.root}/wt-<name> && <command>`;
+		const w = words(rest);
+		while (w.length && (/^(NO_COLOR|FORCE_COLOR|CI|TZ)=[^\s]*$/.test(w[0]) || w[0] === "rtk")) w.shift();
+		if (!w.length) return "empty command";
+		for (const a of w.slice(1)) {
+			const v = a.startsWith("-") ? (a.includes("=") ? a.slice(a.indexOf("=") + 1) : "") : a;
+			if (!v || (!/[\\/]/.test(v) && !/^~/.test(v) && !fs.existsSync(P.resolve(here, v)))) continue;
+			const p = norm(v, here);
+			if (!rootOf(p, roots)) return `${w[0]}: ${v} is outside the folders this agent may use`;
+			if (secret(p)) return `${w[0]}: ${v} is a secret file`;
+		}
+		const [prog, ...args] = w;
+		const pos = args.filter((a) => !a.startsWith("-"));
+		if (prog === "git") return checkGitRead(w, roots);
+		if (READ_CMDS.has(prog)) return prog === "find" && args.some((a) => FIND_DENY.has(a)) ? "find: -exec, -delete and -fprint are not allowed" : null;
+		if (TEST_TOOLS.has(prog)) return null;
+		if (prog === "npx" || (prog === "pnpm" && pos[0] === "exec") || (prog === "yarn" && pos[0] === "exec")) {
+			const tool = prog === "npx" ? pos[0] : pos[1];
+			const before = args.slice(0, args.indexOf(tool));
+			return TEST_TOOLS.has(tool) && !before.some((a) => /^(-p|--package|-y|--yes)(=|$)/.test(a)) ? null : `${prog}: only ${[...TEST_TOOLS].join(", ")}, without installing a package`;
+		}
+		if (prog === "npm" || prog === "pnpm" || prog === "yarn") {
+			const sub = pos[0] === "run" || pos[0] === "run-script" ? pos[1] : pos[0];
+			if (!sub || PKG_DENY.test(sub)) return `${prog} ${pos[0] ?? ""}: no installs, dev servers or publishing; tests and type checks only`;
+			if (pos[0] === "run" || pos[0] === "run-script" || pos[0] === "test" || pos[0] === "t" || prog !== "npm") return null;
+			return `npm ${pos[0]} is not a test command`;
+		}
+		if (prog === "node") {
+			if (args.some((a) => /^(-e|--eval|-p|--print|-r|--require|--import|-i|--interactive)(=|$)/.test(a))) return "node: no inline code or preloads; run --test or a test file";
+			return args.includes("--test") || pos.length ? null : "node: run --test or a test file";
+		}
+		return `${prog} is not allowed for the verifier: tests, type checks, read-only file commands and read-only git`;
+	}
+
 	function checkPublish(cmd) {
 		const bad = simple(cmd);
 		if (bad) return bad;
@@ -278,6 +326,7 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 			if (tool === "Agent" || tool === "Task") return AGENTS.has(ti.subagent_type) ? null : `subagent type not allowed: ${ti.subagent_type || "(none)"}; a runner calls sous-* agents and browser-verifier only`;
 			return tool === "Bash" ? checkBash(String(ti.command || ""), roots, true) : null;
 		}
+		if (mode === "verify") return tool === "Bash" ? checkVerify(String(ti.command || ""), roots) : null;
 		if (mode === "publish") return tool === "Bash" ? checkPublish(String(ti.command || "")) : null;
 		if (mode === "jira") return checkJira(tool, ti);
 		return `unknown guard mode ${mode}`;
