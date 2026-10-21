@@ -232,10 +232,10 @@ const HIDDEN_TOOLS = new Set(["SubagentHandback"]);
 // A subagent runs in the lead's folder, so its ticket cannot be read from cwd. The lead names
 // the ticket when it spawns a member (description, name or prompt); that link is remembered
 // per session and every later event from that member follows it.
-const KEY_IN_TEXT = /\bQRD-(\d{2,6})\b|[\\/]wt-(\d{2,6})-(?:be|fe)\b/gi;
+const KEY_IN_TEXT = /\bQRD-(\d{2,6})\b|[\\/]wt-(\d{2,6})-(?:be|fe)\b|\bCARD-([a-z0-9][a-z0-9-]{0,63})\b/gi;
 function ticketsInText(text, known) {
 	const found = new Set();
-	for (const m of String(text || "").matchAll(KEY_IN_TEXT)) { const key = `QRD-${m[1] || m[2]}`; if (known.has(key)) found.add(key); }
+	for (const m of String(text || "").matchAll(KEY_IN_TEXT)) { const key = m[3] ? `CARD-${m[3]}` : `QRD-${m[1] || m[2]}`; if (known.has(key)) found.add(key); }
 	return [...found];
 }
 function subagentMeta(input) {
