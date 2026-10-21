@@ -9,11 +9,18 @@
 //   sous-guard.cjs verify <root>...        Bash for sous-verifier: [cd <root> &&] one test or type-check command (vitest, jest, tsc, eslint,
 //                                          playwright, npm|pnpm|yarn test/run, node --test), read-only file commands and git; no installs,
 //                                          dev servers, inline node code or network tools
+//   sous-guard.cjs browser <root>...       Bash for browser-verifier: [cd <root> &&] [timeout <n>] playwright-cli to localhost or
+//                                          127.0.0.1 only, the kit's status.cjs, paths.cjs, login-state.cjs and stack.sh, read-only file
+//                                          commands, mkdir and ffmpeg/ffprobe under a root; no network tools, git, gh, kill, env, nested
+//                                          shells, and no .env, .ssh, .claude or .config path
 //   sous-guard.cjs publish                 Bash for sous-publisher: git inside a worktree, add per path, commit -m, push of the current
-//                                          feat|fix/<KEY>-... branch, gh pr create|list|view; never add -A or ., never develop/main/master
-//   sous-guard.cjs jira [--record]         createJiraIssue / editJiraIssue for sous-jira: project QRD, content fields only, edits only on
-//                                          tickets sous-jira created (the PostToolUse --record call keeps that list)
-// Roots: @wt (every <root>/wt-* worktree), @root, @evidence, @board (<evidence>/blackboard), @config. Values come from paths.cjs.
+//                                          feat|fix/<KEY>-... branch, gh pr create|list|view; never add -A or ., never develop/main/master.
+//                                          gh pr create only on this machine's BE or FE repo, with a base from paths.cjs bases or the
+//                                          ticket ledger's stackedOn branch for that repo
+//   sous-guard.cjs jira [--record]         createJiraIssue / editJiraIssue for sous-jira: project QRD, label sous, content fields only, edits
+//                                          only on tickets sous-jira created (the PostToolUse --record call keeps that list), label kept
+// Roots: @wt (every <root>/wt-* worktree), @root, @evidence, @board (<evidence>/blackboard), @shots (<root>/<MMDD> screenshot folders),
+// @config (only kit/, skills/, agents/ and rules/ of the config dir). Values come from paths.cjs.
 // Answers like guard.cjs: a deny JSON on stdout, nothing when allowed. A guard that cannot read its input denies.
 // SOUS_GUARD_NOLOG=1 keeps a deny out of kit/guard.log (tests).
 // Test: echo '{"tool_name":"Write","tool_input":{"file_path":"E:/qonflo/wt-1-be/package.json"}}' | node sous-guard.cjs path @wt
@@ -26,7 +33,7 @@ const SECRETS = [/(^|\/)\.env(?!\.example$)[^/]*$/, /(^|\/)\.npmrc$/, /(^|\/)\.s
 const GENERATED = /^[^/]+\/((tickets\/[^/]+\/)?(status|decisions|issues|NOW)|EPIC)\.md$/i;
 const AGENTS = new Set(["sous-intake", "sous-planner","sous-ticket-worker", "sous-reviewer", "sous-verifier", "sous-arbiter", "sous-publisher", "sous-analyst", "sous-pr-reviewer", "sous-explorer", "sous-jira", "browser-verifier"]);
 const READ_CMDS = new Set(["ls", "cat", "head", "tail", "wc", "grep", "rg", "find", "stat", "du", "diff", "read", "tree"]);
-const FIND_DENY = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"]);
+const FIND_DENY = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls", "-L", "-follow"]);
 const GIT_READ = new Set(["status", "diff", "log", "show", "rev-parse", "merge-base", "ls-files", "blame"]);
 const GH_READ = new Set(["pr list", "pr view", "pr diff", "pr checks", "pr status", "run list", "run view", "repo view"]);
 const TEST_TOOLS = new Set(["vitest", "jest", "tsc", "eslint", "playwright"]);
@@ -36,8 +43,14 @@ const KIT_BASH = { "prep-ticket.sh": null, "stack.sh": new Set(["status", "up", 
 const PROTECTED_BRANCHES = new Set(["develop", "development", "main", "master"]);
 const BRANCH = /^(feat|fix)\/[A-Z][A-Z0-9]*-\d+(-[A-Za-z0-9._-]+)?$/;
 const JIRA_PROJECT = "QRD";
+const JIRA_LABEL = "sous";
 const JIRA_EDIT_FIELDS = new Set(["summary", "description", "priority", "labels", "components", "duedate"]);
 const SPRINT = /sprint|^QRD\d+$/i;
+const CONFIG_READ = ["kit", "skills", "agents", "rules"];
+const BROWSER_DENY = new Set(["git", "gh", "curl", "wget", "ssh", "scp", "rsync", "nc", "ncat", "mongosh", "mongo", "redis-cli", "kill", "pkill", "killall", "sudo", "chmod", "chown", "printenv", "env", "eval", "sh", "bash", "zsh", "dash", "pwsh", "powershell", "cmd"]);
+const BROWSER_KIT = new Set(["status.cjs", "paths.cjs", "login-state.cjs", "stack.sh"]);
+const PROTECTED_TEXT = /(^|[\\/=])\.(env|ssh|claude|bashrc|profile|config)([^A-Za-z0-9]|$)/i;
+const LOCAL_URL = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?([/?#]|$)/i;
 
 function createSousGuard({ platform = process.platform, paths = resolvePaths(), cwd = process.cwd(), ledgerFile = path.join(__dirname, "sous-jira-created.log") } = {}) {
 	const win = platform === "win32";
@@ -51,18 +64,22 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 		return win ? s.toLowerCase() : s;
 	};
 	const root = norm(paths.root);
-	const named = { "@root": root, "@evidence": norm(paths.evidence), "@board": norm(`${paths.evidence}/blackboard`), "@config": norm(paths.configDir) };
+	const named = { "@root": root, "@evidence": norm(paths.evidence), "@board": norm(`${paths.evidence}/blackboard`) };
+	const configRoots = [...new Set([norm(paths.kitDir), ...CONFIG_READ.map((d) => norm(`${paths.configDir}/${d}`))])];
 	const board = named["@board"];
 	const kit = norm(paths.kitDir);
 	const inside = (p, r) => p === r || p.startsWith(r + "/");
 	// The root a path falls under, or null. @wt is the worktree folder itself: <root>/wt-<name>.
 	const rootOf = (p, roots) => {
 		for (const r of roots) {
-			if (r === "@wt") {
+			if (r === "@wt" || r === "@shots") {
 				const m = inside(p, root) ? p.slice(root.length + 1).split("/")[0] : "";
-				if (/^wt-[^/]+$/.test(m)) return `${root}/${m}`;
+				if (r === "@wt" ? /^wt-[^/]+$/.test(m) : /^\d{4}$/.test(m)) return `${root}/${m}`;
+			} else if (r === "@config") {
+				const c = configRoots.find((x) => inside(p, x));
+				if (c) return c;
 			} else if (named[r] && inside(p, named[r])) return named[r];
-			else if (!named[r] && r !== "@wt" && inside(p, norm(r))) return norm(r);
+			else if (!named[r] && !r.startsWith("@") && inside(p, norm(r))) return norm(r);
 		}
 		return null;
 	};
@@ -115,9 +132,21 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 		return w;
 	};
 
+	// Flags that turn a read command into one that runs a program, writes a file or follows links out of a root.
+	function readFlags(cmd, args) {
+		const short = (a, c) => /^-[A-Za-z0-9]+$/.test(a) && a.includes(c);
+		let bad;
+		if (cmd === "find" && (bad = args.find((a) => FIND_DENY.has(a)))) return `find ${bad}: -exec, -delete, -fprint, -L and the like are not allowed`;
+		if (cmd === "rg" && (bad = args.find((a) => /^--(pre|pre-glob|search-zip)(=|$)/.test(a) || short(a, "z")))) return `rg ${bad} is not allowed: it runs a program on the files`;
+		if (cmd === "tree" && (bad = args.find((a) => short(a, "o") || /^--output(=|$)/.test(a)))) return `tree ${bad} is not allowed: it writes a file`;
+		if (cmd === "grep" && (bad = args.find((a) => short(a, "R") || a === "--dereference-recursive"))) return `grep ${bad} is not allowed: it follows links; use -r`;
+		return null;
+	}
+
 	function checkRead(w, roots) {
 		const [cmd, ...args] = w;
-		if (cmd === "find" && args.some((a) => FIND_DENY.has(a))) return "find: -exec, -delete and -fprint are not allowed";
+		const flag = readFlags(cmd, args);
+		if (flag) return flag;
 		let named_ = false;
 		for (const a of args) {
 			if (a === "-" || (a.startsWith("-") && !a.includes("="))) continue;
@@ -155,6 +184,7 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 		const own = file && norm(file) === `${kit}/${win ? base.toLowerCase() : base}`;
 		const kitNode = /(^|\/)kit-node$/.test(fwd(prog)) && norm(prog) === `${kit}/bin/kit-node`;
 		if (prog === "node" || kitNode) {
+			if ((kitNode ? file : base) === "status.cjs" && sub === "set" && w.slice(4).some((a) => /^rounds\./.test(a) || /^draft=(?!true$)/.test(a))) return "rounds.max and draft=false are the owner's to set, not an agent's";
 			if (kitNode ? KIT_NODE.has(file) : own && KIT_NODE.has(base)) return null;
 			return "node only runs the kit's status.cjs, demo-upload.cjs, paths.cjs, doctor.cjs and login-state.cjs";
 		}
@@ -203,7 +233,7 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 		const [prog, ...args] = w;
 		const pos = args.filter((a) => !a.startsWith("-"));
 		if (prog === "git") return checkGitRead(w, roots);
-		if (READ_CMDS.has(prog)) return prog === "find" && args.some((a) => FIND_DENY.has(a)) ? "find: -exec, -delete and -fprint are not allowed" : null;
+		if (READ_CMDS.has(prog)) return readFlags(prog, args);
 		if (TEST_TOOLS.has(prog)) return null;
 		if (prog === "npx" || (prog === "pnpm" && pos[0] === "exec") || (prog === "yarn" && pos[0] === "exec")) {
 			const tool = prog === "npx" ? pos[0] : pos[1];
@@ -222,6 +252,69 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 		}
 		return `${prog} is not allowed for the verifier: tests, type checks, read-only file commands and read-only git`;
 	}
+
+	// browser-verifier: the browser on this machine's own servers, the kit's ledger and login scripts, reads, and the video encode.
+	function checkBrowser(cmd, roots) {
+		let rest = cmd;
+		let here = cwd;
+		const cd = /^\s*cd\s+("[^"$`]*"|'[^']*'|[^\s;&|<>()`$]+)\s*&&\s*/.exec(cmd);
+		if (cd) {
+			here = split(cd[1])[0];
+			if (!rootOf(norm(here), roots)) return `cd only into the folders this agent may use (${roots.join(", ")})`;
+			rest = cmd.slice(cd[0].length);
+		}
+		const bad = simple(rest);
+		if (bad) return bad;
+		const w = words(rest);
+		if (w[0] === "timeout" && /^\d+[smh]?$/.test(w[1] || "")) w.splice(0, 2);
+		while (w[0] === "rtk" || w[0] === "proxy") w.shift();
+		if (!w.length) return "empty command";
+		const prog = fwd(w[0]).split("/").pop();
+		if (BROWSER_DENY.has(prog) && !(prog === "bash" && w[1])) return `${prog} is not allowed for the browser verifier`;
+		for (const a of w) {
+			const v = /^-[^=]*=/.test(a) || /^[A-Za-z_.]+=/.test(a) ? a.slice(a.indexOf("=") + 1) : a;
+			if (PROTECTED_TEXT.test(v) && !(/[\\/]/.test(v) && inside(norm(v), kit))) return `${v} touches a protected path (.env, .ssh, .claude, .config)`;
+		}
+		if (prog === "playwright-cli") {
+			const pos = w.slice(1).filter((a) => !a.startsWith("-"));
+			const url = w.join(" ").match(/[A-Za-z][A-Za-z0-9+.-]*:\/\/\S*/g)?.find((u) => !LOCAL_URL.test(u)) || (/^(open|goto|tab-new)$/.test(pos[0] || "") && pos[1] && !LOCAL_URL.test(pos[1]) ? pos[1] : "");
+			return url ? `playwright-cli only opens localhost or 127.0.0.1, not ${url}` : null;
+		}
+		if (prog === "node" || prog === "kit-node" || prog === "bash") {
+			const k = checkKit(w);
+			const file = prog === "kit-node" ? w[1] : fwd(w[1] || "").split("/").pop();
+			return k === null && BROWSER_KIT.has(file) ? null : `${prog} only runs the kit's ${[...BROWSER_KIT].join(", ")}${k ? ` (${k})` : ""}`;
+		}
+		if (READ_CMDS.has(prog)) return checkRead(w, roots);
+		if (prog === "mkdir" || prog === "ffmpeg" || prog === "ffprobe") {
+			const args = w.slice(1);
+			if (prog === "mkdir" && args.some((a) => a.startsWith("-") && a !== "-p")) return "mkdir takes -p and folders only";
+			const remote = args.find((a) => /^[A-Za-z][A-Za-z0-9+.-]+:/.test(a));
+			if (remote) return `${prog}: ${remote} is not a local file`;
+			const out = args.find((a) => !a.startsWith("-") && (prog === "mkdir" || /[\\/]|\.[A-Za-z0-9]{2,5}$/.test(a)) && !rootOf(norm(a, here), roots));
+			if (out) return `${prog}: ${out} is outside the folders this agent may use`;
+			return prog === "mkdir" && !args.some((a) => !a.startsWith("-")) ? "mkdir needs a folder" : null;
+		}
+		return `${prog} is not allowed for the browser verifier: playwright-cli, the kit's ledger, login and stack scripts, read-only file commands, mkdir and ffmpeg`;
+	}
+
+	// The GitHub owner/name of this machine's BE and FE repos: paths.cjs `github`, else the origin remote of each repo folder.
+	let ghRepos;
+	const repoNames = () => {
+		if (ghRepos) return ghRepos;
+		ghRepos = {};
+		for (const side of ["be", "fe"]) {
+			let name = paths.github?.[side] || "";
+			if (!name && paths.repos?.[side]) {
+				try {
+					const url = require("child_process").execFileSync("git", ["-C", paths.repos[side], "remote", "get-url", "origin"], { encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "ignore"], windowsHide: true }).trim();
+					name = /github\.com[:/]([^/]+\/[^/]+?)(\.git)?\/?$/.exec(url)?.[1] || "";
+				} catch {}
+			}
+			if (name) ghRepos[side] = name;
+		}
+		return ghRepos;
+	};
 
 	function checkPublish(cmd) {
 		const bad = simple(cmd);
@@ -265,6 +358,14 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 			if (["--repo", "--base", "--head", "--title", "--body-file"].some((k) => !f[k])) return "gh pr create needs --repo --base --head --title --body-file";
 			if (!BRANCH.test(f["--head"])) return `head ${f["--head"]} is not a ticket branch (feat|fix/<KEY>-<slug>)`;
 			if (PROTECTED_BRANCHES.has(f["--head"])) return "head cannot be a protected branch";
+			const repos = repoNames();
+			const side = Object.keys(repos).find((k) => repos[k].toLowerCase() === f["--repo"].toLowerCase());
+			if (!side) return `repo ${f["--repo"]} is not this machine's BE or FE repo (${Object.values(repos).join(", ") || "none found"})`;
+			const bases = paths.bases || ["develop"];
+			const key = f["--head"].split("/")[1].match(/^[A-Z][A-Z0-9]*-\d+/)[0];
+			let stacked = "";
+			try { stacked = JSON.parse(fs.readFileSync(`${paths.evidence}/${key}/status.json`, "utf8")).stackedOn?.[side]?.branch || ""; } catch {}
+			if (!bases.includes(f["--base"]) && f["--base"] !== stacked) return `base ${f["--base"]} is not a configured base (${bases.join(", ")})${stacked ? ` or the stack parent's branch ${stacked}` : ""}`;
 			if (!rootOf(norm(f["--body-file"]), ["@evidence"])) return "the PR body file lives under the evidence folder";
 			try { if (/co-authored-by|generated with \[?claude/i.test(fs.readFileSync(norm(f["--body-file"]), "utf8"))) return "no AI attribution in a PR body"; } catch {}
 			return null;
@@ -285,7 +386,8 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 			const extra = ti.additional_fields || {};
 			const bad = Object.keys(extra).find(sprintField);
 			if (bad) return `field not allowed: ${bad}`;
-			if ((extra.labels || []).some((l) => SPRINT.test(String(l)))) return "no sprint labels";
+			if (!Array.isArray(extra.labels) || !extra.labels.includes(JIRA_LABEL)) return `additional_fields.labels must include "${JIRA_LABEL}"`;
+			if (extra.labels.some((l) => SPRINT.test(String(l)))) return "no sprint labels";
 			if (ti.parent && !created().has(String(ti.parent))) return `parent ${ti.parent} was not created by sous-jira`;
 			return null;
 		}
@@ -294,6 +396,7 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 			if (!created().has(key)) return `${key} was not created by sous-jira; only those can be edited`;
 			const bad = Object.keys(ti.fields || {}).filter((k) => !JIRA_EDIT_FIELDS.has(k));
 			if (bad.length) return `fields not allowed: ${bad.join(", ")} (allowed: ${[...JIRA_EDIT_FIELDS].join(", ")})`;
+			if (ti.fields && "labels" in ti.fields && (!Array.isArray(ti.fields.labels) || !ti.fields.labels.includes(JIRA_LABEL))) return `labels must keep "${JIRA_LABEL}"`;
 			if ((ti.fields?.labels || []).some((l) => SPRINT.test(String(l)))) return "no sprint labels";
 			return null;
 		}
@@ -329,6 +432,7 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 			return tool === "Bash" ? checkBash(String(ti.command || ""), roots, true) : null;
 		}
 		if (mode === "verify") return tool === "Bash" ? checkVerify(String(ti.command || ""), roots) : null;
+		if (mode === "browser") return tool === "Bash" ? checkBrowser(String(ti.command || ""), roots) : null;
 		if (mode === "publish") return tool === "Bash" ? checkPublish(String(ti.command || "")) : null;
 		if (mode === "jira") return checkJira(tool, ti);
 		return `unknown guard mode ${mode}`;

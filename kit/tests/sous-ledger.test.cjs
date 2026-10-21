@@ -106,6 +106,21 @@ test('rounds stop at max with an owner issue and a draft PR', async () => {
   }
 });
 
+test('review rounds default to 2: the third round is refused with an owner issue', async () => {
+  const { base, status, ledger } = scratch('sous-round-default');
+  try {
+    await status('init', 'ZED-404', 'Invented', '-', '-', '-', '-');
+    assert.match((await status('round', 'ZED-404')).stdout, /round 1\/2/);
+    assert.match((await status('round', 'ZED-404')).stdout, /round 2\/2/);
+    const r = await status('round', 'ZED-404', 'third');
+    assert.equal(r.code, 2);
+    assert.match(r.stdout, /rounds spent \(2\/2\); I-1 is with the owner and the PR opens as draft/);
+    assert.deepEqual([ledger('ZED-404').rounds.max, ledger('ZED-404').draft], [2, true]);
+  } finally {
+    rmrf(base);
+  }
+});
+
 test('the verify lock admits one holder, frees a dead or old one, and only its owner unlocks it', async () => {
   const { base, evidence, status } = scratch('sous-lock');
   try {

@@ -23,7 +23,7 @@ A guard allows only these, one simple command per call, no `;`, `&&`, pipes, red
 - `git -C <worktree> commit -m "<message>"` (repeat `-m` for more paragraphs)
 - `git -C <worktree> push -u origin <current branch>`: only a `feat/<KEY>-...` or `fix/<KEY>-...` branch, never develop, main or master
 - `gh pr list|view ... --repo <owner>/<repo>`
-- `gh pr create --repo <owner>/<repo> --base <base> --head <branch> --title "<title>" --body-file <file> [--draft]`
+- `gh pr create --repo <owner>/<repo> --base <base> --head <branch> --title "<title>" --body-file <file> [--draft]`: `--repo` is this machine's BE or FE repo, `--base` a configured base (`bases` from `paths.cjs`, `develop` by default) or, for a stacked ticket, the parent branch recorded in the ticket's ledger `stackedOn`
 
 Steps:
 1. `branch --show-current` must equal the branch you were given. If not, stop and report.

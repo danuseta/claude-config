@@ -159,11 +159,13 @@ test('the publisher guard lets a stacked PR target the parent feature branch, he
     const root = path.join(base, 'root').replace(/\\/g, '/');
     fs.mkdirSync(`${root}/.evidence/QRD-1346`, { recursive: true });
     fs.writeFileSync(`${root}/.evidence/QRD-1346/pr-body-be.md`, `Stacked on ${BE1}: merge that first.\n`);
-    const g = createSousGuard({ paths: resolvePaths({ local: { root }, kitDir: KIT }), cwd: root });
+    fs.writeFileSync(`${root}/.evidence/QRD-1346/status.json`, JSON.stringify({ key: 'QRD-1346', stackedOn: { key: 'QRD-1345', be: { pr: BE1, branch: 'feat/QRD-1345-flow', base: 'develop' } } }));
+    const g = createSousGuard({ paths: resolvePaths({ local: { root, github: { be: 'o/r' } }, kitDir: KIT }), cwd: root });
     const create = (head, baseBranch) => g.check('publish', [], { tool_name: 'Bash', tool_input: { command: `gh pr create --repo o/r --base ${baseBranch} --head ${head} --title "QRD-1346 feat: step" --body-file ${root}/.evidence/QRD-1346/pr-body-be.md` } });
     assert.equal(create('feat/QRD-1346-step', 'feat/QRD-1345-flow'), null);
     assert.equal(create('feat/QRD-1345-flow', 'develop'), null);
     assert.match(create('develop', 'feat/QRD-1345-flow'), /not a ticket branch/);
+    assert.match(create('feat/QRD-1347-other', 'feat/QRD-1345-flow'), /not a configured base/, 'a feature base only for the ticket whose ledger stacks on it');
     assert.equal(g.check('runner', ['@root'], { tool_name: 'Bash', tool_input: { command: `gh pr view ${BE1} --json headRefName,baseRefName,state` } }), null);
   } finally {
     rmrf(base);

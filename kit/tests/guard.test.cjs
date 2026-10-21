@@ -100,6 +100,32 @@ test('the real hook entry point answers on stdin (Windows paths, unattended)', (
   try { fs.rmSync(path.join(__dirname, '..', 'guard.log'), { force: true }); } catch {}
 });
 
+test('the hook fails closed: unreadable input exits 2 with the reason, and the settings entry keeps it at 2', () => {
+  const run = (input) => {
+    try { return { code: 0, out: execFileSync(process.execPath, [path.join(__dirname, '..', 'guard.cjs')], { input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }) }; } catch (e) { return { code: e.status, err: String(e.stderr) }; }
+  };
+  for (const input of ['not json', '{"tool_input":', '']) {
+    const r = run(input);
+    assert.equal(r.code, 2, JSON.stringify(input));
+    assert.match(r.err, /guard: cannot read the hook input .*; refusing/);
+  }
+  assert.equal(run(JSON.stringify({ tool_name: 'Bash', cwd: 'E:/qonflo', tool_input: { command: 'git status' } })).code, 0);
+  const base = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'settings', 'settings.base.json'), 'utf8'));
+  const cmds = base.hooks.PreToolUse.flatMap((e) => e.hooks.map((h) => h.command)).filter((c) => /guard\.cjs/.test(c));
+  assert.deepEqual(cmds, ['{{kit:guard.cjs}} || exit 2']);
+});
+
+test('the rendered settings command blocks with exit 2 when node or the guard is missing', { skip: process.platform === 'win32' && !process.env.SHELL && !fs.existsSync('C:/Program Files/Git/bin/bash.exe') }, () => {
+  const kit = path.join(__dirname, '..').replace(/\\/g, '/');
+  const bash = (cmd, input) => {
+    try { execFileSync('bash', ['-c', cmd], { input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }); return 0; } catch (e) { return e.status; }
+  };
+  const node = process.execPath.replace(/\\/g, '/');
+  assert.equal(bash(`"${node}" "${kit}/guard.cjs" || exit 2`, 'garbage'), 2);
+  assert.equal(bash(`"${node}" "${kit}/missing-guard.cjs" || exit 2`, '{}'), 2, 'a missing guard file blocks instead of exit 1');
+  assert.equal(bash(`"${node}" "${kit}/guard.cjs" || exit 2`, JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'ls' } })), 0);
+});
+
 // The same inputs through the source guard and the new one, without DOCK_CHAT_TURN: same rule, same hardness, same reason.
 const PARITY = [
   ['git add .', 'E:/qonflo'], ['git add -A', 'E:/qonflo'], ['git add --all', 'E:/qonflo'], ['git add src/a.ts', 'E:/qonflo'], ['git status', 'E:/qonflo'],

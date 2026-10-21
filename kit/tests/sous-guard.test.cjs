@@ -43,6 +43,11 @@ test('path guard --read: under the roots, never a secret file', () => {
   assert.equal(g.check('path', ['--read', '@root', '@config'], read('/home/coder/projects/ms-admin-worker-backend/src/a.ts')), null);
   assert.equal(g.check('path', ['--read', '@root', '@config'], read('/home/coder/.claude/rules/ticket-contract.md')), null);
   assert.match(g.check('path', ['--read', '@root'], read('/home/coder/.ssh/id_rsa')), /outside/);
+  for (const f of ['/home/coder/.claude/kit/status.cjs', '/home/coder/.claude/skills/sous/SKILL.md', '/home/coder/.claude/agents/sous-planner.md']) assert.equal(g.check('path', ['--read', '@config'], read(f)), null, f);
+  for (const f of ['/home/coder/.claude/projects/-home-coder-projects/a.jsonl', '/home/coder/.claude/settings.json', '/home/coder/.claude/.credentials.json', '/home/coder/.claude/history.jsonl']) {
+    assert.match(g.check('path', ['--read', '@config'], read(f)), /outside/, `@config is kit, skills, agents and rules only: ${f}`);
+  }
+  assert.match(g.check('bash', ['@config'], bash('rtk rg token /home/coder/.claude/projects')), /outside/);
   for (const f of ['/home/coder/projects/wt-1-be/.env', '/home/coder/.claude/kit/dock.json', '/home/coder/.claude/secrets.local.json', '/home/coder/projects/x/server.pem']) {
     assert.match(g.check('path', ['--read', '@root', '@config'], read(f)), /secret/, f);
   }
@@ -53,7 +58,7 @@ test('path guard --read: under the roots, never a secret file', () => {
 test('bash guard: one read-only command under the roots', () => {
   const g = linuxGuard();
   const roots = ['@root', '@evidence'];
-  for (const c of ['rtk rg "useFlow" /home/coder/projects/wt-1-fe/src', 'rtk read /home/coder/projects/.evidence/blackboard/QRD-1/NOW.md', 'ls /home/coder/projects', 'git -C /home/coder/projects/wt-1-be diff --stat', 'git -C /home/coder/projects/wt-1-be log --oneline -5', 'gh pr view 12 --repo o/r --json url', "rtk rg 'a|b' /home/coder/projects/wt-1-be"]) {
+  for (const c of ['rtk rg "useFlow" /home/coder/projects/wt-1-fe/src', 'rtk read /home/coder/projects/.evidence/blackboard/QRD-1/NOW.md', 'ls /home/coder/projects', 'rtk rg "x" /home/coder/projects/wt-1-be/src', 'rtk tree /home/coder/projects/wt-1-be/src', 'grep -rn x /home/coder/projects/wt-1-be/src', 'rtk proxy rg x /home/coder/projects/wt-1-be', 'git -C /home/coder/projects/wt-1-be diff --stat', 'git -C /home/coder/projects/wt-1-be log --oneline -5', 'gh pr view 12 --repo o/r --json url', "rtk rg 'a|b' /home/coder/projects/wt-1-be"]) {
     assert.equal(g.check('bash', roots, bash(c)), null, c);
   }
   const denied = {
@@ -69,6 +74,23 @@ test('bash guard: one read-only command under the roots', () => {
     'git status': /git -C/,
     'gh pr merge 12': /gh: only/,
     'npm test': /not allowed here/,
+    'rtk rg --pre=sh x /home/coder/projects/wt-1-be': /runs a program/,
+    'rg --pre sh x /home/coder/projects/wt-1-be': /runs a program/,
+    'rtk rg --pre-glob "*.ts" x /home/coder/projects/wt-1-be': /runs a program/,
+    'rg -z x /home/coder/projects/wt-1-be': /runs a program/,
+    'rg -iz x /home/coder/projects/wt-1-be': /runs a program/,
+    'rg --search-zip x /home/coder/projects/wt-1-be': /runs a program/,
+    'rtk tree -o f /home/coder/projects/wt-1-be': /writes a file/,
+    'tree -ao f /home/coder/projects/wt-1-be': /writes a file/,
+    'find -L /home/coder/projects/wt-1-be': /-L/,
+    'find /home/coder/projects -follow': /-follow/,
+    'find /home/coder/projects -execdir id': /-execdir/,
+    'find /home/coder/projects -fprintf /tmp/x %p': /-fprintf/,
+    'grep -R x /home/coder/projects/wt-1-be': /follows links/,
+    'grep --dereference-recursive x /home/coder/projects/wt-1-be': /follows links/,
+    'rtk proxy rg --pre=sh x /home/coder/projects/wt-1-be': /runs a program/,
+    'rtk proxy cat /etc/passwd': /outside/,
+    'rtk proxy curl https://x': /not allowed here/,
     'node /home/coder/.claude/kit/status.cjs show QRD-1': /not allowed here/,
   };
   for (const [c, why] of Object.entries(denied)) assert.match(g.check('bash', roots, bash(c)) || '', why, c);
@@ -91,6 +113,10 @@ test('runner guard: sous agents and browser-verifier only; kit scripts by their 
   for (const c of [`node ${K}/status.cjs show QRD-1`, `node "${K}/status.cjs" decide QRD-1 "x" --status SHOV --by sous`, `node ${K}/demo-upload.cjs QRD-1 E:/qonflo/.evidence/QRD-1/evidence.mp4`, `bash ${K}/prep-ticket.sh QRD-1 slug origin/develop - "t"`, `bash ${K}/wt.sh add be E:/qonflo/wt-1-be feat/QRD-1-x origin/develop`, `bash ${K}/stack.sh up QRD-1 a b 3101 5201`, `${K}/bin/kit-node status.cjs show QRD-1`, `node ${K}/login-state.cjs 5346`, `rtk read E:/qonflo/.evidence/blackboard/QRD-1/NOW.md`]) {
     assert.equal(g.check('runner', roots, bash(c)), null, c);
   }
+  assert.equal(g.check('runner', roots, bash(`node ${K}/status.cjs set QRD-1 draft=true`)), null, 'draft=true stays allowed');
+  for (const c of [`node ${K}/status.cjs set QRD-1 rounds.max=9`, `node ${K}/status.cjs set QRD-1 stage=code rounds.max=3`, `node ${K}/status.cjs set QRD-1 draft=false`, `${K}/bin/kit-node status.cjs set QRD-1 rounds.max=9`, `${K}/bin/kit-node status.cjs set QRD-1 draft=false`]) {
+    assert.match(g.check('runner', roots, bash(c)) || '', /owner's to set/, c);
+  }
   for (const c of [`node ${K}/dock-chat.cjs`, `node E:/qonflo/evil/status.cjs show`, `bash ${K}/wt.sh remove E:/qonflo/wt-1-be`, `bash ${K}/stack.sh kill`, 'npx jest', `node ${K}/status.cjs show QRD-1 && rm -rf x`]) {
     assert.ok(g.check('runner', roots, bash(c)), c);
   }
@@ -106,8 +132,16 @@ test('publish guard: per path staging, commit -m, ticket branches only, gh pr cr
     fs.mkdirSync(`${root}/.evidence/QRD-77`, { recursive: true });
     fs.writeFileSync(`${root}/.evidence/QRD-77/pr-body-be.md`, 'Jira: x\n');
     fs.writeFileSync(`${root}/.evidence/QRD-77/bad-body.md`, 'x\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n');
-    const paths = resolvePaths({ local: { root }, kitDir: KIT });
+    const paths = resolvePaths({ local: { root, github: { be: 'o/r', fe: 'o/f' }, bases: ['develop', 'feat/V1-Playbook'] }, kitDir: KIT });
     const g = createSousGuard({ paths, cwd: root });
+    fs.mkdirSync(`${root}/.evidence/QRD-78`, { recursive: true });
+    fs.writeFileSync(`${root}/.evidence/QRD-78/status.json`, JSON.stringify({ key: 'QRD-78', stackedOn: { key: 'QRD-77', be: { pr: 'https://github.com/o/r/pull/1', branch: 'feat/QRD-77-thing', base: 'develop' } } }));
+    const body = `${root}/.evidence/QRD-77/pr-body-be.md`;
+    const pr = (repo, base, head = 'feat/QRD-77-thing') => bash(`gh pr create${repo ? ` --repo ${repo}` : ''}${base ? ` --base ${base}` : ''} --head ${head} --title t --body-file ${body}`);
+    for (const [repo, base, head] of [['o/r', 'develop'], ['o/f', 'feat/V1-Playbook'], ['O/R', 'develop'], ['o/r', 'feat/QRD-77-thing', 'feat/QRD-78-child']]) assert.equal(g.check('publish', [], pr(repo, base, head)), null, `${repo} ${base} ${head}`);
+    for (const [repo, base, head, why] of [['x/r', 'develop', undefined, /not this machine's BE or FE repo/], ['o/r', 'main', undefined, /not a configured base/], ['o/r', 'feat/QRD-77-thing', undefined, /not a configured base/], ['o/f', 'feat/QRD-77-thing', 'feat/QRD-78-child', /not a configured base/], ['', 'develop', undefined, /needs --repo/], ['o/r', '', undefined, /needs --repo/]]) {
+      assert.match(g.check('publish', [], pr(repo, base, head)) || '', why, `${repo} ${base} ${head}`);
+    }
     const ok = [`git -C ${wt} status`, `git -C ${wt} add src/a.ts src/b.ts`, `git -C ${wt} commit -m "fix(QRD-77): thing" -m "second"`, `git -C ${wt} push -u origin feat/QRD-77-thing`, `rtk git -C ${wt} diff --cached --name-only`, `git -C ${wt} remote get-url origin`,
       `gh pr create --repo o/r --base develop --head feat/QRD-77-thing --title "QRD-77 fix: thing" --body-file ${root}/.evidence/QRD-77/pr-body-be.md --draft`, 'gh pr list --repo o/r --head feat/QRD-77-thing --json url'];
     for (const c of ok) assert.equal(g.check('publish', [], bash(c)), null, c);
@@ -140,13 +174,16 @@ test('jira guard: QRD only, no sprint or assignee, edits only on tickets it crea
     assert.match(create({ projectKey: 'QRD', assignee_account_id: 'x' }), /unassigned/);
     assert.match(create({ projectKey: 'QRD', transition: { id: '1' } }), /transition/);
     assert.match(create({ projectKey: 'QRD', additional_fields: { customfield_10020: 3 } }), /field not allowed/);
-    assert.match(create({ projectKey: 'QRD', additional_fields: { labels: ['QRD24'] } }), /sprint labels/);
-    assert.match(create({ projectKey: 'QRD', parent: 'QRD-1' }), /not created by sous-jira/);
+    assert.match(create({ projectKey: 'QRD', additional_fields: { labels: ['sous', 'QRD24'] } }), /sprint labels/);
+    for (const extra of [undefined, {}, { labels: [] }, { labels: ['bug'] }, { labels: 'sous' }]) assert.match(create({ projectKey: 'QRD', summary: 's', additional_fields: extra }), /must include "sous"/, JSON.stringify(extra));
+    assert.match(create({ projectKey: 'QRD', parent: 'QRD-1', additional_fields: { labels: ['sous'] } }), /not created by sous-jira/);
     assert.match(edit({ issueIdOrKey: 'QRD-900', fields: { summary: 'x' } }), /not created by sous-jira/);
     assert.equal(g.record({ content: [{ type: 'text', text: JSON.stringify({ id: '1', key: 'QRD-900', self: 'https://x' }) }] }), 'QRD-900');
-    assert.equal(edit({ issueIdOrKey: 'QRD-900', fields: { summary: 'x', labels: ['a'] } }), null);
+    assert.equal(edit({ issueIdOrKey: 'QRD-900', fields: { summary: 'x', labels: ['sous', 'a'] } }), null);
+    assert.equal(edit({ issueIdOrKey: 'QRD-900', fields: { summary: 'x' } }), null, 'an edit without labels keeps them');
+    for (const labels of [['a'], [], null]) assert.match(edit({ issueIdOrKey: 'QRD-900', fields: { labels } }), /must keep "sous"/, JSON.stringify(labels));
     assert.match(edit({ issueIdOrKey: 'QRD-900', fields: { status: 'Done' } }), /fields not allowed: status/);
-    assert.equal(create({ projectKey: 'QRD', parent: 'QRD-900' }), null);
+    assert.equal(create({ projectKey: 'QRD', parent: 'QRD-900', additional_fields: { labels: ['sous'] } }), null);
     assert.match(g.check('jira', [], { tool_name: 'mcp__x__addCommentToJiraIssue', tool_input: {} }), /tool not allowed/);
   } finally {
     rmrf(base);
@@ -173,6 +210,39 @@ test('verify guard: tests and type checks inside a worktree, no installs, server
   }
 });
 
+test('browser guard: playwright-cli on localhost only, the kit ledger and login scripts, reads and the video encode', () => {
+  for (const [g, R, K] of [[winGuard(), 'E:/qonflo', 'C:/Users/danus/.claude-kantor/kit'], [linuxGuard(), '/home/coder/projects', '/home/coder/.claude/kit']]) {
+    const roots = ['@wt', '@evidence', '@shots'];
+    const b = (c) => g.check('browser', roots, bash(c));
+    const E = `${R}/.evidence`;
+    for (const c of [
+      `cd ${E} && timeout 90 playwright-cli -s=QRD-1 open http://localhost:5287/workflows --config=${R}/.playwright/cli-5287.json`,
+      'playwright-cli -s=QRD-1 goto http://127.0.0.1:5287/', 'timeout 90 playwright-cli -s=QRD-1 snapshot', 'playwright-cli -s=QRD-1 click e12', `playwright-cli -s=QRD-1 run-code --filename=${E}/QRD-1/scripts/ac-1.js`,
+      `playwright-cli -s=QRD-1 screenshot --filename=${R}/1021/qrd-1/ac-1-dark.png`, 'playwright-cli -s=QRD-1 eval "document.title"', `playwright-cli -s=QRD-1 video-start ${E}/QRD-1/evidence.webm`, 'playwright-cli -s=QRD-1 close',
+      `node ${K}/login-state.cjs 5287`, `node ${K}/paths.cjs --print`, `node "${K}/status.cjs" ac QRD-1 1 PASS "list shows 3 rows" "${R}/1021/qrd-1/ac-1-dark.png"`,
+      `node ${K}/status.cjs handoff QRD-1 browser-verifier status=done summary="2 of 2 AC pass" evidence="${R}/1021/qrd-1/ac-1-dark.png"`, `${K}/bin/kit-node status.cjs show QRD-1`, `bash ${K}/stack.sh status 3101 5287`,
+      `mkdir -p ${R}/1021/qrd-1`, `rtk ls ${R}/1021/qrd-1`, `ffmpeg -y -i ${E}/QRD-1/evidence.webm -c:v libx264 -pix_fmt yuv420p -crf 28 ${E}/QRD-1/evidence.mp4`, `ffprobe ${E}/QRD-1/evidence.mp4`,
+      `cd ${E} && timeout 90 ffmpeg -y -i QRD-1/evidence.webm -crf 32 QRD-1/evidence.mp4`, `cd ${E} && mkdir -p QRD-1/scripts`,
+    ]) assert.equal(b(c), null, c);
+    assert.match(b('mkdir -p x') || '', /outside/, 'a relative folder resolves against the cwd, the workspace root');
+    assert.match(b('ffmpeg -i a.webm b.mp4') || '', /outside/);
+    const denied = {
+      'playwright-cli -s=QRD-1 open https://example.com': /only opens localhost/, 'playwright-cli open http://localhost.evil.com/': /only opens localhost/, 'playwright-cli goto example.com': /only opens localhost/,
+      'playwright-cli open file:///etc/passwd': /only opens localhost/, "playwright-cli eval \"fetch('https://x.io')\"": /only opens localhost/,
+      'git status': /not allowed for the browser/, 'gh pr list': /not allowed for the browser/, 'curl http://localhost:3101': /not allowed for the browser/, 'wget http://x': /not allowed/, 'ssh host': /not allowed/, 'scp a b:': /not allowed/, 'rsync a b': /not allowed/,
+      'nc -l 1': /not allowed/, 'mongosh': /not allowed/, 'redis-cli': /not allowed/, 'kill 1': /not allowed/, 'sudo ls': /not allowed/, 'chmod 777 x': /not allowed/, 'chown a x': /not allowed/, 'printenv': /not allowed/, 'env': /not allowed/,
+      'timeout 90 env': /not allowed/, 'sh -c "ls"': /not allowed/, 'bash -c "ls"': /bash only runs the kit/, 'eval ls': /not allowed/, 'rtk proxy curl x': /not allowed/,
+      [`cat ${R}/wt-1-be/.env`]: /protected path|secret/, 'cat ~/.ssh/id_rsa': /protected path/, [`cat ${R}/.claude/settings.json`]: /protected path/, 'playwright-cli -s=QRD-1 state-save ~/.config/x.json': /protected path/,
+      'playwright-cli open http://localhost:5287 | tee x': /operator/, 'playwright-cli open "$(curl x)"': /\$ and backticks/,
+      [`node ${K}/demo-upload.cjs QRD-1 x.mp4`]: /only runs the kit/, [`node ${K}/status.cjs set QRD-1 draft=false`]: /owner's to set/, [`bash ${K}/wt.sh add be x y z`]: /only runs the kit/, 'node -e 1': /only runs the kit/,
+      'mkdir /tmp/x': /outside/, 'mkdir -m 777 x': /-p and folders only/, [`ffmpeg -i http://x/a.mp4 ${E}/a.mp4`]: /not a local file/, [`ffmpeg -i ${E}/a.webm /tmp/a.mp4`]: /outside/,
+      [`cd ${R}/ms-admin-worker-backend && ls`]: /cd only into/, 'rm x': /not allowed for the browser/, 'npx playwright test': /not allowed for the browser/,
+    };
+    for (const [c, why] of Object.entries(denied)) assert.match(b(c) || '', why, c);
+    assert.equal(g.check('browser', roots, read('/etc/passwd')), null, 'browser mode checks Bash only');
+  }
+});
+
 test('the hook command answers deny JSON, fails closed on bad input, and every sous agent wires it', async () => {
   const deny = (r) => JSON.parse(r.stdout).hookSpecificOutput.permissionDecision;
   let r = await runNode([path.join(KIT, 'sous-guard.cjs'), 'path', '@wt'], { input: JSON.stringify(write('E:\\qonflo\\wt-1-be\\package.json')), env: { QONFLO_ROOT: 'E:/qonflo', SOUS_GUARD_NOLOG: '1' } });
@@ -183,9 +253,9 @@ test('the hook command answers deny JSON, fails closed on bad input, and every s
   assert.equal(r.stdout, '');
 
   const agents = path.join(KIT, '..', 'agents');
-  const files = fs.readdirSync(agents).filter((f) => f.startsWith('sous-'));
-  assert.equal(files.length, 14);
-  const form = /^ {10}command: '"\$\{CLAUDE_CONFIG_DIR:-\$HOME\/\.claude\}\/kit\/bin\/kit-node" sous-guard\.cjs (path|bash|runner|publish|jira|verify)( [^']*)?'$/;
+  const files = fs.readdirSync(agents).filter((f) => f.startsWith('sous-') || f === 'browser-verifier.md');
+  assert.equal(files.length, 15);
+  const form = /^ {10}command: '"\$\{CLAUDE_CONFIG_DIR:-\$HOME\/\.claude\}\/kit\/bin\/kit-node" sous-guard\.cjs (path|bash|runner|publish|jira|verify|browser)( [^']*)?'$/;
   for (const f of files) {
     const text = fs.readFileSync(path.join(agents, f), 'utf8');
     const head = text.split('\n---\n')[0];

@@ -15,7 +15,7 @@
 //   node status.cjs issue KEY <BLOCKER|QUESTION|RISK|DISPUTE> "<text>" [--options "A|B"] -> I-n, open at level arbiter
 //   node status.cjs issue KEY <n> escalate sous|owner "<why>" -> owner sets waiting to "I-<n>: <text> [A|B]" and draft
 //   node status.cjs issue KEY <n> resolve <decisionN> -> resolved by D-<decisionN>; clears waiting when it was this issue
-//   node status.cjs round KEY ["<why>"]             -> one review-to-task return round; past rounds.max (default 4) an owner issue and draft
+//   node status.cjs round KEY ["<why>"]             -> one review-to-task return round; past rounds.max (default 2) an owner issue and draft
 //   node status.cjs lock <name> KEY [--wait <s>] [--pid <n>] | unlock <name> KEY -> one heavy step per machine (stale: dead pid or 30 min)
 //   node status.cjs render KEY                       -> status.md, decisions.md, issues.md, NOW.md under <evidence>/blackboard/KEY (generated);
 //                                                     with board=<EPIC> under <EPIC>/tickets/KEY, plus <EPIC>/EPIC.md
@@ -239,7 +239,7 @@ const renderBoard = (key, s) => {
 	fs.writeFileSync(path.join(dir, "issues.md"), `${head}# Issues - ${key}\n\n## Open\n\n${open.map(iBlock).join("\n\n") || "none"}\n\n## Resolved\n\n${closed.join("\n") || "none"}\n`);
 	const rows = [
 		["Stage", s.stage], ["Kind", s.kind ?? "ticket"], ["Engine", s.engine ?? "-"], ["Waiting on the owner", s.waiting || "-"],
-		["Review rounds", s.rounds ? `${s.rounds.used ?? 0}/${s.rounds.max ?? 4}` : "-"], ["Draft PR", s.draft ? "yes" : "no"],
+		["Review rounds", s.rounds ? `${s.rounds.used ?? 0}/${s.rounds.max ?? 2}` : "-"], ["Draft PR", s.draft ? "yes" : "no"],
 		["Production data", s.productionData ? "yes" : "no"], ["PR", [s.pr?.be, s.pr?.fe].filter(Boolean).join(" ") || "-"],
 		["Worktrees", [s.dirs?.be, s.dirs?.fe].filter((d) => d && d !== "-").join(" ") || "-"],
 		...(root ? [["Epic board", fwd(root)]] : []),
@@ -813,9 +813,9 @@ if (!cmd) {
 	const s = load(key);
 	if (!s) return console.log(`no status for ${key}; run init first`);
 	const why = rest.join(" ").trim();
-	const r = (s.rounds ??= { used: 0, max: 4 });
+	const r = (s.rounds ??= { used: 0, max: 2 });
 	r.used = Number(r.used ?? 0);
-	r.max = Number(r.max ?? 4);
+	r.max = Number(r.max ?? 2);
 	if (r.used >= r.max) {
 		const spent = (s.issues ?? []).find((x) => x.status === "open" && x.text.startsWith("review rounds spent"));
 		if (spent) return refuse(`${key} review rounds spent (${r.used}/${r.max}); I-${spent.n} is already with the owner`);
