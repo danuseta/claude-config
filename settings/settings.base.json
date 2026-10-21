@@ -126,6 +126,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{kit:scope-allow.cjs}}",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "Stop": [
