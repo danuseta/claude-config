@@ -77,6 +77,7 @@ Owner `DECIDED` > `SHOV` > contract > Jira AC > `USULAN`. A `D-n` from arbiter o
 - Review rounds: at most 4 returns from FINAL to a task (`status.cjs round`); past that the ledger opens an owner issue and the PR goes out as draft.
 - PR is a draft when rounds are spent, an issue is still open, or production data is touched (`set <KEY> productionData=true`); otherwise ready for review.
 - One heavy step per machine: tests, tsc and builds run only inside `status.cjs lock verify <KEY>`.
+- Agents run in the foreground: dispatch a runner and wait for its return, never `run_in_background`, and never end the turn while an agent or a Monitor still runs. A DOCK turn that ends kills them (QRD-1346 lost two workers that way); the runner guard refuses background calls.
 - Stage per path, never `git add -A` or `.`; never push to develop, main or master; no AI attribution in commits or PR bodies; never commit `docs/`, `.gitignore`, `.omc/`.
 - Guards are enforced per agent (`kit/sous-guard.cjs`) on top of `guard.cjs`. A block is reported, never worked around.
 - After a run, queue the note: `python3 "K/brain.py" save --no-ingest --project "qonflo" --topic "<topic>" --title "<title>" --context "<why>" --point "<point>" --decision "<outcome>"` (`python` on Windows).
