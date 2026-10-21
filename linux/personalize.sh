@@ -58,12 +58,15 @@ s_link() {
 }
 
 s_repo() {
-  local before after
+  local before after up
   [ -d "$CCFG_REPO/.git" ] || { note "repo is not a git checkout, using it as is"; return 10; }
   if [ "$DRY" = 1 ]; then note "would run git pull --ff-only in $CCFG_REPO"; return 0; fi
   before=$(git -C "$CCFG_REPO" rev-parse HEAD 2>/dev/null)
   timeout 60 git -C "$CCFG_REPO" pull --ff-only || { note "pull failed, using the existing checkout"; return 1; }
   after=$(git -C "$CCFG_REPO" rev-parse HEAD 2>/dev/null)
+  # A checkout left on a feature branch pulls only that branch, so main never arrives and the step would still read "up to date".
+  up=$(git -C "$CCFG_REPO" rev-parse --abbrev-ref '@{u}' 2>/dev/null)
+  [ "$up" = origin/main ] || { note "checkout tracks ${up:-no upstream}, not origin/main: main does not arrive (git -C $CCFG_REPO switch main)"; return 1; }
   [ "$before" = "$after" ] && note "already up to date" || note "updated ${before:0:7}..${after:0:7}"
 }
 
