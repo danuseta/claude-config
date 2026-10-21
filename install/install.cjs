@@ -210,6 +210,19 @@ function copyPlan() {
   return { items, absent };
 }
 
+// kit/agents-kit.json: the agent files this repo shipped, so kit/agents.cjs tells kit agents from custom ones and can restore a kit body.
+function writeAgentsRecord() {
+  const src = path.join(REPO, 'agents');
+  if (!exists(src) || !manifest.dirs.some((d) => d.from === 'agents' && d.os.includes(OS))) return;
+  const agents = {};
+  for (const f of fs.readdirSync(src).filter((n) => n.endsWith('.md')).sort()) {
+    agents[f.slice(0, -3)] = fs.readFileSync(path.join(src, f), 'utf8').replace(/\r\n/g, '\n');
+  }
+  const target = path.join(configDir, 'kit', 'agents-kit.json');
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, JSON.stringify({ repo: REPO.replace(/\\/g, '/'), agents }, null, 2) + '\n');
+}
+
 function planClaudeMd() {
   const cfg = manifest.claudeMd;
   const missing = cfg.parts[OS].filter((p) => !exists(path.join(REPO, p)));
@@ -392,6 +405,7 @@ function main() {
       fs.mkdirSync(path.dirname(i.dst), { recursive: true });
       fs.copyFileSync(i.src, i.dst);
     }
+    writeAgentsRecord();
     log('applied. Nothing was deleted.');
   }
   log();

@@ -632,6 +632,7 @@ console.log(JSON.stringify({ type: 'result', session_id: 's-1', is_error: false 
       const args = JSON.parse(fs.readFileSync(path.join(dir, 'args.json'), 'utf8'));
       const at = args.indexOf('--permission-mode');
       assert.equal(at === -1 ? null : args[at + 1], expected, JSON.stringify(args));
+      assert.ok(await waitFor(() => dock.requests.some((q) => q.url.endsWith('/chat/delta') && q.body && q.body.done === true), 15000), 'the turn ended before the bridge is killed, so no child keeps the temp dir');
     } finally {
       if (bridge) bridge.kill('SIGKILL');
       if (dock) await dock.close();
@@ -664,5 +665,40 @@ test('bridge run: pushes a doctor report on start and when a claim asks for one'
       if (dock) await dock.close();
       rmrf(dir);
     }
+  }
+});
+
+test('bridge run: answers the agent jobs of a claim in order, a failing job as an error, and keeps claiming', async () => {
+  const dir = tmp('chat-agents');
+  let dock, bridge;
+  try {
+    fs.mkdirSync(path.join(dir, 'cfg', 'agents'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'cfg', 'agents', 'my-reader.md'), '---\nname: my-reader\ndescription: reads\nmodel: haiku\ntools: Read\n---\n\nYou read.\n');
+    fs.writeFileSync(path.join(dir, 'dock-chat.json'), JSON.stringify({ claudeBin: process.execPath, cwd: dir, retryBaseMs: 50, interactive: false, activity: false }));
+    const jobs = [{ id: 'j1', op: 'list', input: {} }, { id: 'j2', op: 'get', input: { slug: 'nobody' } }, { id: 'j3', op: 'format', input: {} }, { id: 'j4', op: 'get', input: { slug: 'my-reader' } }];
+    let claims = 0;
+    dock = await startServer((req) => {
+      if (req.url.endsWith('/chat/agents/result')) return { json: { ok: true, result: { accepted: true } } };
+      if (!req.url.endsWith('/chat/claim')) return null;
+      claims++;
+      return { json: { ok: true, result: { message: null, ...(claims === 1 ? { agentJobs: jobs } : {}) } } };
+    });
+    bridge = spawn(process.execPath, [path.join(KIT, 'dock-chat.cjs'), 'run'], { env: { ...process.env, ...sandboxEnv(dir), DOCK_CHAT_CONFIG: path.join(dir, 'dock-chat.json'), DOCK_INGEST_URL: `${dock.url}/ingest/orchestrator`, DOCK_INGEST_TOKEN: 'dock_ing_test', DOCK_CHAT_TUNING: JSON.stringify({ waitGapMs: 0, doctorEveryMs: 0 }) }, cwd: KIT, stdio: 'ignore', windowsHide: true });
+    const answers = () => dock.requests.filter((q) => q.url === '/ingest/orchestrator/chat/agents/result').map((q) => q.body);
+    assert.ok(await waitFor(() => answers().length === 4, 30000), 'every job was answered');
+    const [list, missing, unknown, got] = answers();
+    assert.deepEqual(answers().map((a) => a.id), ['j1', 'j2', 'j3', 'j4']);
+    assert.deepEqual(list.result.map((a) => [a.slug, a.source, a.model]), [['my-reader', 'custom', 'haiku']]);
+    assert.deepEqual(missing, { id: 'j2', error: 'No agent named nobody' });
+    assert.match(unknown.error, /Unknown agent op format/);
+    assert.equal(got.result.body, 'You read.\n');
+    assert.equal(got.result.kitBody, null);
+    assert.ok(await waitFor(() => claims >= 3, 15000), 'the claim loop keeps going');
+    const claim = dock.requests.find((q) => q.url.endsWith('/chat/claim')).body;
+    assert.deepEqual([claim.caps.features, claim.caps.modes], [['agents'], []]);
+  } finally {
+    if (bridge) bridge.kill('SIGKILL');
+    if (dock) await dock.close();
+    rmrf(dir);
   }
 });

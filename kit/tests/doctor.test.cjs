@@ -8,6 +8,7 @@ const { report, table } = require('../doctor.cjs');
 const { KIT, tmp, rmrf, startServer, runNode, sandboxEnv } = require('./helpers.cjs');
 
 const NAMES = ['rtk', 'ffmpeg', 'ffprobe', 'dock-config', 'passEnv', 'hooks', 'playwright', 'chromium', 's3-demo', 'demo-video', 'elevenlabs', 'node', 'python'];
+const GUARDED = "---\nname: x\nhooks:\n  PreToolUse:\n    - matcher: \"Bash\"\n      hooks:\n        - type: command\n          command: 'kit-node sous-guard.cjs runner @wt || exit 2'\n---\n\nbody\n";
 const fakeToken = (word) => ['dock', 'ing', word].join('_');
 const fakeProbe = (missing = []) => (name) => ({ name, ok: !missing.includes(name), detail: missing.includes(name) ? `not found or failed: ${name}` : `${name} 1.0` });
 
@@ -19,7 +20,7 @@ test('a configured machine reports every check ok and never the token', () => {
     fs.mkdirSync(path.join(cfg, 'agents'), { recursive: true });
     fs.mkdirSync(path.join(kit, 'bin'), { recursive: true });
     for (const f of ['sous-guard.cjs', 'demo-upload.cjs', 'status.cjs']) fs.writeFileSync(path.join(kit, f), '');
-    fs.writeFileSync(path.join(cfg, 'agents', 'sous-ticket-runner.md'), '');
+    fs.writeFileSync(path.join(cfg, 'agents', 'sous-ticket-runner.md'), GUARDED);
     fs.writeFileSync(path.join(kit, 'dock.json'), JSON.stringify({ url: 'https://dock.example.test/ingest/orchestrator', token: fakeToken('SECRETVALUE') }));
     fs.writeFileSync(path.join(kit, 'dock-chat.json'), JSON.stringify({ passEnv: ['ZED_A', 'ZED_B'] }));
     fs.writeFileSync(path.join(cfg, 'settings.json'), JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ command: `node "${kit}/guard.cjs"` }, { command: `node "${kit}/dock-push.cjs" hook` }] }], SessionStart: [{ hooks: [{ command: `node "${kit}/status.cjs" sync --hook` }] }] } }));
@@ -66,6 +67,29 @@ test('missing pieces are FAIL with what is missing, by name only', () => {
     assert.match(table(r), /\| elevenlabs \| WARN \| DOCK not configured/);
     assert.doesNotMatch(table(r), /value-not-printed/);
     assert.match(table(r), /\| rtk \| FAIL \|/);
+  } finally {
+    rmrf(base);
+  }
+});
+
+test('an agent file without a hooks block is a WARN of its own, not a failure', () => {
+  const base = tmp('doctor-agents');
+  try {
+    const cfg = path.join(base, 'cfg');
+    fs.mkdirSync(path.join(cfg, 'agents'), { recursive: true });
+    fs.writeFileSync(path.join(cfg, 'agents', 'guarded.md'), GUARDED);
+    fs.writeFileSync(path.join(cfg, 'agents', 'my-draft.md'), '---\nname: my-draft\ntools: Read\n---\n\nbody\n');
+    fs.writeFileSync(path.join(cfg, 'agents', 'test-runner.md'), '---\r\nname: test-runner\r\n---\r\n');
+    const r = report({ env: {}, kitDir: path.join(cfg, 'kit'), configDir: cfg, home: path.join(base, 'home'), root: path.join(base, 'root'), probe: fakeProbe(), elKey: () => ({ ok: true }) });
+    const rows = r.checks.slice(NAMES.length);
+    assert.deepEqual(r.checks.slice(0, NAMES.length).map((c) => c.name), NAMES);
+    assert.deepEqual(rows.map((c) => [c.name, c.ok, c.warn]), [['agent my-draft', true, true], ['agent test-runner', true, true]]);
+    assert.match(rows[0].detail, /agents\/my-draft\.md has no hooks block/);
+    assert.match(table(r), /\| agent my-draft \| WARN \|/);
+    for (let i = 0; i < 30; i++) fs.writeFileSync(path.join(cfg, 'agents', `bare-${String(i).padStart(2, '0')}.md`), '');
+    const many = report({ env: {}, kitDir: path.join(cfg, 'kit'), configDir: cfg, home: path.join(base, 'home'), root: path.join(base, 'root'), probe: fakeProbe(), elKey: () => ({ ok: true }) });
+    assert.ok(many.checks.length <= 40, 'DOCK takes at most 40 checks');
+    assert.match(many.checks.at(-1).detail, /12 more agent files without a hooks block/);
   } finally {
     rmrf(base);
   }

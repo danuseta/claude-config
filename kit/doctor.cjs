@@ -2,7 +2,8 @@
 //   node doctor.cjs            the table
 //   node doctor.cjs --json     the report DOCK takes
 //   node doctor.cjs --push     the table, then the report to DOCK's /doctor route (dock-push config)
-// Checks: rtk, ffmpeg, ffprobe, dock-config, passEnv, hooks, playwright, chromium, s3-demo, demo-video, elevenlabs, node, python.
+// Checks: rtk, ffmpeg, ffprobe, dock-config, passEnv, hooks, playwright, chromium, s3-demo, demo-video, elevenlabs, node, python, and a WARN
+// per agent file without a hooks block.
 // A check with warn: true is not a failure (shown as WARN).
 const fs = require("fs");
 const os = require("os");
@@ -66,6 +67,21 @@ function hooks(configDir) {
 	return { name: "hooks", ok: !missing.length && agents, detail: `${commands.length} hook commands${missing.length ? `; missing: ${missing.join(", ")}` : ""}${agents ? "; sous agents and sous-guard installed" : "; sous agents or sous-guard.cjs not installed"}` };
 }
 
+// One WARN per agent file without a hooks block: no sous-guard narrows what it may do. DOCK takes at most 40 checks, so past 20 one row sums up.
+function agentHooks(configDir) {
+	let names = [];
+	try { names = fs.readdirSync(path.join(configDir, "agents")).filter((f) => f.endsWith(".md")).sort(); } catch { return []; }
+	const bare = names.filter((f) => {
+		let text = "";
+		try { text = fs.readFileSync(path.join(configDir, "agents", f), "utf8").replace(/\r\n/g, "\n"); } catch {}
+		const head = /^---\n([\s\S]*?)\n---(\n|$)/.exec(text);
+		return !(head && /^hooks:/m.test(head[1]) && /^\s+command:/m.test(head[1]));
+	});
+	const rows = bare.slice(0, 20).map((f) => ({ name: `agent ${f.slice(0, -3)}`.slice(0, 40), ok: true, warn: true, detail: `agents/${f} has no hooks block; no sous-guard narrows its tools` }));
+	if (bare.length > 20) rows.push({ name: "agent hooks", ok: true, warn: true, detail: `${bare.length - 20} more agent files without a hooks block` });
+	return rows;
+}
+
 function chromium(env, home) {
 	const dirs = [env.PLAYWRIGHT_BROWSERS_PATH, path.join(home, "AppData", "Local", "ms-playwright"), path.join(home, ".cache", "ms-playwright"), path.join(home, "Library", "Caches", "ms-playwright")].filter(Boolean);
 	for (const d of dirs) {
@@ -122,6 +138,7 @@ function report({ env = process.env, kitDir = PATHS.kitDir, configDir = PATHS.co
 		elevenlabs(kitDir, env, dock, elKey),
 		{ name: "node", ok: Number(process.versions.node.split(".")[0]) >= 20, detail: `v${process.versions.node}` },
 		{ ...python, name: "python" },
+		...agentHooks(configDir),
 	];
 	return { machine: os.hostname(), os: process.platform, at: new Date().toISOString(), kitVersion: kitVersion(kitDir), checks };
 }

@@ -27,6 +27,7 @@ const guardLib = require("./guard.cjs");
 const procLib = require("./dock-chat-proc.cjs");
 const preflight = require("./dock-chat-preflight.cjs");
 const outbox = require("./dock-chat-outbox.cjs");
+const agentsLib = require("./agents.cjs");
 const PATHS = require("./paths.cjs").resolvePaths();
 
 const STATE_DIR = process.env.DOCK_KIT_STATE_DIR || __dirname;
@@ -653,7 +654,9 @@ function buildCaps(opts, flags) {
 		if (cat && cat.fast.available) features.push("fast");
 		if (flags.replayUser) features.push("steer");
 	}
-	return { v: 2, kit: KIT_ID, claude: bridgeMemo.claudeVersion, features, modes: features.length ? [...interact.MODES] : [], catalogHash: cat ? cat.hash : null };
+	const modes = features.length ? [...interact.MODES] : [];
+	features.push("agents");
+	return { v: 2, kit: KIT_ID, claude: bridgeMemo.claudeVersion, features, modes, catalogHash: cat ? cat.hash : null };
 }
 
 async function precheckWait(msg, caps, gapMs) {
@@ -851,7 +854,25 @@ async function claimOne(wait, caps) {
 	if (caps && Array.isArray(caps.features) && caps.features.length) body.caps = caps;
 	const r = await call("/chat/claim", body, (wait + 10) * 1000);
 	// DOCK wraps every ingest answer as { ok, result }.
-	return { ...r, message: r.result ? r.result.message : r.message, wantCatalog: Boolean(r.result && r.result.wantCatalog), wantDoctor: Boolean(r.result && r.result.wantDoctor) };
+	return { ...r, message: r.result ? r.result.message : r.message, wantCatalog: Boolean(r.result && r.result.wantCatalog), wantDoctor: Boolean(r.result && r.result.wantDoctor), agentJobs: r.result && Array.isArray(r.result.agentJobs) ? r.result.agentJobs.slice(0, 8) : [] };
+}
+
+// DOCK's agent library jobs (kit/agents.cjs), in order and outside the turn pool. Each job answers { id, result } or { id, error }.
+let agentJobsRun = Promise.resolve();
+function runAgentJobs(jobs, opts) {
+	agentJobsRun = agentJobsRun.then(async () => {
+		for (const job of jobs) {
+			if (!job || typeof job.id !== "string") continue;
+			let body;
+			try { body = { id: job.id, result: agentsLib.createAgents({ configDir: opts.configDir || PATHS.configDir }).run(job.op, job.input) }; }
+			catch (e) { body = { id: job.id, error: String((e && e.message) || e).slice(0, 500) }; }
+			try {
+				const r = await call("/chat/agents/result", body, 15000);
+				if (r.status !== 200) log(`agent job ${safeId(job.id)}: DOCK answered ${r.status}`);
+			} catch (e) { log(`agent job ${safeId(job.id)}: ${e.message}`); }
+		}
+	}).catch((e) => log(`agent jobs: ${e.message}`));
+	return agentJobsRun;
 }
 
 async function main(cmd, args) {
@@ -906,6 +927,10 @@ async function main(cmd, args) {
 			backoff = 0;
 			if (r.wantCatalog && bridgeMemo.catalog) await catalogLib.publishCatalog(bridgeMemo.catalog, call);
 			if (r.wantDoctor) runDoctor("asked from DOCK");
+			if (r.agentJobs.length) {
+				const done = runAgentJobs(r.agentJobs, opts);
+				if (cmd === "once") await done;
+			}
 			if (r.message && r.message.id != null) {
 				log(`message ${safeId(r.message.id)} for session ${safeId(r.message.sessionId)}`);
 				if (cmd === "once") await handle(r.message);
