@@ -2,7 +2,8 @@
 //   node doctor.cjs            the table
 //   node doctor.cjs --json     the report DOCK takes
 //   node doctor.cjs --push     the table, then the report to DOCK's /doctor route (dock-push config)
-// Checks: rtk, ffmpeg, ffprobe, dock-config, passEnv, hooks, playwright, chromium, s3-demo, node, python.
+// Checks: rtk, ffmpeg, ffprobe, dock-config, passEnv, hooks, playwright, chromium, s3-demo, demo-video, elevenlabs, node, python.
+// A check with warn: true is not a failure (shown as WARN).
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -83,7 +84,28 @@ function s3Demo(kitDir, dock) {
 	return { name: "s3-demo", ok, detail: ok ? "demo-upload.cjs present; the upload goes through DOCK /demo-video, which holds the bucket" : `${script ? "" : "demo-upload.cjs missing; "}${dock.ok ? "" : "DOCK not configured, so no upload"}`.replace(/; $/, "") };
 }
 
-function report({ env = process.env, kitDir = PATHS.kitDir, configDir = PATHS.configDir, home = os.homedir(), probe = tool } = {}) {
+function demoSkill(root, configDir) {
+	const found = [path.join(root, ".claude", "skills", "demo-video"), path.join(configDir, "skills", "demo-video")].find((d) => fs.existsSync(path.join(d, "SKILL.md")));
+	return found ? { name: "demo-video", ok: true, detail: `skill at ${found.replace(/\\/g, "/")}` } : { name: "demo-video", ok: false, detail: `no demo-video/SKILL.md under ${root}/.claude/skills or ${configDir}/skills`.replace(/\\/g, "/") };
+}
+
+// Asks el-rotate.cjs for the next key in a child and keeps only whether one came back; the key never leaves this function.
+function elKeyOf(kitDir, env) {
+	try {
+		const out = execFileSync(process.execPath, [path.join(kitDir, "el-rotate.cjs"), "get"], { encoding: "utf8", timeout: 20000, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, env });
+		return { ok: out.trim().length > 0, error: "no key returned" };
+	} catch (e) {
+		return { ok: false, error: String(e.stderr || e.message || "").trim().split(/\r?\n/)[0] };
+	}
+}
+
+function elevenlabs(kitDir, env, dock, elKey) {
+	if (!dock.ok) return { name: "elevenlabs", ok: true, warn: true, detail: "DOCK not configured; the ElevenLabs keys live in DOCK" };
+	const r = elKey(kitDir, env);
+	return { name: "elevenlabs", ok: r.ok, detail: r.ok ? "el-rotate.cjs get gives a key" : `el-rotate.cjs get: ${r.error}` };
+}
+
+function report({ env = process.env, kitDir = PATHS.kitDir, configDir = PATHS.configDir, root = PATHS.root, home = os.homedir(), probe = tool, elKey = elKeyOf } = {}) {
 	const dock = dockConfig(kitDir, env);
 	const python = process.platform === "win32" ? probe("python") : probe("python3");
 	const checks = [
@@ -96,6 +118,8 @@ function report({ env = process.env, kitDir = PATHS.kitDir, configDir = PATHS.co
 		{ ...probe("playwright-cli"), name: "playwright" },
 		chromium(env, home),
 		s3Demo(kitDir, dock),
+		demoSkill(root, configDir),
+		elevenlabs(kitDir, env, dock, elKey),
 		{ name: "node", ok: Number(process.versions.node.split(".")[0]) >= 20, detail: `v${process.versions.node}` },
 		{ ...python, name: "python" },
 	];
@@ -103,7 +127,7 @@ function report({ env = process.env, kitDir = PATHS.kitDir, configDir = PATHS.co
 }
 
 function table(r) {
-	const rows = r.checks.map((c) => `| ${c.name} | ${c.ok ? "ok" : "FAIL"} | ${String(c.detail).replace(/\|/g, "\\|")} |`);
+	const rows = r.checks.map((c) => `| ${c.name} | ${c.warn ? "WARN" : c.ok ? "ok" : "FAIL"} | ${String(c.detail).replace(/\|/g, "\\|")} |`);
 	return [`doctor ${r.machine} (${r.os}) kit ${r.kitVersion}`, "| Check | State | Detail |", "|---|---|---|", ...rows].join("\n");
 }
 

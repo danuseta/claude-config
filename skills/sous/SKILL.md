@@ -20,7 +20,7 @@ Take `kitDir` as `K`, `root` as `ROOT`, `evidence` as `EVIDENCE`, `configDir`. T
 
 | Board | Key | Runner (`subagent_type`) | It dispatches |
 |---|---|---|---|
-| Jira ticket | `QRD-<n>` | `sous-ticket-runner` | `sous-intake`, `sous-planner`, `sous-explorer`, `sous-ticket-worker`, `sous-reviewer`, `sous-verifier`, `sous-arbiter`, `browser-verifier`, `sous-publisher`, `sous-jira` |
+| Jira ticket | `QRD-<n>` | `sous-ticket-runner` | `sous-intake`, `sous-planner`, `sous-explorer`, `sous-ticket-worker`, `sous-reviewer`, `sous-verifier`, `sous-arbiter`, `browser-verifier` (dry-run), `sous-video`, `sous-publisher`, `sous-jira` |
 | Review of a teammate's PR | the reviewed `QRD-<n>`, `kind=review` | `sous-review-runner` | `sous-pr-reviewer`, `sous-explorer`, `browser-verifier` |
 | Free form | `CARD-<slug>` (prefix upper case, slug lower case `a-z0-9-`, at most 64), `kind=card` | `sous-work-runner` | `sous-analyst`, `sous-verifier`, `sous-explorer`, `sous-jira` |
 

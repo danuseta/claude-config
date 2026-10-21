@@ -13,6 +13,11 @@
 //                                          127.0.0.1 only, the kit's status.cjs, paths.cjs, login-state.cjs and stack.sh, read-only file
 //                                          commands, mkdir and ffmpeg/ffprobe under a root; no network tools, git, gh, kill, env, nested
 //                                          shells, and no .env, .ssh, .claude or .config path
+//   sous-guard.cjs video <root>...         Bash for sous-video: [cd <@video> &&] npm i|ci and npx remotion|tsc inside the ticket's video
+//                                          folder, node on a script there or in the demo-video skill, python on the skill's scripts (with
+//                                          ELEVENLABS_API_KEY="$(node K/el-rotate.cjs get)" as the only substitution), el-rotate.cjs park,
+//                                          login-state.cjs, cp/rm into the folder, what `browser` allows for playwright-cli, mkdir and
+//                                          ffmpeg/ffprobe inside the folder, read-only file commands; nothing else
 //   sous-guard.cjs publish                 Bash for sous-publisher: git inside a worktree, add per path, commit -m, push of the current
 //                                          feat|fix/<KEY>-... branch, gh pr create|list|view; never add -A or ., never develop/main/master.
 //                                          gh pr create only on this machine's BE or FE repo, with a base from paths.cjs bases or the
@@ -20,7 +25,8 @@
 //   sous-guard.cjs jira [--record]         createJiraIssue / editJiraIssue for sous-jira: project QRD, label sous, content fields only, edits
 //                                          only on tickets sous-jira created (the PostToolUse --record call keeps that list), label kept
 // Roots: @wt (every <root>/wt-* worktree), @root, @evidence, @board (<evidence>/blackboard), @shots (<root>/<MMDD> screenshot folders),
-// @config (only kit/, skills/, agents/ and rules/ of the config dir). Values come from paths.cjs.
+// @config (only kit/, skills/, agents/ and rules/ of the config dir), @video (<root>/../qonflo-out/<MMDD>/<KEY>, a ticket's demo
+// video folder), @skill (the demo-video skill: <root>/.claude/skills/demo-video or <config>/skills/demo-video). Values come from paths.cjs.
 // Answers like guard.cjs: a deny JSON on stdout, nothing when allowed. A guard that cannot read its input denies.
 // SOUS_GUARD_NOLOG=1 keeps a deny out of kit/guard.log (tests).
 // Test: echo '{"tool_name":"Write","tool_input":{"file_path":"E:/qonflo/wt-1-be/package.json"}}' | node sous-guard.cjs path @wt
@@ -31,7 +37,7 @@ const { resolvePaths } = require("./paths.cjs");
 const PROTECTED = [/(^|\/)\.git(\/|$)/, /(^|\/)\.husky(\/|$)/, /(^|\/)\.github(\/|$)/, /(^|\/)\.claude(\/|$)/, /(^|\/)node_modules(\/|$)/, /(^|\/)\.env[^/]*$/, /(^|\/)\.npmrc$/, /(^|\/)\.nvmrc$/, /(^|\/)package\.json$/, /(^|\/)package-lock\.json$/, /(^|\/)pnpm-lock\.yaml$/, /(^|\/)yarn\.lock$/, /(^|\/)CLAUDE\.md$/i, /(^|\/)AGENTS\.md$/i];
 const SECRETS = [/(^|\/)\.env(?!\.example$)[^/]*$/, /(^|\/)\.npmrc$/, /(^|\/)\.ssh(\/|$)/, /(^|\/)id_[^/]*$/, /(^|\/)\.credentials\.json$/, /(^|\/)\.git-credentials$/, /\.pem$/, /\.key$/, /(^|\/)secrets?\.(env|local\.json)$/, /(^|\/)\.netrc$/, /(^|\/)dock(-chat)?\.json$/, /(^|\/)elevenlabs-keys\.json$/];
 const GENERATED = /^[^/]+\/((tickets\/[^/]+\/)?(status|decisions|issues|NOW)|EPIC)\.md$/i;
-const AGENTS = new Set(["sous-intake", "sous-planner","sous-ticket-worker", "sous-reviewer", "sous-verifier", "sous-arbiter", "sous-publisher", "sous-analyst", "sous-pr-reviewer", "sous-explorer", "sous-jira", "browser-verifier"]);
+const AGENTS = new Set(["sous-intake", "sous-planner","sous-ticket-worker", "sous-reviewer", "sous-verifier", "sous-arbiter", "sous-publisher", "sous-analyst", "sous-pr-reviewer", "sous-explorer", "sous-jira", "sous-video", "browser-verifier"]);
 const READ_CMDS = new Set(["ls", "cat", "head", "tail", "wc", "grep", "rg", "find", "stat", "du", "diff", "read", "tree"]);
 const FIND_DENY = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls", "-L", "-follow"]);
 const GIT_READ = new Set(["status", "diff", "log", "show", "rev-parse", "merge-base", "ls-files", "blame"]);
@@ -51,6 +57,9 @@ const BROWSER_DENY = new Set(["git", "gh", "curl", "wget", "ssh", "scp", "rsync"
 const BROWSER_KIT = new Set(["status.cjs", "paths.cjs", "login-state.cjs", "stack.sh"]);
 const PROTECTED_TEXT = /(^|[\\/=])\.(env|ssh|claude|bashrc|profile|config)([^A-Za-z0-9]|$)/i;
 const LOCAL_URL = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?([/?#]|$)/i;
+const VIDEO_DELEGATE = new Set(["playwright-cli", "ffmpeg", "ffprobe", "mkdir"]);
+const VIDEO_ENV = /^(NO_COLOR|FORCE_COLOR|CI|npm_config_cache|DEMO_FE|DEMO_API|DEMO_PASSWORD_FILE)=/;
+const EL_KEY = /^ELEVENLABS_API_KEY="\$\(node ([^\s"'$`()]+) get\)" +/;
 
 function createSousGuard({ platform = process.platform, paths = resolvePaths(), cwd = process.cwd(), ledgerFile = path.join(__dirname, "sous-jira-created.log") } = {}) {
 	const win = platform === "win32";
@@ -68,6 +77,8 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 	const configRoots = [...new Set([norm(paths.kitDir), ...CONFIG_READ.map((d) => norm(`${paths.configDir}/${d}`))])];
 	const board = named["@board"];
 	const kit = norm(paths.kitDir);
+	const videoBase = norm(`${paths.root}/../qonflo-out`);
+	const skillRoots = [...new Set([norm(`${paths.root}/.claude/skills/demo-video`), norm(`${paths.configDir}/skills/demo-video`)])];
 	const inside = (p, r) => p === r || p.startsWith(r + "/");
 	// The root a path falls under, or null. @wt is the worktree folder itself: <root>/wt-<name>.
 	const rootOf = (p, roots) => {
@@ -75,9 +86,12 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 			if (r === "@wt" || r === "@shots") {
 				const m = inside(p, root) ? p.slice(root.length + 1).split("/")[0] : "";
 				if (r === "@wt" ? /^wt-[^/]+$/.test(m) : /^\d{4}$/.test(m)) return `${root}/${m}`;
-			} else if (r === "@config") {
-				const c = configRoots.find((x) => inside(p, x));
+			} else if (r === "@config" || r === "@skill") {
+				const c = (r === "@config" ? configRoots : skillRoots).find((x) => inside(p, x));
 				if (c) return c;
+			} else if (r === "@video") {
+				const [day, key] = inside(p, videoBase) ? p.slice(videoBase.length + 1).split("/") : [];
+				if (/^\d{4}$/.test(day || "") && /^[A-Z][A-Z0-9]*-\d+$/i.test(key || "")) return `${videoBase}/${day}/${key}`;
 			} else if (named[r] && inside(p, named[r])) return named[r];
 			else if (!named[r] && !r.startsWith("@") && inside(p, norm(r))) return norm(r);
 		}
@@ -298,6 +312,101 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 		return `${prog} is not allowed for the browser verifier: playwright-cli, the kit's ledger, login and stack scripts, read-only file commands, mkdir and ffmpeg`;
 	}
 
+	// sous-video: the demo-video skill's pipeline inside one ticket's video folder (@video). Writes land only there.
+	function checkVideo(cmd, roots) {
+		let rest = cmd;
+		let here = cwd;
+		const cd = /^\s*cd\s+("[^"$`]*"|'[^']*'|[^\s;&|<>()`$]+)\s*&&\s*/.exec(cmd);
+		if (cd) {
+			here = split(cd[1])[0];
+			if (!rootOf(norm(here), ["@video"])) return `cd only into the ticket's video folder (${paths.root}/../qonflo-out/<MMDD>/<KEY>)`;
+			rest = cmd.slice(cd[0].length);
+		}
+		const el = EL_KEY.exec(rest);
+		if (el) {
+			if (norm(el[1], here) !== `${kit}/el-rotate.cjs`) return "ELEVENLABS_API_KEY only comes from the kit's el-rotate.cjs get";
+			rest = rest.slice(el[0].length);
+		}
+		const bad = simple(rest);
+		if (bad) return bad;
+		const w = words(rest);
+		if (w[0] === "timeout" && /^\d+[smh]?$/.test(w[1] || "")) w.splice(0, 2);
+		while (w[0] === "rtk" || w[0] === "proxy") w.shift();
+		const envs = [];
+		while (w.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(w[0])) envs.push(w.shift());
+		if (!w.length) return "empty command";
+		const prog = fwd(w[0]).split("/").pop();
+		const args = w.slice(1);
+		const pathy = (v) => /[\\/]/.test(v) || /^~/.test(v);
+		const under = (v, rs) => rootOf(norm(v, here), rs);
+		const skillScript = (f) => skillRoots.some((r) => inside(f, `${r}/scripts`));
+		const outside = (list, rs) => list.find((a) => {
+			const v = a.startsWith("-") ? (a.includes("=") ? a.slice(a.indexOf("=") + 1) : "") : a;
+			return v && (pathy(v) || fs.existsSync(P.resolve(fwd(here), v))) && (!under(v, rs) || secret(norm(v, here)));
+		});
+		if (BROWSER_DENY.has(prog)) return `${prog} is not allowed for sous-video`;
+		for (const a of [...envs, ...w]) {
+			const v = /^-[^=]*=/.test(a) || /^[A-Za-z_.]+=/.test(a) ? a.slice(a.indexOf("=") + 1) : a;
+			if (PROTECTED_TEXT.test(v) && !(pathy(v) && (inside(norm(v, here), kit) || under(v, ["@skill"])))) return `${v} touches a protected path (.env, .ssh, .claude, .config)`;
+		}
+		for (const e of envs) {
+			const name = e.slice(0, e.indexOf("="));
+			const v = e.slice(e.indexOf("=") + 1);
+			if (!VIDEO_ENV.test(e)) return `${name}= is not allowed here`;
+			if (/^DEMO_(FE|API)$/.test(name) && !LOCAL_URL.test(v)) return `${name} must be a localhost or 127.0.0.1 URL`;
+			if (name === "npm_config_cache" && !under(v, ["@video"])) return "npm_config_cache goes inside the video folder";
+		}
+		const py = /^(python3?|py)$/.test(prog);
+		if (el && !py) return "ELEVENLABS_API_KEY goes only to the skill's tts.py and align.py";
+		if (VIDEO_DELEGATE.has(prog)) return envs.length || el ? `${prog} takes no variables here` : checkBrowser(cmd, ["@video"]);
+		if (READ_CMDS.has(prog)) return envs.length ? `${prog} takes no variables here` : checkRead(w, roots);
+		if (prog === "node") {
+			const [file, sub, ...more] = args;
+			if (!file || file.startsWith("-")) return "node runs a script file only: no flags, inline code or preloads";
+			const f = norm(file, here);
+			if (f === `${kit}/el-rotate.cjs`) {
+				if (sub === "park" && more.length <= 1 && more.every((a) => /^\d+$/.test(a))) return null;
+				return sub === "get" ? `el-rotate.cjs get prints the key: use it only as ELEVENLABS_API_KEY="$(node ${paths.kitDir}/el-rotate.cjs get)" python <skill script>` : "el-rotate.cjs: only get (inside ELEVENLABS_API_KEY=...) and park";
+			}
+			if (f === `${kit}/login-state.cjs`) return /^\d+$/.test(sub || "") && !more.length ? null : "login-state.cjs takes the FE port only";
+			if (!/\.[cm]?js$/.test(f) || !(rootOf(f, ["@video"]) || skillScript(f))) return `node runs scripts inside the video folder or the demo-video skill's scripts only, not ${file}`;
+			const o = outside(args.slice(1), ["@video"]);
+			return o ? `node: ${o} is outside the video folder` : null;
+		}
+		if (py) {
+			const [file] = args;
+			if (!file || file.startsWith("-") || !/\.py$/i.test(file) || !skillScript(norm(file, here))) return "python runs the demo-video skill's scripts only, with no flag before the script";
+			if (el && !/\/(tts|align)\.py$/.test(norm(file, here))) return "ELEVENLABS_API_KEY goes only to the skill's tts.py and align.py";
+			const o = outside(args.slice(1), ["@video"]);
+			return o ? `python: ${o} is outside the video folder` : null;
+		}
+		if (prog === "npm" || prog === "npx") {
+			if (!rootOf(norm(here), ["@video"])) return `${prog} runs inside the video folder only: cd <video folder> && ${prog} ...`;
+			if (prog === "npm") {
+				const pos = args.filter((a) => !a.startsWith("-"));
+				if (!/^(i|install|ci)$/.test(pos[0] || "") || pos.length > 1) return "npm: only npm i or npm ci of the copied template, no package named";
+				const flag = args.find((a) => a.startsWith("-") && !/^--(no-audit|no-fund|prefer-offline|silent)$/.test(a));
+				return flag ? `npm ${flag} is not allowed` : null;
+			}
+			if (!(args[0] === "tsc" || (args[0] === "remotion" && /^(render|still|compositions)$/.test(args[1] || "")))) return "npx runs only remotion render|still|compositions and tsc of the installed template, without installing a package";
+			const o = outside(args.slice(1), ["@video"]);
+			return o ? `npx: ${o} is outside the video folder` : null;
+		}
+		if (prog === "cp" || prog === "rm") {
+			if (envs.length) return `${prog} takes no variables here`;
+			const flags = args.filter((a) => a.startsWith("-"));
+			const files = args.filter((a) => !a.startsWith("-"));
+			if (flags.some((f) => !(prog === "cp" ? /^-[rRfp]+$/ : /^-[rRf]+$/).test(f))) return `${prog} takes ${prog === "cp" ? "-r -f -p" : "-r -f"} only`;
+			if (!files.length || (prog === "cp" && files.length < 2)) return `${prog} needs its paths`;
+			const writes = prog === "cp" ? [files.pop()] : files;
+			const out = writes.find((f) => !under(f, ["@video"]));
+			if (out) return `${prog}: ${out} is outside the video folder`;
+			const src = files.find((f) => !under(f, roots) || secret(norm(f, here)));
+			return prog === "cp" && src ? `cp: ${src} is outside the folders this agent may read` : null;
+		}
+		return `${prog} is not allowed for sous-video: npm i|ci and npx remotion|tsc in the video folder, node and python on the skill's scripts, el-rotate.cjs park, login-state.cjs, cp/rm into the folder, playwright-cli, mkdir, ffmpeg, ffprobe and read-only file commands`;
+	}
+
 	// The GitHub owner/name of this machine's BE and FE repos: paths.cjs `github`, else the origin remote of each repo folder.
 	let ghRepos;
 	const repoNames = () => {
@@ -433,6 +542,7 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 		}
 		if (mode === "verify") return tool === "Bash" ? checkVerify(String(ti.command || ""), roots) : null;
 		if (mode === "browser") return tool === "Bash" ? checkBrowser(String(ti.command || ""), roots) : null;
+		if (mode === "video") return tool === "Bash" ? checkVideo(String(ti.command || ""), roots) : null;
 		if (mode === "publish") return tool === "Bash" ? checkPublish(String(ti.command || "")) : null;
 		if (mode === "jira") return checkJira(tool, ti);
 		return `unknown guard mode ${mode}`;

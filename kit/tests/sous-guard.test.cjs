@@ -100,7 +100,7 @@ test('bash guard: one read-only command under the roots', () => {
 test('runner guard: sous agents and browser-verifier only; kit scripts by their installed path', () => {
   const g = winGuard();
   const roots = ['@root', '@evidence', '@config'];
-  for (const t of ['sous-intake', 'sous-planner', 'sous-ticket-worker', 'sous-reviewer', 'sous-verifier', 'sous-arbiter', 'sous-publisher', 'sous-explorer', 'sous-jira', 'browser-verifier']) {
+  for (const t of ['sous-intake', 'sous-planner', 'sous-ticket-worker', 'sous-reviewer', 'sous-verifier', 'sous-arbiter', 'sous-publisher', 'sous-explorer', 'sous-jira', 'sous-video', 'browser-verifier']) {
     assert.equal(g.check('runner', roots, { tool_name: 'Agent', tool_input: { subagent_type: t } }), null, t);
   }
   assert.match(g.check('runner', roots, { tool_name: 'Agent', tool_input: { subagent_type: 'sous-ticket-worker', run_in_background: true } }), /no background agents/, 'QRD-1346: background workers died with the turn');
@@ -243,6 +243,43 @@ test('browser guard: playwright-cli on localhost only, the kit ledger and login 
   }
 });
 
+test('video guard: the demo-video pipeline inside the ticket video folder only', () => {
+  for (const [g, R, K, V] of [[winGuard(), 'E:/qonflo', 'C:/Users/danus/.claude-kantor/kit', 'E:/qonflo-out/1021/QRD-1346'], [linuxGuard(), '/home/coder/projects', '/home/coder/.claude/kit', '/home/coder/qonflo-out/1021/QRD-1346']]) {
+    const roots = ['@video', '@skill', '@wt', '@evidence', '@config'];
+    const v = (c) => g.check('video', roots, bash(c));
+    const S = `${R}/.claude/skills/demo-video`;
+    for (const c of [
+      `cd ${V}/video && npx remotion render Demo out/demo.mp4 --codec=h264 --crf=16 --concurrency=2`, `cd ${V}/video && npx remotion still Demo out/f.png --frame=120`, `cd ${V}/video && npx tsc --noEmit`,
+      `cd ${V}/video && npm i`, `cd ${V}/video && npm_config_cache=${V}/.npm-cache npm ci --no-audit`,
+      `cp -r ${S}/remotion ${V}/video`, `cp ${V}/recording.mp4 ${V}/video/public/`, `cp ${V}/demo.json ${V}/video/src/demo.json`, `rm -rf ${V}/video/node_modules`,
+      `python ${S}/scripts/tts.py ${V}/scenario.json --say`, `python3 ${S}/scripts/tts.py ${V}/scenario.json --test "Baru pas di-Save, servernya nolak."`,
+      `ELEVENLABS_API_KEY="$(node ${K}/el-rotate.cjs get)" python3 ${S}/scripts/tts.py ${V}/scenario.json`,
+      `ELEVENLABS_API_KEY="$(node ${K}/el-rotate.cjs get)" python ${S}/scripts/align.py ${V}/audio.json ${V}/audio ${V}/words.json`,
+      `node ${S}/scripts/record.cjs ${V}/scenario.json`, `DEMO_FE=http://localhost:5287 node ${V}/record-api.cjs ${V}/scenario.json`, `node ${K}/el-rotate.cjs park`, `node ${K}/login-state.cjs 5287`,
+      `playwright-cli -s=QRD-1346 open http://localhost:5287/ --config=${R}/.playwright/cli-5287.json`, `ffprobe ${V}/video/out/demo.mp4`, `mkdir -p ${V}/audio`,
+      `rtk read ${S}/SKILL.md`, `cat ${R}/.evidence/QRD-1346/scripts/ac-1.js`, `ls ${V}/video/out`,
+    ]) assert.equal(v(c), null, c);
+    const denied = {
+      'curl https://example.com': /not allowed for sous-video/, [`git -C ${R}/wt-1-fe push origin feat/QRD-1346-x`]: /not allowed for sous-video/, 'gh pr list': /not allowed/, 'ssh host': /not allowed/, 'env': /not allowed/, 'bash -c ls': /not allowed/,
+      'node /tmp/x.js': /video folder or the demo-video skill/, 'node -e 1': /no flags/, [`node ${K}/el-rotate.cjs get`]: /prints the key/, [`node ${K}/status.cjs show QRD-1346`]: /video folder or the demo-video skill/,
+      'rm -rf /tmp/x': /outside the video folder/, [`rm -rf ${R}/wt-1-fe`]: /outside the video folder/, [`cp ${V}/a.mp4 /tmp/a.mp4`]: /outside the video folder/, [`cp /etc/passwd ${V}/p`]: /outside the folders/,
+      [`cd ${R}/wt-1-fe && npm i`]: /cd only into/, 'npm i': /inside the video folder only/, [`cd ${V}/video && npm i left-pad`]: /no package named/, [`cd ${V}/video && npx -y cowsay`]: /npx runs only/, [`cd ${V}/video && npx remotion render Demo /tmp/out.mp4`]: /outside the video folder/,
+      [`cd ${V}/video && npm run dev`]: /only npm i or npm ci/, [`python -c "import os" ${S}/scripts/tts.py`]: /skill's scripts only/, [`python ${V}/x.py`]: /skill's scripts only/,
+      [`ELEVENLABS_API_KEY="$(node ${K}/el-rotate.cjs get)" node ${V}/x.cjs`]: /only to the skill's tts.py and align.py/, [`ELEVENLABS_API_KEY="$(node /tmp/el-rotate.cjs get)" python ${S}/scripts/tts.py ${V}/s.json`]: /only comes from the kit/,
+      [`ELEVENLABS_API_KEY="$(cat ${K}/x)" python ${S}/scripts/tts.py ${V}/s.json`]: /\$ and backticks/, [`python ${S}/scripts/tts.py ${V}/s.json | tee x`]: /operator/,
+      'playwright-cli open https://example.com': /only opens localhost/, 'DEMO_FE=https://evil.io node x.cjs': /localhost/, [`NODE_OPTIONS=--require=x node ${V}/a.cjs`]: /not allowed here/, [`cat ${R}/wt-1-be/.env`]: /protected path|secret/,
+      [`ffmpeg -i ${V}/a.webm /tmp/a.mp4`]: /outside/, 'mkdir -p /tmp/x': /outside/,
+    };
+    for (const [c, why] of Object.entries(denied)) assert.match(v(c) || '', why, c);
+    assert.equal(g.check('video', roots, read('/etc/passwd')), null, 'video mode checks Bash only');
+    assert.equal(g.check('path', ['@video', '@evidence'], write(`${V}/scenario.json`)), null);
+    assert.equal(g.check('path', ['@video', '@evidence'], write(`${V}/video/src/demo.json`)), null);
+    assert.match(g.check('path', ['@video', '@evidence'], write(`${V}/video/package.json`)) || '', /protected/);
+    assert.match(g.check('path', ['@video', '@evidence'], write(`${R}/../qonflo-out/1021/notes.md`)) || '', /outside/);
+    assert.equal(g.check('path', ['--read', '@video', '@skill'], read(`${S}/scripts/record.cjs`)), null);
+  }
+});
+
 test('the hook command answers deny JSON, fails closed on bad input, and every sous agent wires it', async () => {
   const deny = (r) => JSON.parse(r.stdout).hookSpecificOutput.permissionDecision;
   let r = await runNode([path.join(KIT, 'sous-guard.cjs'), 'path', '@wt'], { input: JSON.stringify(write('E:\\qonflo\\wt-1-be\\package.json')), env: { QONFLO_ROOT: 'E:/qonflo', SOUS_GUARD_NOLOG: '1' } });
@@ -254,8 +291,8 @@ test('the hook command answers deny JSON, fails closed on bad input, and every s
 
   const agents = path.join(KIT, '..', 'agents');
   const files = fs.readdirSync(agents).filter((f) => f.startsWith('sous-') || f === 'browser-verifier.md');
-  assert.equal(files.length, 15);
-  const form = /^ {10}command: '"\$\{CLAUDE_CONFIG_DIR:-\$HOME\/\.claude\}\/kit\/bin\/kit-node" sous-guard\.cjs (path|bash|runner|publish|jira|verify|browser)( [^']*)?'$/;
+  assert.equal(files.length, 16);
+  const form = /^ {10}command: '"\$\{CLAUDE_CONFIG_DIR:-\$HOME\/\.claude\}\/kit\/bin\/kit-node" sous-guard\.cjs (path|bash|runner|publish|jira|verify|browser|video)( [^']*)?'$/;
   for (const f of files) {
     const text = fs.readFileSync(path.join(agents, f), 'utf8');
     const head = text.split('\n---\n')[0];
