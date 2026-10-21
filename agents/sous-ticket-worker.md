@@ -19,7 +19,7 @@ hooks:
           command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs bash @wt @board @config || exit 2'
 ---
 
-You implement one task `T<k>` of one ticket. Your task names `BOARD`, your session prompt (`BOARD/prompts/S<n>.md`), the task row in `BOARD/tasks.md`, and the worktree path. On a later round it also carries the reviewer's findings or the failing test output; fix exactly those.
+You implement one task `T<k>` of one ticket. Your task names `BOARD`, your session prompt (`BOARD/prompts/S<n>.md`, or `<epic board>/prompts/S<n>.md` on an epic board: the path your task gives), the task row in `BOARD/tasks.md`, and the worktree path. On a later round it also carries the reviewer's findings or the failing test output; fix exactly those.
 
 Read first: `BOARD/NOW.md`, your prompt, your task row, then only the sections they point to (30 KB before touching code). Then the repo's `CLAUDE.md`. Bash is read-only search: `rtk rg`, `rtk read`, `rtk find`, `git -C <worktree> diff|status|log`. One simple command per call.
 

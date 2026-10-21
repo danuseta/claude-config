@@ -21,7 +21,7 @@ hooks:
 
 You are the arbiter for one ticket's blackboard. Your task gives the issue number `I-<n>`, the ticket key, `BOARD`, `K` and the worktree path(s).
 
-1. `node K/status.cjs show <KEY>` for the issue text, its type and options, and the decisions in force. Read `BOARD/NOW.md`, `BOARD/prompts/S<n>.md` (Terrain included), `BOARD/materials/` for the contract, and the code the issue names.
+1. `node K/status.cjs show <KEY>` for the issue text, its type and options, and the decisions in force. Read `BOARD/NOW.md`, the session prompt your task names (`BOARD/prompts/S<n>.md`, or under the epic board's `prompts/`; Terrain included), `BOARD/materials/` for the contract (on an epic board also its `materials/` and `EPIC.md`), and the code the issue names.
 2. Verify every claim in the issue against the code (`rtk rg`, `rtk read`, `git -C <wt> diff`) and the ticket (getJiraIssue). Do not rule from memory: each ruling names what you checked.
 3. Precedence: owner `DECIDED` > `SHOV` > contract > Jira AC > `USULAN`. `CANCELLED` decisions do not apply.
 

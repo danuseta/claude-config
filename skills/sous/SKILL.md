@@ -14,7 +14,7 @@ Tone: the kitchen theme is only for talking with the owner. Everything other peo
 ```
 node "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/paths.cjs" --print
 ```
-Take `kitDir` as `K`, `root` as `ROOT`, `evidence` as `EVIDENCE`, `configDir`. The blackboard of a key is `EVIDENCE/blackboard/<KEY>`. Every runner prompt carries these four values as literal paths: runners cannot expand variables.
+Take `kitDir` as `K`, `root` as `ROOT`, `evidence` as `EVIDENCE`, `configDir`. The blackboard of a key is the ledger's `blackboard`: `EVIDENCE/blackboard/<KEY>`, or `EVIDENCE/blackboard/<EPIC>/tickets/<KEY>` when the ledger has `board=<EPIC>`; then `epicBoard` is the epic root with the shared `materials/`, `prompts/S<n>.md` and `EPIC.md`. Every runner prompt carries these four values as literal paths: runners cannot expand variables.
 
 ## 1. Three boards
 
@@ -45,7 +45,7 @@ Read the first prompt of the session:
 1. Contract and readiness are the runner's job (its `sous-intake` reads the Jira custom fields and applies `rules/ticket-contract.md` before the planner maps the terrain). You only check: `node K/status.cjs show <KEY>`. A ledger at `pr` or `done`, or waiting on the owner, is reported, not restarted. A ledger made by the old orchestrate flow (no `engine`) is continued from its stage: tell the runner the stage.
 2. **Stacked ticket.** The prompt says `Stack on <PARENT>`, or the ticket depends on a ticket whose PR is open but not merged (its ledger has `pr.be` / `pr.fe`, or its Jira status is PR Review): `node K/status.cjs set <KEY> stackedOn=<PARENT>`. It reads the parent's open PRs with `gh pr view` and stores, per repo, the parent PR, its head branch and its base; a repo the parent has no open PR in keeps its normal base. It also clears an old `Blocked: prerequisite ...` waiting, so a ledger waiting only on that prerequisite is started, not reported. A REFUSED means the parent cannot carry a stack: the ticket stays blocked. A dependency that is merged (UAT CHECK, readyforproduction, done) needs no stack.
 3. `node K/status.cjs set <KEY> engine=sous` (makes `render` automatic: `NOW.md`, `status.md`, `decisions.md`, `issues.md` under the blackboard follow every ledger write).
-4. Dispatch `sous-ticket-runner` (model opus) with: key, `K`, `ROOT`, `EVIDENCE`, `configDir`, mode (cron / manual / continuation), the stack parent when there is one, and on a continuation the owner's answer or cancel note.
+4. Dispatch `sous-ticket-runner` (model opus) with: key, `K`, `ROOT`, `EVIDENCE`, `configDir`, mode (cron / manual / continuation), the stack parent when there is one, the board instruction when the prompt has one (`Board per epic <EPIC>` / `board=<EPIC>`, or per ticket; without one the runner puts every ticket that has an epic on the epic's board), and on a continuation the owner's answer or cancel note.
 5. Its return is one block. Relay it to the owner as a table; verify the deciding line yourself (`status.cjs show`, the PR URL) before repeating it.
 
 ## 4. Continuing from the blackboard
@@ -54,7 +54,7 @@ DOCK opens a NEW session for every owner action; it never resumes an old one. Th
 Pakai skill sous. Lanjutkan tiket <KEY> dari blackboard dan ledger (node $K/status.cjs show <KEY>), jangan mulai dari awal.
 Jawaban owner untuk I-<n>: <answer>       | or: Owner membatalkan D-<n>: <note> | or: Jawaban owner: <answer>
 ```
-1. Resolve `$K` from section 0. `node K/status.cjs show <KEY>`, then read `EVIDENCE/blackboard/<KEY>/NOW.md` and `prompts/S<n>.md`. For a ticket in an epic, also the `NOW.md` of the sibling tickets the prompt names: decisions there can bind this one.
+1. Resolve `$K` from section 0. `node K/status.cjs show <KEY>`, then read `NOW.md` in the ledger's `blackboard` and the ticket's `prompts/S<n>.md`. On an epic board (`epicBoard` set) the prompts are under `epicBoard/prompts/`; also read `epicBoard/EPIC.md` and the `tickets/<KEY>/NOW.md` of the sibling tickets: decisions there can bind this one.
 2. Record the owner's word before anything else:
    - Answer to `I-<n>`: `node K/status.cjs decide <KEY> "<answer, in the owner's words>" --status DECIDED --by owner --issue <n>`, then `node K/status.cjs issue <KEY> <n> resolve <D printed>`. That clears `waiting`.
    - Cancel of `D-<n>`: `node K/status.cjs decide <KEY> <n> cancel "<note>"`. Work built on `D-<n>` is now a finding: tell the runner which tasks it touches.

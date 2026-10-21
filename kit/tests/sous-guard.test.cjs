@@ -26,7 +26,8 @@ test('path guard: a worker writes inside a ticket worktree only, never the prote
     assert.match(g.check('path', ['@wt'], write(`${path.posix.dirname(wt)}/ms-admin-worker-backend/src/a.ts`)), /outside/);
     assert.match(g.check('path', ['@wt'], write(`${wt}/../wt-other/../../etc/passwd`)), /outside/);
     assert.equal(g.check('path', ['@board'], write(`${board}/QRD-1/prompts/S1.md`)), null);
-    for (const f of ['status.md', 'decisions.md', 'issues.md', 'NOW.md']) assert.match(g.check('path', ['@board'], write(`${board}/QRD-1/${f}`)), /generated from the ledger/, f);
+    for (const f of ['status.md', 'decisions.md', 'issues.md', 'NOW.md', 'EPIC.md', 'tickets/QRD-2/NOW.md', 'tickets/QRD-2/status.md']) assert.match(g.check('path', ['@board'], write(`${board}/QRD-1/${f}`)), /generated from the ledger/, f);
+    for (const f of ['tickets/QRD-2/ac.txt', 'tickets/QRD-2/tasks.md', 'prompts/S2.md', 'materials/contract.md']) assert.equal(g.check('path', ['@board'], write(`${board}/QRD-1/${f}`)), null, f);
     assert.match(g.check('path', ['@wt'], { tool_name: 'Write', tool_input: {} }), /no file path/);
   }
   const g = winGuard();
