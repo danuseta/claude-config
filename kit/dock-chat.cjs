@@ -100,6 +100,21 @@ function settings({ platform = process.platform, paths = PATHS, file: given } = 
 	};
 }
 
+// On a Coder workspace git reaches GitHub through `coder gitssh` and the coder askpass, both of which need CODER_AGENT_TOKEN, which a turn never
+// gets. Without this a fetch or push in a turn fails or waits on an external-auth URL; with it git uses HTTPS and the gh login instead.
+function gitOverGh(env) {
+	delete env.GIT_SSH_COMMAND;
+	if (/(^|[\\/])coder(\.exe)?$/.test(env.GIT_ASKPASS || "")) delete env.GIT_ASKPASS;
+	let n = Number(env.GIT_CONFIG_COUNT) || 0;
+	for (const [k, v] of [["url.https://github.com/.insteadOf", "git@github.com:"], ["url.https://github.com/.insteadOf", "ssh://git@github.com/"], ["credential.https://github.com.helper", ""], ["credential.https://github.com.helper", "!gh auth git-credential"]]) {
+		env[`GIT_CONFIG_KEY_${n}`] = k;
+		env[`GIT_CONFIG_VALUE_${n}`] = v;
+		n++;
+	}
+	env.GIT_CONFIG_COUNT = String(n);
+	env.GIT_TERMINAL_PROMPT = "0";
+}
+
 // The environment claude runs in. DOCK_CHAT_TURN=1 switches guard.cjs to its unattended profile; CAVEMAN_DEFAULT_MODE switches caveman on,
 // which stays off in a headless session without it; CLAUDE_CONFIG_DIR is set only when configDir is; the proxy variables kit-node sets to
 // reach DOCK are removed so Anthropic traffic does not go through tailscaled.
@@ -112,6 +127,7 @@ function childEnv(opts, base = process.env, platform = process.platform) {
 	if (opts.configDir) env.CLAUDE_CONFIG_DIR = opts.configDir;
 	else delete env.CLAUDE_CONFIG_DIR;
 	if (base.NODE_USE_ENV_PROXY === "1" || base.DOCK_PROXY) for (const k of Object.keys(env)) if (PROXY_VARS.test(k)) delete env[k];
+	if (/\bcoder gitssh\b/.test(env.GIT_SSH_COMMAND || "") && !env.CODER_AGENT_TOKEN) gitOverGh(env);
 	return env;
 }
 
