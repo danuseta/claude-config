@@ -15,7 +15,7 @@ function scratch(label) {
   return { base, evidence, status, ledger };
 }
 
-test('decide keeps the old form and adds status, by, issue and cancel', async () => {
+test('decide keeps the old form and adds status, by, issue, effect, other options and replaces', async () => {
   const { base, status, ledger } = scratch('sous-decide');
   try {
     await status('init', 'ZED-401', 'Invented', '-', '-', '-', '-');
@@ -32,17 +32,29 @@ test('decide keeps the old form and adds status, by, issue and cancel', async ()
     assert.equal(r.code, 2);
     r = await status('decide', 'ZED-401', 'x', '--issue', '9');
     assert.match(r.stdout, /REFUSED: ZED-401 has no I-9/);
-    r = await status('decide', 'ZED-401', '1', 'cancel', 'owner', 'says', 'no');
-    assert.match(r.stdout, /D-1: CANCELLED/);
-    r = await status('decide', 'ZED-401', '1', 'cancel', 'again');
-    assert.equal(r.code, 2);
-    r = await status('decide', 'ZED-401', '2', 'cancel');
-    assert.match(r.stdout, /REFUSED: a cancel needs the owner's note/);
+    r = await status('decide', 'ZED-401', 'disable Save on an empty form', '--status', 'SHOV', '--by', 'sous',
+      '--effect', 'Save stays grey until a field is filled', '--alt', 'show an error on Save::the button stays active, an error appears', '--alt', 'save the empty form');
+    assert.match(r.stdout, /D-4 SHOV by sous/);
+    r = await status('decide', 'ZED-401', 'show an error on Save', '--replaces', '4');
+    assert.match(r.stdout, /D-5 DECIDED by owner\); D-4 SUPERSEDED/);
+    r = await status('decide', 'ZED-401', 'again', '--replaces', '4');
+    assert.match(r.stdout, /REFUSED: D-4 is SUPERSEDED and cannot be replaced/);
+    r = await status('decide', 'ZED-401', 'x', '--replaces', '9');
+    assert.match(r.stdout, /REFUSED: ZED-401 has no D-9/);
     const d = ledger('ZED-401').decisions;
-    assert.equal(d.length, 3);
-    assert.deepEqual([d[0].n, d[0].status, d[0].by, d[0].cancelNote, d[0].text], [1, 'CANCELLED', 'owner', 'owner says no', 'written by the old flow']);
+    assert.equal(d.length, 5);
+    assert.deepEqual([d[0].text, d[0].status ?? 'DECIDED'], ['written by the old flow', 'DECIDED']);
     assert.deepEqual([d[1].n, d[1].status, d[1].by, d[1].text], [2, 'DECIDED', 'owner', 'plain text']);
-    assert.deepEqual([d[2].n, d[2].status, d[2].by], [3, 'SHOV', 'arbiter']);
+    assert.deepEqual([d[2].n, d[2].status, d[2].by, d[2].effect, d[2].alts], [3, 'SHOV', 'arbiter', undefined, undefined]);
+    assert.deepEqual([d[3].status, d[3].supersededBy, d[3].effect], ['SUPERSEDED', 5, 'Save stays grey until a field is filled']);
+    assert.deepEqual(d[3].alts, [{ label: 'show an error on Save', effect: 'the button stays active, an error appears' }, { label: 'save the empty form', effect: '' }]);
+    assert.deepEqual([d[4].status, d[4].by, d[4].replaces], ['DECIDED', 'owner', 4]);
+    await status('render', 'ZED-401');
+    const md = fs.readFileSync(path.join(base, 'evidence', 'blackboard', 'ZED-401', 'decisions.md'), 'utf8');
+    assert.match(md, /- \*\*Effect:\*\* Save stays grey until a field is filled/);
+    assert.match(md, /- \*\*Other option:\*\* show an error on Save \(effect: the button stays active, an error appears\)/);
+    assert.match(md, /- \*\*Superseded by:\*\* D-5/);
+    assert.match(md, /- \*\*Replaces:\*\* D-4/);
   } finally {
     rmrf(base);
   }
@@ -77,6 +89,28 @@ test('an issue climbs arbiter, sous, owner and is resolved by a decision', async
     assert.deepEqual([s.issues[0].status, s.issues[0].resolvedBy, s.decisions[0].issue], ['resolved', 1, 1]);
     r = await status('issue', 'ZED-402', '1', 'resolve', '1');
     assert.match(r.stdout, /already resolved/);
+  } finally {
+    rmrf(base);
+  }
+});
+
+test('issue options carry what choosing each one changes', async () => {
+  const { base, status, ledger } = scratch('sous-issue-effects');
+  try {
+    await status('init', 'ZED-412', 'Invented', '-', '-', '-', '-');
+    await status('issue', 'ZED-412', 'QUESTION', 'delete', 'or', 'hide', '--options', 'hard delete::the row is gone for good | soft delete::the list needs a filter');
+    await status('issue', 'ZED-412', 'QUESTION', 'no', 'effects', '--options', 'A|B');
+    const [withEffects, plain] = ledger('ZED-412').issues;
+    assert.deepEqual([withEffects.options, withEffects.effects], [['hard delete', 'soft delete'], ['the row is gone for good', 'the list needs a filter']]);
+    assert.deepEqual([plain.options, plain.effects], [['A', 'B'], undefined]);
+    await status('issue', 'ZED-412', '1', 'escalate', 'owner', 'product call');
+    assert.equal(ledger('ZED-412').waiting, 'I-1: delete or hide [hard delete|soft delete]');
+    await status('render', 'ZED-412');
+    const md = fs.readFileSync(path.join(base, 'evidence', 'blackboard', 'ZED-412', 'issues.md'), 'utf8');
+    assert.match(md, /- \*\*Options:\*\* hard delete \(effect: the row is gone for good\) \| soft delete \(effect: the list needs a filter\)/);
+    await status('decide', 'ZED-412', 'soft', '--status', 'SHOV', '--by', 'sous');
+    await status('decide', 'ZED-412', 'hard', '--replaces', '1');
+    assert.match((await status('issue', 'ZED-412', '1', 'resolve', '1')).stdout, /REFUSED: D-1 is superseded and cannot resolve an issue/);
   } finally {
     rmrf(base);
   }
@@ -168,17 +202,18 @@ test('render writes the generated board and engine=sous keeps it current', async
     await status('issue', 'ZED-405', 'RISK', 'shared', 'helper');
     await status('decide', 'ZED-405', 'keep', 'the', 'helper', '--status', 'SHOV', '--by', 'sous', '--issue', '1');
     await status('decide', 'ZED-405', 'old', 'idea', '--status', 'USULAN');
-    await status('decide', 'ZED-405', '2', 'cancel', 'not', 'needed');
+    await status('decide', 'ZED-405', 'new', 'idea', '--replaces', '2');
     const now = fs.readFileSync(path.join(board, 'NOW.md'), 'utf8');
     assert.match(now, /\| Stage \| code \|/);
     assert.match(now, /\| Engine \| sous \|/);
     assert.match(now, /- I-1 RISK \(level arbiter\): shared helper/);
     assert.match(now, /- D-1 SHOV: keep the helper/);
+    assert.match(now, /- D-3 DECIDED: new idea/);
     assert.doesNotMatch(now, /D-2/);
-    assert.match(fs.readFileSync(path.join(board, 'decisions.md'), 'utf8'), /## D-2\n- \*\*Status:\*\* CANCELLED[^\n]*\n- \*\*Decision:\*\* old idea\n- \*\*Cancelled:\*\* [^:]+:\d\d: not needed/);
+    assert.match(fs.readFileSync(path.join(board, 'decisions.md'), 'utf8'), /## D-2\n- \*\*Status:\*\* SUPERSEDED[^\n]*\n- \*\*Decision:\*\* old idea\n- \*\*Superseded by:\*\* D-3/);
     assert.match(fs.readFileSync(path.join(board, 'issues.md'), 'utf8'), /### I-1 - RISK · level arbiter/);
     const log = fs.readFileSync(path.join(board, 'status.md'), 'utf8');
-    for (const m of ['STAGE · gate -> code', 'ISSUE-OPEN · I-1 RISK', 'DECISION · D-1 SHOV by sous', 'DECISION · D-2 CANCELLED: not needed']) assert.ok(log.includes(m), m);
+    for (const m of ['STAGE · gate -> code', 'ISSUE-OPEN · I-1 RISK', 'DECISION · D-1 SHOV by sous', 'DECISION · D-3 DECIDED by owner: new idea']) assert.ok(log.includes(m), m);
   } finally {
     rmrf(base);
   }

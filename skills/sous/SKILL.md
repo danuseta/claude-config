@@ -45,19 +45,19 @@ Read the first prompt of the session:
 1. Contract and readiness are the runner's job (its `sous-intake` reads the Jira custom fields and applies `rules/ticket-contract.md` before the planner maps the terrain). You only check: `node K/status.cjs show <KEY>`. A ledger at `pr` or `done`, or waiting on the owner, is reported, not restarted. A ledger made by the old orchestrate flow (no `engine`) is continued from its stage: tell the runner the stage.
 2. **Stacked ticket.** The prompt says `Stack on <PARENT>`, or the ticket depends on a ticket whose PR is open but not merged (its ledger has `pr.be` / `pr.fe`, or its Jira status is PR Review): `node K/status.cjs set <KEY> stackedOn=<PARENT>`. It reads the parent's open PRs with `gh pr view` and stores, per repo, the parent PR, its head branch and its base; a repo the parent has no open PR in keeps its normal base. It also clears an old `Blocked: prerequisite ...` waiting, so a ledger waiting only on that prerequisite is started, not reported. A REFUSED means the parent cannot carry a stack: the ticket stays blocked. A dependency that is merged (UAT CHECK, readyforproduction, done) needs no stack.
 3. `node K/status.cjs set <KEY> engine=sous` (makes `render` automatic: `NOW.md`, `status.md`, `decisions.md`, `issues.md` under the blackboard follow every ledger write).
-4. Dispatch `sous-ticket-runner` (model opus) with: key, `K`, `ROOT`, `EVIDENCE`, `configDir`, mode (cron / manual / continuation), the stack parent when there is one, the board instruction when the prompt has one (`Board per epic <EPIC>` / `board=<EPIC>`, or per ticket; without one the runner puts every ticket that has an epic on the epic's board), and on a continuation the owner's answer or cancel note.
+4. Dispatch `sous-ticket-runner` (model opus) with: key, `K`, `ROOT`, `EVIDENCE`, `configDir`, mode (cron / manual / continuation), the stack parent when there is one, the board instruction when the prompt has one (`Board per epic <EPIC>` / `board=<EPIC>`, or per ticket; without one the runner puts every ticket that has an epic on the epic's board), and on a continuation the owner's answer or change.
 5. Its return is one block. Relay it to the owner as a table; verify the deciding line yourself (`status.cjs show`, the PR URL) before repeating it.
 
 ## 4. Continuing from the blackboard
 DOCK opens a NEW session for every owner action; it never resumes an old one. The first prompt is:
 ```
 Pakai skill sous. Lanjutkan tiket <KEY> dari blackboard dan ledger (node $K/status.cjs show <KEY>), jangan mulai dari awal.
-Jawaban owner untuk I-<n>: <answer>       | or: Owner membatalkan D-<n>: <note> | or: Jawaban owner: <answer>
+Jawaban owner untuk I-<n>: <answer>       | or: Owner mengubah D-<n>: <the owner's choice or text> | or: Jawaban owner: <answer>
 ```
 1. Resolve `$K` from section 0. `node K/status.cjs show <KEY>`, then read `NOW.md` in the ledger's `blackboard` and the ticket's `prompts/S<n>.md`. On an epic board (`epicBoard` set) the prompts are under `epicBoard/prompts/`; also read `epicBoard/EPIC.md` and the `tickets/<KEY>/NOW.md` of the sibling tickets: decisions there can bind this one.
 2. Record the owner's word before anything else:
    - Answer to `I-<n>`: `node K/status.cjs decide <KEY> "<answer, in the owner's words>" --status DECIDED --by owner --issue <n>`, then `node K/status.cjs issue <KEY> <n> resolve <D printed>`. That clears `waiting`.
-   - Cancel of `D-<n>`: `node K/status.cjs decide <KEY> <n> cancel "<note>"`. Work built on `D-<n>` is now a finding: tell the runner which tasks it touches.
+   - Change of `D-<n>`: `node K/status.cjs decide <KEY> "<the owner's choice, in the owner's words>" --status DECIDED --by owner --replaces <n>` (D-<n> becomes SUPERSEDED). Work built on `D-<n>` is now a finding: tell the runner which tasks it touches; the revision is pushed to the same PR.
    - `Jawaban owner: <answer>` with no issue: `node K/status.cjs decide <KEY> "<answer>" --by owner`, then `node K/status.cjs set <KEY> waiting=`.
 3. Dispatch the same runner for the board (ticket, review or card) as a continuation from the recorded stage, with the decision numbers just written. A continuation started by DOCK runs like a cron run: no GATE 1, through to the PR.
 
@@ -67,7 +67,7 @@ Issues climb `arbiter -> sous -> owner`. The runner holds the sous level for its
 2. For each one at level `sous` you can settle from the ticket, the contract, the terrain, sibling boards and the code: `decide <KEY> "<ruling and why>" --status SHOV --by sous --issue <n>`, `issue <KEY> <n> resolve <D>`, and dispatch the runner again.
 3. What you cannot settle: `node K/status.cjs issue <KEY> <n> escalate owner "<what was checked, why neither arbiter nor sous could decide>"`. Give it options (`A|B`) when the issue has none, through the text. That sets `waiting` (DOCK shows WAITING ON YOU) and `draft=true`. Then **stop**: do not guess, do not work around it. The owner's answer arrives as a new session (section 4).
 
-Owner `DECIDED` > `SHOV` > contract > Jira AC > `USULAN`. A `D-n` from arbiter or sous applies at once and shows on DOCK; the owner can cancel it.
+Owner `DECIDED` > `SHOV` > contract > Jira AC > `USULAN`. A `D-n` from arbiter or sous applies at once and shows on DOCK with its effect and other options; the owner confirms or changes it there. Until every open issue is answered and every `SHOV` / `USULAN` is confirmed, the PR stays a draft; DOCK marks it ready.
 
 ## 6. Progress
 `node K/status.cjs` (every key), then per key with a non-empty `waiting`: the decision needed, from its open owner issue. Nothing else.
@@ -75,7 +75,7 @@ Owner `DECIDED` > `SHOV` > contract > Jira AC > `USULAN`. A `D-n` from arbiter o
 ## 7. Rules that hold in every mode
 - The ledger is the only status. Never edit `status.json`, `NOW.md`, `status.md`, `decisions.md` or `issues.md` by hand; a `REFUSED` from status.cjs is followed, not bypassed.
 - Review rounds: at most 2 returns from FINAL to a task (`status.cjs round`); past that the ledger opens an owner issue and the PR goes out as draft. Verify rounds: at most 2 per task. Only the owner changes `rounds.max` or clears `draft`; the runner guard refuses both.
-- PR is a draft when rounds are spent, an issue is still open, or production data is touched (`set <KEY> productionData=true`); otherwise ready for review.
+- PR is a draft when rounds are spent, an issue is still open, a `SHOV` or `USULAN` decision is in force, or production data is touched (`set <KEY> productionData=true`); otherwise ready for review. Nobody but DOCK marks a draft ready.
 - One heavy step per machine: tests, tsc and builds run only inside `status.cjs lock verify <KEY>`.
 - Agents run in the foreground: dispatch a runner and wait for its return, never `run_in_background`, and never end the turn while an agent or a Monitor still runs. A DOCK turn that ends kills them (QRD-1346 lost two workers that way); the runner guard refuses background calls.
 - Stage per path, never `git add -A` or `.`; never push to develop, main or master; no AI attribution in commits or PR bodies; never commit `docs/`, `.gitignore`, `.omc/`.
