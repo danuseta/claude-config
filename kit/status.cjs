@@ -10,9 +10,10 @@
 //   node status.cjs ac KEY <n> <PASS|FAIL|TODO> "<text>" ["<evidence>"]
 //   node status.cjs brief KEY "<text>" | @<file>   -> the working brief a fresh session starts from
 //   node status.cjs decide KEY "<decision and why>" [--status SHOV|USULAN|DECIDED] [--by owner|arbiter|sous|agent] [--issue n]
-//                                                     -> D-n appended to decisions[], never overwritten (no flags: DECIDED by owner)
-//   node status.cjs decide KEY <n> cancel "<why>"    -> D-n becomes CANCELLED (the owner's override from DOCK)
-//   node status.cjs issue KEY <BLOCKER|QUESTION|RISK|DISPUTE> "<text>" [--options "A|B"] -> I-n, open at level arbiter
+//                      [--effect "<what changes for the user>"] [--alt "<other option>::<its effect>"]... [--replaces n]
+//                                                     -> D-n appended to decisions[], never overwritten (no flags: DECIDED by owner);
+//                                                        --replaces n marks D-n SUPERSEDED (the owner changed it from DOCK)
+//   node status.cjs issue KEY <BLOCKER|QUESTION|RISK|DISPUTE> "<text>" [--options "A::effect of A|B::effect of B"] -> I-n, open at level arbiter
 //   node status.cjs issue KEY <n> escalate sous|owner "<why>" -> owner sets waiting to "I-<n>: <text> [A|B]" and draft
 //   node status.cjs issue KEY <n> resolve <decisionN> -> resolved by D-<decisionN>; clears waiting when it was this issue
 //   node status.cjs round KEY ["<why>"]             -> one review-to-task return round; past rounds.max (default 2) an owner issue and draft
@@ -167,6 +168,11 @@ const takeFlags = (args, names) => {
 // Entries written before D-n numbering carry no n, status or by: they read as their position, DECIDED by the owner.
 const decisionsOf = (s) => (s.decisions ?? []).map((d, i) => ({ ...d, n: d.n ?? i + 1, status: d.status ?? "DECIDED", by: d.by ?? "owner" }));
 const issueOf = (s, n) => (s.issues ?? []).find((x) => x.n === Number(n));
+// "<label>::<effect>": an option and what choosing it changes; the effect part is optional.
+const optionOf = (raw) => {
+	const [label, ...effect] = String(raw).split("::");
+	return { label: label.trim(), effect: effect.join("::").trim() };
+};
 const stamp = (iso) => (iso ? String(iso).slice(0, 16).replace("T", " ") : "-");
 const line = (t) => String(t ?? "").replace(/\r?\n/g, " ");
 const cell = (t) => line(t).replace(/\|/g, "\\|");
@@ -225,6 +231,10 @@ const renderBoard = (key, s) => {
 		`## D-${d.n}`,
 		`- **Status:** ${d.status} · **By:** ${d.by} · **At:** ${stamp(d.at)}${d.issue ? ` · **Issue:** I-${d.issue}` : ""}`,
 		`- **Decision:** ${line(d.text)}`,
+		...(d.effect ? [`- **Effect:** ${line(d.effect)}`] : []),
+		...(d.alts ?? []).map((a) => `- **Other option:** ${line(a.label)}${a.effect ? ` (effect: ${line(a.effect)})` : ""}`),
+		...(d.replaces ? [`- **Replaces:** D-${d.replaces}`] : []),
+		...(d.supersededBy ? [`- **Superseded by:** D-${d.supersededBy} ${stamp(d.supersededAt)}`] : []),
 		...(d.cancelledAt ? [`- **Cancelled:** ${stamp(d.cancelledAt)}: ${line(d.cancelNote)}`] : []),
 	].join("\n");
 	fs.writeFileSync(path.join(dir, "decisions.md"), `${head}# Decisions - ${key}\n\nPrecedence: owner DECIDED > SHOV > contract > Jira AC > USULAN. CANCELLED and SUPERSEDED entries do not apply.\n\n${decisions.map(dBlock).join("\n\n")}\n`);
@@ -232,7 +242,7 @@ const renderBoard = (key, s) => {
 		`### I-${x.n} - ${x.type} · level ${x.level}`,
 		`- **Raised:** ${stamp(x.at)}`,
 		`- **Detail:** ${line(x.text)}`,
-		...(x.options?.length ? [`- **Options:** ${x.options.map(line).join(" | ")}`] : []),
+		...(x.options?.length ? [`- **Options:** ${x.options.map((o, i) => `${line(o)}${x.effects?.[i] ? ` (effect: ${line(x.effects[i])})` : ""}`).join(" | ")}`] : []),
 		...(x.escalations ?? []).map((e) => `- **Escalated:** to ${e.to} ${stamp(e.at)}: ${line(e.why)}`),
 	].join("\n");
 	const closed = issues.filter((x) => x.status !== "open").map((x) => `- I-${x.n} ${x.type}: ${line(x.text)} (resolved by D-${x.resolvedBy}, ${stamp(x.resolvedAt)})`);
@@ -608,30 +618,24 @@ if (!cmd) {
 } else if (cmd === "decide") {
 	const s = load(key);
 	if (!s) return console.log(`no status for ${key}; run init first`);
-	if (/^\d+$/.test(rest[0] ?? "") && rest[1] === "cancel") {
-		const n = Number(rest[0]);
-		const d = (s.decisions ?? [])[n - 1];
-		if (!d) return refuse(`${key} has no D-${n}`);
-		const was = decisionsOf(s)[n - 1].status;
-		if (was === "CANCELLED") return refuse(`D-${n} is already cancelled`);
-		const why = rest.slice(2).join(" ").trim();
-		if (!why) return refuse("a cancel needs the owner's note");
-		Object.assign(d, { n, by: d.by ?? "owner", status: "CANCELLED", was, cancelNote: why, cancelledAt: now() });
-		save(key, s);
-		return console.log(`${key} D-${n}: CANCELLED`);
-	}
-	const { flags: f, words } = takeFlags(rest, ["--status", "--by", "--issue"]);
+	const { flags: f, words } = takeFlags(rest, ["--status", "--by", "--issue", "--effect", "--alt", "--replaces"]);
 	const status = f["--status"]?.[0] ?? "DECIDED";
 	const by = f["--by"]?.[0] ?? "owner";
 	if (!DECISION_SET.includes(status)) return refuse(`--status must be one of ${DECISION_SET.join(", ")}`);
 	if (!DECIDERS.includes(by)) return refuse(`--by must be one of ${DECIDERS.join(", ")}`);
 	if (f["--issue"] && !issueOf(s, f["--issue"][0])) return refuse(`${key} has no I-${f["--issue"][0]}`);
+	const replaced = f["--replaces"] ? decisionsOf(s).find((d) => d.n === Number(f["--replaces"][0])) : null;
+	if (f["--replaces"] && !replaced) return refuse(`${key} has no D-${f["--replaces"][0]}`);
+	if (replaced && !IN_FORCE.includes(replaced.status)) return refuse(`D-${replaced.n} is ${replaced.status} and cannot be replaced`);
 	const text = words.join(" ").trim();
 	if (!text) return console.log("decide needs a text");
+	const effect = (f["--effect"]?.[0] ?? "").trim();
+	const alts = (f["--alt"] ?? []).map(optionOf).filter((o) => o.label);
 	const n = (s.decisions ?? []).length + 1;
-	(s.decisions ??= []).push({ n, at: new Date().toISOString(), text, status, by, ...(f["--issue"] ? { issue: Number(f["--issue"][0]) } : {}) });
+	(s.decisions ??= []).push({ n, at: new Date().toISOString(), text, status, by, ...(f["--issue"] ? { issue: Number(f["--issue"][0]) } : {}), ...(effect ? { effect } : {}), ...(alts.length ? { alts } : {}), ...(replaced ? { replaces: replaced.n } : {}) });
+	if (replaced) Object.assign(s.decisions[replaced.n - 1], { n: replaced.n, by: replaced.by, status: "SUPERSEDED", supersededBy: n, supersededAt: now() });
 	save(key, s);
-	console.log(`${key} decision #${n} (D-${n} ${status} by ${by})`);
+	console.log(`${key} decision #${n} (D-${n} ${status} by ${by})${replaced ? `; D-${replaced.n} SUPERSEDED` : ""}`);
 } else if (cmd === "ac-set") {
 	const s = load(key);
 	if (!s) return console.log(`no status for ${key}; run init first`);
@@ -791,7 +795,7 @@ if (!cmd) {
 		if (verb === "resolve") {
 			const d = decisionsOf(s).find((y) => y.n === Number(arg));
 			if (!d) return refuse(`${key} has no D-${arg}; record the decision first with decide ... --issue ${x.n}`);
-			if (d.status === "CANCELLED") return refuse(`D-${d.n} is cancelled and cannot resolve an issue`);
+			if (!IN_FORCE.includes(d.status)) return refuse(`D-${d.n} is ${d.status.toLowerCase()} and cannot resolve an issue`);
 			Object.assign(x, { status: "resolved", resolvedBy: d.n, resolvedAt: now() });
 			if ((s.waiting || "").startsWith(`I-${x.n}:`)) s.waiting = "";
 			save(key, s);
@@ -805,8 +809,10 @@ if (!cmd) {
 	const text = textWords.join(" ").trim();
 	if (!text) return refuse("an issue needs a text");
 	const n = (s.issues ?? []).length + 1;
-	const options = f["--options"] ? f["--options"][0].split("|").map((o) => o.trim()).filter(Boolean) : [];
-	(s.issues ??= []).push({ n, at: now(), type, text, level: "arbiter", status: "open", ...(options.length ? { options } : {}) });
+	const parsed = f["--options"] ? f["--options"][0].split("|").map(optionOf).filter((o) => o.label) : [];
+	const options = parsed.map((o) => o.label);
+	const effects = parsed.some((o) => o.effect) ? parsed.map((o) => o.effect) : [];
+	(s.issues ??= []).push({ n, at: now(), type, text, level: "arbiter", status: "open", ...(options.length ? { options } : {}), ...(effects.length ? { effects } : {}) });
 	save(key, s);
 	console.log(`${key} I-${n}: ${type} open at level arbiter`);
 } else if (cmd === "round") {
@@ -883,5 +889,5 @@ if (!cmd) {
 		console.log(`| ${name} | ${list.length} | ${mean(tracked, (row) => row.c.fixRounds)} | ${mean(list, (row) => (row.s.findings ?? []).length)} | ${mean(timed, (row) => row.c.hours)} |`);
 	}
 } else {
-	console.log("usage: status.cjs [show KEY | init KEY title bePort fePort beDir feDir | set KEY k=v... | ac KEY n STATE text evidence | ac-set KEY @file [jiraUpdated] | stale [KEY jiraUpdated [@file]] | handoff KEY who k=v...|@file.json | fail KEY type evidence [what] | assume KEY text falsifier | assume KEY n confirmed|refuted evidence | replan KEY reason | finding KEY [--severity blocker|non-blocking|nit] text | lgtm KEY text | verdict KEY approve|request-change [--ticket KEY] [--pr url]... | metrics | brief KEY text|@file | decide KEY text [--status SHOV|USULAN|DECIDED] [--by owner|arbiter|sous|agent] [--issue n] | decide KEY n cancel why | issue KEY TYPE text [--options \"A|B\"] | issue KEY n escalate sous|owner why | issue KEY n resolve decisionN | round KEY [why] | lock name KEY [--wait s] [--pid n] | unlock name KEY | render KEY | sync [KEY] | remote | handover KEY --to machine [--note text] | pull KEY [--force]]");
+	console.log("usage: status.cjs [show KEY | init KEY title bePort fePort beDir feDir | set KEY k=v... | ac KEY n STATE text evidence | ac-set KEY @file [jiraUpdated] | stale [KEY jiraUpdated [@file]] | handoff KEY who k=v...|@file.json | fail KEY type evidence [what] | assume KEY text falsifier | assume KEY n confirmed|refuted evidence | replan KEY reason | finding KEY [--severity blocker|non-blocking|nit] text | lgtm KEY text | verdict KEY approve|request-change [--ticket KEY] [--pr url]... | metrics | brief KEY text|@file | decide KEY text [--status SHOV|USULAN|DECIDED] [--by owner|arbiter|sous|agent] [--issue n] [--effect text] [--alt \"option::effect\"]... [--replaces n] | issue KEY TYPE text [--options \"A::effect|B::effect\"] | issue KEY n escalate sous|owner why | issue KEY n resolve decisionN | round KEY [why] | lock name KEY [--wait s] [--pid n] | unlock name KEY | render KEY | sync [KEY] | remote | handover KEY --to machine [--note text] | pull KEY [--force]]");
 }
