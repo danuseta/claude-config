@@ -43,6 +43,7 @@ const TERMINAL_COMMANDS = ["doctor", "color", "focus", "reload-plugins"];
 const DELTA_INTERVAL_MS = 1000;
 const CLAIM_WAIT_S = 25;
 const MAX_BACKOFF_MS = 30000;
+const TURNS_CHECK_MS = 15000;
 const KEEP_AWAKE_EVERY_MS = 10 * 60 * 1000;
 const BRIDGE_SECRET = /^(DOCK_INGEST_TOKEN|DOCK_MASK_EXTRA|BRAIN_TOKEN|CODER_AGENT_TOKEN|CODER_SESSION_TOKEN|(DOCK|BRAIN|CODER)_[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|KEY|PIN))$/;
 const PROXY_VARS = /^(https?_proxy|all_proxy|node_use_env_proxy|dock_proxy)$/i;
@@ -243,10 +244,16 @@ function track(child) {
 }
 
 // Runs up to `limit` turns at once; slot() resolves when one is free, start() never rejects.
+// setLimit() changes the limit for the next slot; a turn already running is never stopped.
 function createTurnPool(limit) {
 	const running = new Set();
 	return {
 		slot: async () => { while (running.size >= limit) await Promise.race(running); },
+		free: () => running.size < limit,
+		// Resolves when a turn ends or after `ms`, whichever comes first.
+		wait: (ms) => new Promise((resolve) => { const t = setTimeout(resolve, ms); Promise.race(running).then(() => { clearTimeout(t); resolve(); }); }),
+		setLimit(n) { limit = n; },
+		limit: () => limit,
 		start(run, onError) {
 			const p = Promise.resolve().then(run).catch(onError).catch(() => {}).finally(() => running.delete(p));
 			running.add(p);
@@ -854,7 +861,7 @@ async function claimOne(wait, caps) {
 	if (caps && Array.isArray(caps.features) && caps.features.length) body.caps = caps;
 	const r = await call("/chat/claim", body, (wait + 10) * 1000);
 	// DOCK wraps every ingest answer as { ok, result }.
-	return { ...r, message: r.result ? r.result.message : r.message, wantCatalog: Boolean(r.result && r.result.wantCatalog), wantDoctor: Boolean(r.result && r.result.wantDoctor), agentJobs: r.result && Array.isArray(r.result.agentJobs) ? r.result.agentJobs.slice(0, 8) : [] };
+	return { ...r, message: r.result ? r.result.message : r.message, parallelTurns: r.result ? r.result.parallelTurns : undefined, wantCatalog: Boolean(r.result && r.result.wantCatalog), wantDoctor: Boolean(r.result && r.result.wantDoctor), agentJobs: r.result && Array.isArray(r.result.agentJobs) ? r.result.agentJobs.slice(0, 8) : [] };
 }
 
 // DOCK's agent library jobs (kit/agents.cjs), in order and outside the turn pool. Each job answers { id, result } or { id, error }.
@@ -901,6 +908,21 @@ async function main(cmd, args) {
 	const wait = cmd === "once" ? Math.min(CLAIM_WAIT_S, w >= 0 ? Number(args[w + 1]) || 0 : 5) : CLAIM_WAIT_S;
 	let backoff = 0, paceUntil = 0;
 	const pool = createTurnPool(opts.parallelTurns);
+	// DOCK Settings decides the turn count when it has one; without it the bridge file does.
+	const applyTurns = (n) => {
+		const next = Number.isInteger(n) && n >= 1 ? n : opts.parallelTurns;
+		if (next === pool.limit()) return;
+		pool.setLimit(next);
+		log(`parallel turns: ${next}`);
+	};
+	// A full pool does not claim, so it asks for the setting on its own: a higher count starts the next turn without waiting for one to end.
+	const awaitSlot = async () => {
+		while (!pool.free()) {
+			await pool.wait(TURNS_CHECK_MS);
+			const r = await call("/chat/settings", {}, 5000).catch(() => null);
+			if (r && r.status === 200) applyTurns(r.result && r.result.parallelTurns);
+		}
+	};
 	const handle = async (message) => {
 		activeTurns++;
 		const began = Date.now();
@@ -911,7 +933,7 @@ async function main(cmd, args) {
 	try { pruneFiles(STATE_DIR, Date.now()); allowStore().prune(); } catch {}
 	for (;;) {
 		try {
-			await pool.slot();
+			await awaitSlot();
 			await outbox.flush(STATE_DIR, (entry) => deliverEntry(entry, opts.retryBaseMs), log);
 			const claude = resolveClaude(opts.claudeBin);
 			const flags = claude && opts.interactive ? await supportedFlags(claude, opts) : null;
@@ -925,6 +947,7 @@ async function main(cmd, args) {
 			if (r.status === 401) { if (cmd === "once") return; await sleep(MAX_BACKOFF_MS); continue; }
 			if (r.status !== 200) throw new Error(`claim answered ${r.status}`);
 			backoff = 0;
+			applyTurns(r.parallelTurns);
 			if (r.wantCatalog && bridgeMemo.catalog) await catalogLib.publishCatalog(bridgeMemo.catalog, call);
 			if (r.wantDoctor) runDoctor("asked from DOCK");
 			if (r.agentJobs.length) {
