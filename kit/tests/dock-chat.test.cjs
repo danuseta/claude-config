@@ -557,6 +557,25 @@ test('turn pool: at capacity slot() waits and frees as soon as any turn settles'
   a.open();
 });
 
+test('turn pool: a higher limit frees a slot while every turn still runs, and wait() gives up after its timeout', async () => {
+  const pool = chat.createTurnPool(1);
+  const a = gate();
+  pool.start(() => a.p, () => {});
+  assert.equal(pool.free(), false);
+  const began = Date.now();
+  await pool.wait(30);
+  assert.ok(Date.now() - began >= 25, 'wait() resolves on its timeout while the turn runs');
+  pool.setLimit(2);
+  assert.equal(pool.free(), true);
+  assert.equal(pool.limit(), 2);
+  pool.setLimit(1);
+  assert.equal(pool.free(), false, 'a lower limit never stops the running turn, it only blocks the next');
+  a.open();
+  await pool.wait(1000);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pool.free(), true);
+});
+
 test('turn pool: a turn that throws is reported, frees its slot and does not stop the others', async () => {
   const pool = chat.createTurnPool(1);
   const errors = [];

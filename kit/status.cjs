@@ -116,7 +116,7 @@ const evidenceProblem = (s, evidence) => {
 	for (const raw of e.split(/[\s,;]+/)) {
 		const p = raw.replace(/^["'`(]+|["'`).]+$/g, "").replace(/(:\d+(-\d+)?)+$/, "").replace(/^\/([a-zA-Z])\//, "$1:/");
 		if (/^https?:/i.test(p)) continue;
-		const absolute = /^[A-Za-z]:[\\/]/.test(p);
+		const absolute = /^[A-Za-z]:[\\/]/.test(p) || path.isAbsolute(p);
 		if (!absolute && !(/[\\/]/.test(p) && /\.\w{1,5}$/.test(p))) continue;
 		const tries = absolute ? [p] : [s.dirs?.be, s.dirs?.fe, path.join(ROOT, s.key)].filter(Boolean).map((d) => path.join(d, p));
 		if (!tries.some((c) => fs.existsSync(c))) return `evidence path not found: ${p}`;
