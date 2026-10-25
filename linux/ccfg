@@ -192,7 +192,7 @@ console.log([pre, cur.autoUpdatesChannel === orig.autoUpdatesChannel ? "same" : 
 cmd_update() {
   local was=0
   service_pid bridge >/dev/null && was=1
-  bash "$CCFG_LINUX_DIR/personalize.sh" --stdout --only=repo,install,plugins || return 1
+  bash "$CCFG_LINUX_DIR/personalize.sh" --stdout --only=repo,binaries,install,plugins || return 1
   if [ "$was" = 1 ]; then service_stop bridge; service_start bridge; fi
 }
 

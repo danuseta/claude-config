@@ -131,15 +131,37 @@ install_pinned() {
   return 0
 }
 
+# ccusage is an npm package, so it has no checksum like the pinned downloads; npm installs the exact version under the prefix of CCFG_BIN.
+install_ccusage() {
+  local ver=${CCUSAGE_VERSION:-} marker=$CCFG_STATE/bins/ccusage.pin prefix=${CCFG_BIN%/bin}
+  [ -n "$ver" ] || { say WARN "ccusage: not pinned yet (set CCUSAGE_VERSION in linux/versions.env), refusing to install"; return 10; }
+  command -v npm >/dev/null 2>&1 || { say WARN "ccusage: npm not found, skipped"; return 10; }
+  [ "$prefix" != "$CCFG_BIN" ] || { say WARN "ccusage: $CCFG_BIN does not end in /bin, skipped"; return 10; }
+  if [ -x "$CCFG_BIN/ccusage" ] && [ "$(cat "$marker" 2>/dev/null)" = "$ver" ]; then
+    say INFO "ccusage $ver: already installed"
+    return 11
+  fi
+  if [ "$DRY" = 1 ]; then say INFO "ccusage $ver: would run npm install -g --prefix $prefix"; return 12; fi
+  mkdir -p "$CCFG_STATE/bins"
+  if ! timeout 300 npm install -g --prefix "$prefix" "ccusage@$ver" >/dev/null 2>&1; then
+    say ERROR "ccusage: npm install of $ver failed"
+    return 1
+  fi
+  printf '%s
+' "$ver" >"$marker"
+  say INFO "ccusage $ver: installed"
+  return 0
+}
+
 s_binaries() {
   local T rc done_=0 skipped=0 failed=0 already=0 would=0
   case "$(uname -s)/$(uname -m)" in
     Linux/aarch64 | Linux/arm64) ;;
     *) note "not Linux aarch64, the pinned assets do not apply"; return 10 ;;
   esac
-  for T in $PIN_TOOLS; do
+  for T in $PIN_TOOLS CCUSAGE; do
     [ "$T" != TAILSCALE ] || [ "$ENABLE_TAILSCALE" = 1 ] || continue
-    install_pinned "$T"
+    if [ "$T" = CCUSAGE ]; then install_ccusage; else install_pinned "$T"; fi
     rc=$?
     case $rc in 0) done_=$((done_ + 1)) ;; 10) skipped=$((skipped + 1)) ;; 11) already=$((already + 1)) ;; 12) would=$((would + 1)) ;; *) failed=$((failed + 1)) ;; esac
   done
@@ -432,7 +454,7 @@ dock_build_swap() {
     && git -C "$next" checkout -q -B "$DOCK_BRANCH" "$target" \
     && git -C "$next" branch -q -u "origin/$DOCK_BRANCH" \
     && git -C "$next" remote set-url origin "$origin"; } >"$CCFG_STATE/dock-build.log" 2>&1 || { rm -rf "$next"; return 1; }
-  (cd "$next" && npm ci && npm run db:generate --workspace=backend/bff-graphql && VITE_GRAPHQL_URL=/graphql npm run build:app) >>"$CCFG_STATE/dock-build.log" 2>&1 \
+  (cd "$next" && npm ci && npm run db:generate --workspace=backend/bff-graphql && VITE_GRAPHQL_URL=/graphql VITE_APP_VERSION="$([ -f tools/version.mjs ] && node tools/version.mjs)" VITE_APP_CHANNEL="$DOCK_BRANCH" VITE_APP_COMMIT="$(git rev-parse --short HEAD)" npm run build:app) >>"$CCFG_STATE/dock-build.log" 2>&1 \
     || { rm -rf "$next"; return 1; }
   service_pid dock >/dev/null && service_stop dock
   if mv "$DOCK_APP_DIR" "$prev" && mv "$next" "$DOCK_APP_DIR"; then
@@ -452,7 +474,7 @@ s_dock() {
   command -v node >/dev/null 2>&1 || { note "node not found"; return 10; }
   if [ "$DRY" = 1 ]; then note "would clone or pull $DOCK_REPO ($DOCK_BRANCH) into $DOCK_APP_DIR, build it in $DOCK_APP_DIR.next when HEAD moved, swap on success and start DOCK on port $DOCK_PORT"; return 0; fi
   if [ -d "$DOCK_APP_DIR/.git" ]; then
-    timeout 120 git -C "$DOCK_APP_DIR" fetch -q origin "+refs/heads/$DOCK_BRANCH:refs/remotes/origin/$DOCK_BRANCH" || { note "fetch failed"; return 1; }
+    timeout 120 git -C "$DOCK_APP_DIR" fetch -q --tags origin "+refs/heads/$DOCK_BRANCH:refs/remotes/origin/$DOCK_BRANCH" || { note "fetch failed"; return 1; }
   else
     if gh auth status >/dev/null 2>&1; then
       timeout 300 gh repo clone "$DOCK_REPO" "$DOCK_APP_DIR" -- --branch "$DOCK_BRANCH" || timeout 300 gh repo clone "$DOCK_REPO" "$DOCK_APP_DIR" || { note "clone failed"; return 1; }
