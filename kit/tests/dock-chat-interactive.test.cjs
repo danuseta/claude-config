@@ -210,7 +210,7 @@ test('the claim carries the capabilities, /chat/wait carries them too, and the p
   const claim = t.state.requests.find((q) => q.route === '/chat/claim').body;
   assert.equal(claim.wait, 1);
   assert.equal(claim.caps.v, 2);
-  assert.deepEqual(claim.caps.modes, ['default', 'acceptEdits', 'plan', 'auto']);
+  assert.deepEqual(claim.caps.modes, ['auto', 'plan', 'acceptEdits', 'bypassPermissions', 'default']);
   for (const f of ['interactive', 'questions', 'plan', 'stop', 'attachments', 'commands', 'model', 'effort']) assert.ok(claim.caps.features.includes(f), f);
   assert.ok(claim.caps.features.length <= 16);
   assert.ok(claim.caps.kit.length <= 40 && claim.caps.claude.length <= 40);
@@ -670,13 +670,23 @@ test('options: model, effort and mode become flags after validation against the 
   assert.equal(auto.argv[auto.argv.indexOf('--permission-mode') + 1], 'auto', 'the cron starts tickets in auto mode');
 });
 
-test('options: an unknown model, a value starting with "-", an effort the model lacks and a mode the phone may not pick are dropped', async () => {
+test('options: bypassPermissions goes to claude as --permission-mode unchanged, and the guard hooks stay out of the flag', async () => {
+  const t = await turn({ script: SAY, dock: { message: { options: { model: null, effort: null, permissionMode: 'bypassPermissions', fast: null } } } });
+  assert.equal(t.argv[t.argv.indexOf('--permission-mode') + 1], 'bypassPermissions');
+  assert.ok(!t.argv.includes('--dangerously-skip-permissions'));
+});
+
+test('options: default still reaches claude, because the cron manual run sends it', async () => {
+  const t = await turn({ script: SAY, dock: { message: { options: { model: null, effort: null, permissionMode: 'default', fast: null } } } });
+  assert.equal(t.argv[t.argv.indexOf('--permission-mode') + 1], 'default');
+});
+
+test('options: an unknown model, a value starting with "-", an effort the model lacks and a mode the phone may not pick (dontAsk) are dropped', async () => {
   const cases = [
     [{ model: 'nope' }, [['--model', 'nope']]],
     [{ model: '--dangerously-skip-permissions' }, [['--model', '--dangerously-skip-permissions']]],
     [{ model: 'haiku', effort: 'high' }, [['--effort', 'high']]],
     [{ effort: '--x' }, [['--effort', '--x']]],
-    [{ permissionMode: 'bypassPermissions' }, [['--permission-mode', 'bypassPermissions']]],
     [{ permissionMode: 'dontAsk' }, [['--permission-mode', 'dontAsk']]],
   ];
   for (const [options, dropped] of cases) {
@@ -684,7 +694,7 @@ test('options: an unknown model, a value starting with "-", an effort the model 
     assert.equal(t.r.code, 0, t.r.stderr);
     for (const [flag, value] of dropped) assert.ok(!(t.argv.includes(flag) && t.argv[t.argv.indexOf(flag) + 1] === value), `${flag} ${value}`);
     assert.ok(!t.argv.includes('--dangerously-skip-permissions'));
-    assert.ok(!t.argv.includes('bypassPermissions') && !t.argv.includes('dontAsk'));
+    assert.ok(!t.argv.includes('dontAsk'));
     assert.match(t.r.stdout, /option dropped/);
   }
 });
