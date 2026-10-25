@@ -24,7 +24,7 @@ You run tests. You never edit source, test or config files, never install packag
 
 ## Run
 - **BE** — the local machine has no `ai` / `@ai-sdk/*` package, so always use the stub config:
-  `JEST_ROOT="$(pwd -W 2>/dev/null || pwd)" npx jest -c "C:/Users/danus/.claude-kantor/kit/jest.be-stub.config.js" <paths>`
+  `JEST_ROOT="$(pwd -W 2>/dev/null || pwd)" npx jest -c "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/jest.be-stub.config.js" <paths>`
 - **FE** — `npx vitest run <paths>`. Strip ANSI before grepping (`sed 's/\x1b\[[0-9;]*m//g'`); ignore the `@firebase/auth INTERNAL ASSERTION` noise.
 - Order: the mapped tests first, then the enclosing folders (e.g. `tests/unit/services/<service>`, `src/v2/modules/<module>`). Never run the whole suite unless asked: it is slow and the user approves workspace-wide runs.
 - Redirect long output to a file in the session scratchpad and grep the summary lines; never paste full logs.

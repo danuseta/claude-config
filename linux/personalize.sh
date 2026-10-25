@@ -57,17 +57,31 @@ s_link() {
   mkdir -p "$CCFG_BIN" && ln -sfn "$target" "$link" && note "linked $link"
 }
 
+track_branch() {
+  local dir=$1 want=$2
+  timeout 60 git -C "$dir" fetch -q origin "+refs/heads/$want:refs/remotes/origin/$want" 2>/dev/null || return 10
+  [ "$(git -C "$dir" rev-parse --abbrev-ref '@{u}' 2>/dev/null)" = "origin/$want" ] && return 0
+  { git -C "$dir" checkout -q "$want" 2>/dev/null || git -C "$dir" checkout -q -t "origin/$want"; } && git -C "$dir" branch -q -u "origin/$want"
+}
+
 s_repo() {
-  local before after up
+  local before after up tb kept=""
   [ -d "$CCFG_REPO/.git" ] || { note "repo is not a git checkout, using it as is"; return 10; }
-  if [ "$DRY" = 1 ]; then note "would run git pull --ff-only in $CCFG_REPO"; return 0; fi
+  if [ "$DRY" = 1 ]; then note "would track origin/$CCFG_BRANCH and run git pull --ff-only in $CCFG_REPO"; return 0; fi
+  track_branch "$CCFG_REPO" "$CCFG_BRANCH"
+  tb=$?
+  case $tb in
+    0) ;;
+    10) kept="origin/$CCFG_BRANCH not found, kept $(git -C "$CCFG_REPO" rev-parse --abbrev-ref HEAD 2>/dev/null); " ;;
+    *) note "could not switch to $CCFG_BRANCH"; return 1 ;;
+  esac
   before=$(git -C "$CCFG_REPO" rev-parse HEAD 2>/dev/null)
-  timeout 60 git -C "$CCFG_REPO" pull --ff-only || { note "pull failed, using the existing checkout"; return 1; }
+  timeout 60 git -C "$CCFG_REPO" pull --ff-only || { note "${kept}pull failed, using the existing checkout"; return 1; }
   after=$(git -C "$CCFG_REPO" rev-parse HEAD 2>/dev/null)
   # A checkout left on a feature branch pulls only that branch, so main never arrives and the step would still read "up to date".
   up=$(git -C "$CCFG_REPO" rev-parse --abbrev-ref '@{u}' 2>/dev/null)
-  [ "$up" = origin/main ] || { note "checkout tracks ${up:-no upstream}, not origin/main: main does not arrive (git -C $CCFG_REPO switch main)"; return 1; }
-  [ "$before" = "$after" ] && note "already up to date" || note "updated ${before:0:7}..${after:0:7}"
+  [ -n "$kept" ] || [ "$up" = "origin/$CCFG_BRANCH" ] || { note "checkout tracks ${up:-no upstream}, not origin/$CCFG_BRANCH: $CCFG_BRANCH does not arrive (git -C $CCFG_REPO switch $CCFG_BRANCH)"; return 1; }
+  [ "$before" = "$after" ] && note "${kept}already up to date" || note "${kept}updated ${before:0:7}..${after:0:7}"
 }
 
 install_pinned() {
@@ -124,6 +138,7 @@ s_binaries() {
     *) note "not Linux aarch64, the pinned assets do not apply"; return 10 ;;
   esac
   for T in $PIN_TOOLS; do
+    [ "$T" != TAILSCALE ] || [ "$ENABLE_TAILSCALE" = 1 ] || continue
     install_pinned "$T"
     rc=$?
     case $rc in 0) done_=$((done_ + 1)) ;; 10) skipped=$((skipped + 1)) ;; 11) already=$((already + 1)) ;; 12) would=$((would + 1)) ;; *) failed=$((failed + 1)) ;; esac
@@ -232,6 +247,7 @@ wait_state() {
 
 s_tailscale() {
   local st
+  [ "$ENABLE_TAILSCALE" = 1 ] || { note "switch ENABLE_TAILSCALE is off"; return 10; }
   if [ ! -x "$CCFG_BIN/tailscaled" ] || [ ! -x "$CCFG_BIN/tailscale" ]; then note "tailscale is not installed (binaries step)"; return 10; fi
   if [ "$DRY" = 1 ]; then
     service_pid tailscaled >/dev/null && note "daemon already running" || note "would start tailscaled under supervise.sh (userspace, SOCKS5+HTTP on 127.0.0.1:$TS_PROXY_PORT), then join as $TS_HOSTNAME if needed"
@@ -256,6 +272,7 @@ s_tailscale() {
 
 s_reach() {
   local url origin chk st
+  [ "$ENABLE_TAILSCALE" = 1 ] || { note "switch ENABLE_TAILSCALE is off"; return 10; }
   [ "$(secrets_state)" = ok ] && secret_has DOCK_INGEST_URL || { note "DOCK_INGEST_URL not available"; return 10; }
   [ -f "$CCFG_CLAUDE_DIR/kit/dock-push.cjs" ] || { note "kit not installed"; return 10; }
   command -v node >/dev/null 2>&1 || { note "node not found"; return 10; }
@@ -397,27 +414,67 @@ s_updater() {
   note "updater running"
 }
 
+dock_health() {
+  local i
+  for ((i = 0; i < 60; i += 2)); do
+    curl -fsS -o /dev/null --max-time 3 "http://127.0.0.1:$DOCK_PORT/health" 2>/dev/null && return 0
+    sleep 2
+  done
+  return 1
+}
+
+dock_build_swap() {
+  local next=$DOCK_APP_DIR.next prev=$DOCK_APP_DIR.prev target=$1 origin
+  origin=$(git -C "$DOCK_APP_DIR" remote get-url origin) || return 1
+  rm -rf "$next" "$prev"
+  { git clone -q --no-checkout "$DOCK_APP_DIR" "$next" \
+    && git -C "$next" fetch -q origin "+refs/remotes/origin/$DOCK_BRANCH:refs/remotes/origin/$DOCK_BRANCH" \
+    && git -C "$next" checkout -q -B "$DOCK_BRANCH" "$target" \
+    && git -C "$next" branch -q -u "origin/$DOCK_BRANCH" \
+    && git -C "$next" remote set-url origin "$origin"; } >"$CCFG_STATE/dock-build.log" 2>&1 || { rm -rf "$next"; return 1; }
+  (cd "$next" && npm ci && npm run db:generate --workspace=backend/bff-graphql && VITE_GRAPHQL_URL=/graphql npm run build:app) >>"$CCFG_STATE/dock-build.log" 2>&1 \
+    || { rm -rf "$next"; return 1; }
+  service_pid dock >/dev/null && service_stop dock
+  if mv "$DOCK_APP_DIR" "$prev" && mv "$next" "$DOCK_APP_DIR"; then
+    rm -rf "$prev"
+    return 0
+  fi
+  [ -d "$DOCK_APP_DIR" ] || mv "$prev" "$DOCK_APP_DIR"
+  rm -rf "$next"
+  service_start dock
+  return 1
+}
+
 s_dock() {
-  local head
+  local head tok url
   [ "$ENABLE_DOCK" = 1 ] || { note "switch ENABLE_DOCK is off"; return 10; }
-  command -v gh >/dev/null 2>&1 || { note "gh not found"; return 10; }
+  command -v gh >/dev/null 2>&1 || command -v git >/dev/null 2>&1 || { note "gh and git not found"; return 10; }
   command -v node >/dev/null 2>&1 || { note "node not found"; return 10; }
-  if [ "$DRY" = 1 ]; then note "would clone or pull $DOCK_REPO into $DOCK_APP_DIR, build it when HEAD moved and start DOCK on port $DOCK_PORT"; return 0; fi
+  if [ "$DRY" = 1 ]; then note "would clone or pull $DOCK_REPO ($DOCK_BRANCH) into $DOCK_APP_DIR, build it in $DOCK_APP_DIR.next when HEAD moved, swap on success and start DOCK on port $DOCK_PORT"; return 0; fi
   if [ -d "$DOCK_APP_DIR/.git" ]; then
-    timeout 120 git -C "$DOCK_APP_DIR" pull --ff-only || { note "pull failed"; return 1; }
+    timeout 120 git -C "$DOCK_APP_DIR" fetch -q origin "+refs/heads/$DOCK_BRANCH:refs/remotes/origin/$DOCK_BRANCH" || { note "fetch failed"; return 1; }
   else
-    timeout 300 gh repo clone "$DOCK_REPO" "$DOCK_APP_DIR" || { note "clone failed"; return 1; }
+    if gh auth status >/dev/null 2>&1; then
+      timeout 300 gh repo clone "$DOCK_REPO" "$DOCK_APP_DIR" -- --branch "$DOCK_BRANCH" || timeout 300 gh repo clone "$DOCK_REPO" "$DOCK_APP_DIR" || { note "clone failed"; return 1; }
+    else
+      timeout 300 git clone --branch "$DOCK_BRANCH" "https://github.com/$DOCK_REPO.git" "$DOCK_APP_DIR" || timeout 300 git clone "https://github.com/$DOCK_REPO.git" "$DOCK_APP_DIR" || { note "clone failed"; return 1; }
+    fi
   fi
   secret_has DOCK_ENCRYPTION_KEY || secret_write DOCK_ENCRYPTION_KEY "$(node -e 'console.log(require("crypto").randomBytes(32).toString("hex"))')" || { note "could not write DOCK_ENCRYPTION_KEY"; return 1; }
   mkdir -p "$DOCK_DATA_DIR"
-  head=$(git -C "$DOCK_APP_DIR" rev-parse HEAD)
-  if [ "$head" != "$(cat "$DOCK_DATA_DIR/built" 2>/dev/null)" ]; then
-    (cd "$DOCK_APP_DIR" && npm ci && npm run db:generate --workspace=backend/bff-graphql && VITE_GRAPHQL_URL=/graphql npm run build:app) >"$CCFG_STATE/dock-build.log" 2>&1 \
-      || { note "build failed (see $CCFG_STATE/dock-build.log)"; return 1; }
+  head=$(git -C "$DOCK_APP_DIR" rev-parse "origin/$DOCK_BRANCH^{commit}" 2>/dev/null) || { note "origin/$DOCK_BRANCH not found"; return 1; }
+  if [ "$head" != "$(cat "$DOCK_DATA_DIR/built" 2>/dev/null)" ] || [ ! -f "$DOCK_APP_DIR/backend/bff-graphql/dist/index.js" ]; then
+    dock_build_swap "$head" || { service_start dock; note "build failed, previous DOCK kept (see $CCFG_STATE/dock-build.log)"; return 1; }
     printf '%s\n' "$head" >"$DOCK_DATA_DIR/built"
-    service_pid dock >/dev/null && service_stop dock
   fi
   service_start dock || { note "dock did not start"; return 1; }
+  dock_health || { note "dock did not answer /health on 127.0.0.1:$DOCK_PORT"; return 1; }
+  url=$(secret_get DOCK_INGEST_URL)
+  case "$url" in ""|"http://127.0.0.1:$DOCK_PORT"*) ;; *) note "DOCK ${head:0:7} on 127.0.0.1:$DOCK_PORT, ingest URL points elsewhere and was left untouched"; return 0 ;; esac
+  tok=$(cd "$DOCK_APP_DIR/backend/bff-graphql" && DATABASE_URL="file:$DOCK_DATA_DIR/jidis.db" JIDIS_DATA_DIR="$DOCK_DATA_DIR" ENCRYPTION_KEY="$(secret_get DOCK_ENCRYPTION_KEY)" DOCK_INGEST_TOKEN="$(secret_get DOCK_INGEST_TOKEN)" timeout 60 node dist/cli/ensure-ingest-token.js 2>>"$CCFG_STATE/dock-build.log") || { note "ingest token step failed"; return 1; }
+  tok=$(printf '%s' "$tok" | tail -n 1 | tr -d '\r\n ')
+  [ -z "$tok" ] || secret_write DOCK_INGEST_TOKEN "$tok" || { note "could not write DOCK_INGEST_TOKEN"; return 1; }
+  secret_has DOCK_INGEST_URL || secret_write DOCK_INGEST_URL "http://127.0.0.1:$DOCK_PORT/ingest/orchestrator" || { note "could not write DOCK_INGEST_URL"; return 1; }
   note "DOCK ${head:0:7} on 127.0.0.1:$DOCK_PORT"
 }
 
