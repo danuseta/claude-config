@@ -2,6 +2,7 @@
 # Coder personalize hook: hands off to the real script in the background and returns at once.
 mkdir -p "$HOME/.local/state/claude-config"
 S=""; command -v setsid >/dev/null 2>&1 && S=setsid
-[ -f "$HOME/claude-config/linux/personalize.sh" ] && \
+if [ -f "$HOME/claude-config/linux/personalize.sh" ]; then
   $S nohup bash "$HOME/claude-config/linux/personalize.sh" >>"$HOME/.local/state/claude-config/personalize.log" 2>&1 </dev/null &
+fi
 exit 0
