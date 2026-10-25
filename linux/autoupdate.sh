@@ -45,10 +45,10 @@ dock_stale() {
 
 au_pass() {
   if [ -d "$CCFG_REPO/.git" ] && behind "$CCFG_REPO"; then
-    if [ "$AU_DRY" = 1 ]; then say DRY "would pull claude-config and apply install and plugins"
+    if [ "$AU_DRY" = 1 ]; then say DRY "would pull claude-config and apply binaries, install and plugins"
     else
       say INFO "claude-config moved, updating"
-      bash "$CCFG_LINUX_DIR/personalize.sh" --stdout --only=repo,install,plugins
+      bash "$CCFG_LINUX_DIR/personalize.sh" --stdout --only=repo,binaries,install,plugins
     fi
   fi
 
