@@ -5,7 +5,7 @@ const activityLib = require('./activity.cjs');
 
 const CAPS = Object.freeze({ title: 120, tool: 64, label: 120, summary: 200, detail: 2000, agent: 48, always: 160, question: 300, header: 40, option: 80, optionText: 200, questions: 4, options: 4, bodyBytes: 8000, note: 500, pending: 4, perTurn: 100, ruleSessions: 200, rulesPerSession: 100, acks: 100, cancelled: 200 });
 const ALLOW_KEEP_MS = 30 * 24 * 3600 * 1000;
-const MODES = Object.freeze(['default', 'acceptEdits', 'plan', 'auto']);
+const MODES = Object.freeze(['auto', 'plan', 'acceptEdits', 'bypassPermissions', 'default']);
 const WORDS = Object.freeze({
 	timeout: 'No answer from the phone in time', stopped: 'Stopped by the user', closed: 'The turn was closed', denied: 'Denied from the phone', dismissed: 'The user dismissed the question',
 	changes: 'The user wants changes to the plan', budget: 'The waiting budget of this turn is used up', crowded: 'Too many requests are waiting for the phone', unreadable: 'The request could not be read',
