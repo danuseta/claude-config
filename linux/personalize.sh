@@ -238,7 +238,7 @@ wait_state() {
   local want=$1 secs=$2 i st=""
   for ((i = 0; i < secs; i += 2)); do
     st=$(ts_backend_state)
-    case $want in any) [ -z "$st" ] || { printf '%s' "$st"; return 0; } ;; *) [ "$st" = "$want" ] && { printf '%s' "$st"; return 0; } ;; esac
+    case $want in any) [ -z "$st" ] || [ "$st" = NoState ] || { printf '%s' "$st"; return 0; } ;; *) [ "$st" = "$want" ] && { printf '%s' "$st"; return 0; } ;; esac
     sleep 2
   done
   printf '%s' "$st"
