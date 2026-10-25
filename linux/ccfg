@@ -24,7 +24,7 @@ EOF
 
 targets() {
   case ${1:-all} in
-    all) printf 'tailscaled bridge'; [ "$ENABLE_DOCK" != 1 ] || printf ' dock'; [ "$ENABLE_AUTOUPDATE" != 1 ] || printf ' updater' ;;
+    all) [ "$ENABLE_TAILSCALE" != 1 ] || printf 'tailscaled '; printf 'bridge'; [ "$ENABLE_DOCK" != 1 ] || printf ' dock'; [ "$ENABLE_AUTOUPDATE" != 1 ] || printf ' updater' ;;
     *) service_unit "$1" || { echo "unknown target: $1" >&2; return 1; } ;;
   esac
 }
@@ -45,7 +45,7 @@ cmd_ensure() {
   bootstrap_dirs
   for u in $(targets all); do
     service_pid "$u" >/dev/null && continue
-    [ "$u" = bridge ] && [ ! -d "$TS_STATE" ] && continue
+    [ "$u" = bridge ] && [ "$ENABLE_TAILSCALE" = 1 ] && [ ! -d "$TS_STATE" ] && continue
     service_start "$u" >/dev/null 2>&1
   done
   return 0
@@ -107,14 +107,18 @@ cmd_doctor() {
   if [ -z "$miss" ]; then chk PASS pins "all binaries pinned with version and sha256"; else chk WARN pins "not pinned yet (install refused): $miss"; fi
 
   st=""
+  if [ "$ENABLE_TAILSCALE" != 1 ]; then chk SKIP tailscale "switch ENABLE_TAILSCALE is off"
+  else
   if [ -x "$CCFG_BIN/tailscale" ]; then st=$(ts_backend_state); tag=$(ts_cli status --json 2>/dev/null | json_get Self.Tags.0); fi
   if [ "$st" = Running ] && [ "$tag" = "$TS_TAG" ]; then chk PASS tailscale "BackendState Running, tag $tag"
   else chk FAIL tailscale "BackendState '${st:-unknown}', tag '${tag:-none}' (expected Running, $TS_TAG)"; fi
   if secret_has TS_AUTHKEY 2>/dev/null; then
     if [ "$st" = Running ]; then chk FAIL authkey-removed "TS_AUTHKEY still in the secrets file after join"; else chk WARN authkey-removed "TS_AUTHKEY waiting for the first join"; fi
   else chk PASS authkey-removed "TS_AUTHKEY not in the secrets file"; fi
+  fi
 
-  if [ -n "$ACL_PROBE_ADDR" ]; then
+  if [ "$ENABLE_TAILSCALE" != 1 ]; then chk SKIP acl-probe "switch ENABLE_TAILSCALE is off"
+  elif [ -n "$ACL_PROBE_ADDR" ]; then
     if curl -s -o /dev/null --max-time 8 -x "http://127.0.0.1:$TS_PROXY_PORT" "http://$ACL_PROBE_ADDR:445" 2>/dev/null; then chk FAIL acl-probe "$ACL_PROBE_ADDR:445 reachable, ACL not restricting"; else chk PASS acl-probe "$ACL_PROBE_ADDR:445 not reachable"; fi
   else chk SKIP acl-probe "ACL_PROBE_ADDR not set in versions.env"; fi
 

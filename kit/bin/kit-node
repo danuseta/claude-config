@@ -26,8 +26,14 @@ if [ "$(uname -s)" = Linux ]; then
 		h=${u#*://}; h=${h%%/*}; h=${h%%:*}
 		[ -n "$h" ] && extra="$extra,$h"
 	done
-	export NODE_USE_ENV_PROXY=1 HTTPS_PROXY=http://127.0.0.1:1055 HTTP_PROXY=http://127.0.0.1:1055
-	export NO_PROXY="localhost,127.0.0.1${NO_PROXY:+,$NO_PROXY}$extra"
+	ts=${ENABLE_TAILSCALE:-}
+	if [ -z "$ts" ] && [ -f "${CCFG_VERSIONS_FILE:-$HOME/.config/claude-config/versions.local.env}" ]; then
+		ts=$(sed -n 's/^ENABLE_TAILSCALE=//p' "${CCFG_VERSIONS_FILE:-$HOME/.config/claude-config/versions.local.env}" | tail -n 1 | tr -d "\"'")
+	fi
+	if [ "$ts" = 1 ] && [ -S "$HOME/.local/run/tailscale/tailscaled.sock" ]; then
+		export NODE_USE_ENV_PROXY=1 HTTPS_PROXY=http://127.0.0.1:1055 HTTP_PROXY=http://127.0.0.1:1055
+		export NO_PROXY="localhost,127.0.0.1${NO_PROXY:+,$NO_PROXY}$extra"
+	fi
 fi
 
 exec node "$KIT/$FILE" "$@"

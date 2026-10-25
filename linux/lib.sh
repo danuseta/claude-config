@@ -11,6 +11,8 @@ TS_SOCK=${TS_SOCK:-$HOME/.local/run/tailscale/tailscaled.sock}
 TS_STATE=${TS_STATE:-$HOME/.local/state/tailscale}
 PROJECTS_DIR=${PROJECTS_DIR:-$HOME/projects}
 
+CCFG_VERSIONS_FILE=${CCFG_VERSIONS_FILE:-$HOME/.config/claude-config/versions.local.env}
+
 # shellcheck disable=SC1091
 . "$CCFG_LINUX_DIR/versions.env"
 # shellcheck disable=SC1090
@@ -151,6 +153,7 @@ coder_host() {
 
 apply_proxy_env() {
   local url="http://127.0.0.1:$TS_PROXY_PORT" np="localhost,127.0.0.1,::1" h
+  { [ "$ENABLE_TAILSCALE" = 1 ] && [ -S "$TS_SOCK" ]; } || return 0
   h=$(coder_host)
   [ -z "$h" ] || np="$np,$h"
   case $PROXY_MODE in
@@ -244,7 +247,7 @@ service_prepare() {
         v=$(secret_get "$n") || continue
         [ -z "$v" ] || export "$n=$v"
       done
-      export DOCK_LEDGER_PEER_PROXY="http://127.0.0.1:$TS_PROXY_PORT"
+      if [ "$ENABLE_TAILSCALE" = 1 ] && [ -S "$TS_SOCK" ]; then export DOCK_LEDGER_PEER_PROXY="http://127.0.0.1:$TS_PROXY_PORT"; fi
       ;;
     updater) setup_path; command -v node >/dev/null 2>&1 || load_template_env ;;
   esac

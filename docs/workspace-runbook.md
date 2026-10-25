@@ -11,11 +11,11 @@ Panduan memasang dan merawat konfigurasi di workspace Coder `danu`. Perintah dij
 | 1 | Ambil lock, putar log | Keluar diam |
 | 2 | Siapkan `PATH` dan toolchain Node | Langkah yang butuh Node dilewati |
 | 3 | `git pull --ff-only` repo ini | Pakai checkout yang ada |
-| 4 | Pasang biner (tailscale, rtk, bd, uv) di `~/.local/bin` | Fitur terkait mati |
+| 4 | Pasang biner (rtk, bd, uv; tailscale hanya bila `ENABLE_TAILSCALE=1`) di `~/.local/bin` | Fitur terkait mati |
 | 5 | Cek `secrets.env` ada dan mode 600 | Langkah 7, 8, 10 dilewati |
 | 6 | `node install/install.cjs --apply` | Konfigurasi lama tetap |
 | 7 | Checkout atau `pull --ff-only` repo `qonflo-coord` di `~/projects` | Dilewati kalau pohon kerja tidak bersih |
-| 8 | Jalankan `tailscaled` lewat `supervise.sh`, gabung tailnet | Bridge tetap dicoba |
+| 8 | Hanya bila `ENABLE_TAILSCALE=1` (default mati): jalankan `tailscaled` lewat `supervise.sh`, gabung tailnet | Bridge tetap dicoba |
 | 9 | Uji jangkauan DOCK | Dicatat |
 | 10 | Pasang plugin dan MCP dari `plugins/plugins.json` dan `mcp/mcp.linux.json` | Dicatat |
 | 11 | Jalankan bridge chat | Dicatat |
