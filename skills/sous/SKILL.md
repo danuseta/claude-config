@@ -37,7 +37,7 @@ Read the first prompt of the session:
 | `Pakai skill sous: kerjakan <KEY>.` with the sentence `Cron run:` | **cron** | No GATE 1. Runner goes through to an opened PR (draft when the ledger has `draft=true`), demo video made before the PR. |
 | `kerjakan <KEY>` from the owner in chat, without `Cron run:` | **manual** | GATE 1 stays: the runner stops after terrain with the plan; you show the owner `prompts/S<n>.md` (AC, Terrain) and wait. On "lanjut" / "go" dispatch the runner again as a continuation. |
 | `Lanjutkan tiket <KEY> dari blackboard dan ledger ...` | **continue** | Section 4. |
-| `review <KEY>` / a PR link | review | `sous-review-runner`. |
+| `review <KEY>` / a PR link | review | `sous-review-runner`. When it returns, the reply ends with the author message from the `review-message` skill, without being asked: read that skill and follow its output shape, attachments included (on the workspace one `DOCK_ATTACH:` line per image). Files the owner names in the request (a Discord thread, a PDF) are fetched first, see section 7. |
 | Anything else that is work | free form | Pick or make `CARD-<slug>`, `sous-work-runner`. |
 | A greeting or "what's cookin'?" only | progress | Section 6, then wait. |
 
@@ -80,5 +80,6 @@ Owner `DECIDED` > `SHOV` > contract > Jira AC > `USULAN`. A `D-n` from arbiter o
 - One heavy step per machine: tests, tsc and builds run only inside `status.cjs lock verify <KEY>`.
 - Agents run in the foreground: dispatch a runner and wait for its return, never `run_in_background`, and never end the turn while an agent or a Monitor still runs. A DOCK turn that ends kills them (QRD-1346 lost two workers that way); the runner guard refuses background calls.
 - Stage per path, never `git add -A` or `.`; never push to develop, main or master; no AI attribution in commits or PR bodies; never commit `docs/`, `.gitignore`, `.omc/`.
+- Files the owner points to in Discord (a thread id or a discord.com/channels link): `node K/discord-files.cjs <thread> ROOT/.evidence/<MMDD>/<KEY>-discord`, then read them (a PDF with the Read tool). DOCK holds the bot token in its Settings; an empty `DISCORD_BOT_TOKEN` in the environment does not mean there is no bot. Only when the script itself fails, name its error and ask the owner for the file.
 - Guards are enforced per agent (`kit/sous-guard.cjs`) on top of `guard.cjs`. A block is reported, never worked around.
 - After a run, queue the note: `python3 "K/brain.py" save --no-ingest --project "qonflo" --topic "<topic>" --title "<title>" --context "<why>" --point "<point>" --decision "<outcome>"` (`python` on Windows).
