@@ -138,7 +138,7 @@ Each finding carries its impact and its blast radius, not just its location.
 
 Close with Approve or Request Change.
 
-Record the review in the ledger so the DOCK Agents page shows it: one `node <kitDir>/status.cjs finding <KEY> --severity blocker|non-blocking|nit "<finding>"` per finding, one `lgtm <KEY> "<part>"` per part that is fine, then `verdict <KEY> approve|request-change`. Approve is refused while a blocker is recorded.
+Record the review in the ledger so the DOCK Agents page shows it: one `node <kitDir>/status.cjs finding <KEY> --severity blocker|non-blocking|nit "<finding>"` per finding, one `lgtm <KEY> "<part>"` per part that is fine, then `verdict <KEY> approve|request-change`. Approve is refused while an unresolved blocker is recorded. On a re-review, a blocker that no longer applies (the AC changed, the author fixed it) is closed with `node <kitDir>/status.cjs finding <KEY> <n> resolve "<why>"` before the new verdict; it stays in the ledger, marked resolved.
 
 ## 8b. The message to the author
 
