@@ -2,9 +2,12 @@
 //   [QONFLO_PASS_FILE=<file holding the password>] node login-state.cjs <fe-port> [email]
 // The password is read from QONFLO_PASS_FILE, or ~/.qonflo-pass when that is unset, and never printed or stored here.
 // Root, evidence and the FE repo come from paths.cjs; Windows uses the installed Chrome, Linux the system chromium.
+// Before logging in it gives the account's group an ACTIVE local subscription when it has none, so the app does not
+// send it to /checkout. That only touches a MongoDB on this machine, read from the BE repo's .env, through mongosh.
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { spawnSync } = require("child_process");
 const { resolvePaths } = require("./paths.cjs");
 
 const LINUX_CHROMIUM = "/usr/local/bin/chromium";
@@ -27,6 +30,55 @@ function launchOptions(platform = process.platform, env = process.env) {
 	return fs.existsSync(executablePath) ? { executablePath } : {};
 }
 
+function readEnv(file) {
+	const values = {};
+	if (!fs.existsSync(file)) return values;
+	for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+		const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+		if (m) values[m[1]] = m[2].trim().replace(/^(['"])(.*)\1$/, "$2");
+	}
+	return values;
+}
+
+// True only when every host of a mongodb:// string is this machine; mongodb+srv always names a remote cluster.
+function isLocalMongo(conn) {
+	const m = String(conn || "").match(/^mongodb:\/\/(?:[^@/]*@)?([^/?]+)/);
+	if (!m) return false;
+	return m[1].split(",").every((host) => /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host.trim()));
+}
+
+// mongosh script: reads SEED_DB and SEED_EMAIL; adds one zero-amount ACTIVE subscription only when the group has none.
+const SEED_SCRIPT = `
+const d = db.getSiblingDB(process.env.SEED_DB);
+const u = d.users.findOne({ email: process.env.SEED_EMAIL });
+if (!u || !u.groupId) { print("no user " + process.env.SEED_EMAIL); quit(); }
+const g = typeof u.groupId === "string" ? u.groupId : u.groupId.toHexString();
+if (d.subscriptions.countDocuments({ groupId: g, status: { $in: ["ACTIVE", "PAST_DUE"] } }) > 0) { print("active already"); quit(); }
+const now = new Date();
+d.subscriptions.updateOne(
+	{ groupId: g, referenceId: "LOCAL-TEST-SEED" },
+	{ $set: { status: "ACTIVE", updatedAt: now }, $setOnInsert: { currency: "IDR", amount: 0, interval: "MONTHLY", intervalCount: 1, anchorDate: now, paymentMethods: ["XENDIT"], recurringAction: "PAYMENT", activatedAt: now, createdAt: now, __v: 0 } },
+	{ upsert: true }
+);
+print("seeded");
+`;
+
+// One line about the local subscription; never stops the login.
+function ensureSubscription(beRepo, email, run = spawnSync) {
+	const env = readEnv(path.join(beRepo, ".env"));
+	const conn = env.MONGO_CONN_STRING;
+	if (!conn || !env.MONGO_CONN_DBNAME) return "subscription: skipped, no MONGO_CONN_STRING / MONGO_CONN_DBNAME in the BE .env";
+	if (!isLocalMongo(conn)) return "subscription: skipped, MongoDB is not on this machine";
+	const r = run("mongosh", ["--quiet", conn, "--eval", SEED_SCRIPT], {
+		encoding: "utf8",
+		timeout: 30000,
+		env: { ...process.env, SEED_DB: env.MONGO_CONN_DBNAME, SEED_EMAIL: email },
+	});
+	if (r.error) return `subscription: skipped, ${r.error.code === "ENOENT" ? "mongosh not found" : r.error.message}`;
+	if (r.status !== 0) return `subscription: failed, ${String(r.stderr || "").trim().split("\n").pop()}`;
+	return `subscription: ${String(r.stdout || "").trim()}`;
+}
+
 function main() {
 	const paths = resolvePaths();
 	const port = process.argv[2];
@@ -45,6 +97,7 @@ function main() {
 		console.error(`playwright not found under ${paths.repos.fe}/node_modules/.pnpm (install the FE dependencies first)`);
 		process.exit(1);
 	}
+	console.log(ensureSubscription(paths.repos.be, email));
 	const { chromium } = require(pw);
 	const launch = launchOptions();
 	const out = `${paths.root}/.playwright/auth/local-${port}.json`;
@@ -91,4 +144,4 @@ function main() {
 }
 
 if (require.main === module) main();
-else module.exports = { playwrightDir, launchOptions };
+else module.exports = { playwrightDir, launchOptions, isLocalMongo, ensureSubscription, SEED_SCRIPT };
