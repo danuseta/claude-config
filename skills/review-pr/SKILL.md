@@ -132,13 +132,13 @@ Prefer a verified catch over a plausible one. When a finding rests on a divergen
 
 ## 8. Report
 
-Order by severity: blocking, then non-blocking, then nits. State what was verified and what was only reasoned about.
+Order by severity: blocking, then non-blocking, then nits. A red CI is never a blocker on its own: record it as non-blocking (`CI red: <job>, <cause from its log>; re-run or fix`). Only an unmet AC or broken behaviour, quoted from the AC or contract, blocks. State what was verified and what was only reasoned about.
 
 Each finding carries its impact and its blast radius, not just its location.
 
 Close with Approve or Request Change.
 
-Record the review in the ledger so the DOCK Agents page shows it: one `node <kitDir>/status.cjs finding <KEY> --severity blocker|non-blocking|nit "<finding>"` per finding, one `lgtm <KEY> "<part>"` per part that is fine, then `verdict <KEY> approve|request-change`. Approve is refused while a blocker is recorded.
+Record the review in the ledger so the DOCK Agents page shows it: one `node <kitDir>/status.cjs finding <KEY> --severity blocker|non-blocking|nit "<finding>"` per finding, one `lgtm <KEY> "<part>"` per part that is fine, then `verdict <KEY> approve|request-change`. Approve is refused while an unresolved blocker is recorded. On a re-review, a blocker that no longer applies (the AC changed, the author fixed it) is closed with `node <kitDir>/status.cjs finding <KEY> <n> resolve "<why>"` before the new verdict; it stays in the ledger, marked resolved.
 
 ## 8b. The message to the author
 

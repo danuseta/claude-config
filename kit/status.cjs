@@ -29,9 +29,10 @@
 //   node status.cjs assume KEY "<assumption>" "<what would prove it wrong>"  |  assume KEY <n> <confirmed|refuted> "<evidence>"
 //   node status.cjs replan KEY "<reason>"            -> counted against replanBudget (default 2, set KEY replanBudget=<n> at the gate)
 //   node status.cjs finding KEY [--severity blocker|non-blocking|nit] "<text>" -> a reviewer finding (default non-blocking)
+//   node status.cjs finding KEY <n> resolve "<why>"  -> finding #n no longer applies (the AC changed, the author fixed it); kept, marked resolved
 //   node status.cjs lgtm KEY "<part>"                -> a part of the change the reviewer found fine
 //   node status.cjs verdict KEY approve|request-change [--ticket KEY] [--pr <url>]... -> the review verdict with the reviewed ticket and
-//                                                     PR urls (default: KEY and pr.be / pr.fe); approve is refused while a blocker is recorded
+//                                                     PR urls (default: KEY and pr.be / pr.fe); approve is refused while an unresolved blocker is recorded
 //   node status.cjs metrics                          -> closing numbers per ticket and per work type
 //   node status.cjs remote                           -> the tickets DOCK knows: owner machine, offered to, local ledger or not
 //   node status.cjs handover KEY --to <machine> [--note "..."] -> offer a pushed ticket to another machine; save then refuses here
@@ -225,6 +226,7 @@ const renderBoard = (key, s) => {
 		...(s.handoffs ?? []).map((h) => [h.at, "HANDOFF", `${h.who} ${h.status}: ${h.summary}${h.proven ? "" : " (unproven)"}`]),
 		...(s.failures ?? []).map((f) => [f.at, "FAIL", `${f.type} #${f.attempt}${f.what ? ` ${f.what}` : ""}`]),
 		...(s.findings ?? []).map((f) => [f.at, "FINDING", `${f.severity}: ${f.text}`]),
+		...(s.findings ?? []).flatMap((f, i) => (f.resolved ? [[f.resolved.at, "FINDING-RESOLVED", `#${i + 1}: ${f.resolved.why}`]] : [])),
 	].filter((e) => e[0]).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
 	fs.writeFileSync(path.join(dir, "status.md"), `${head}# Status log - ${key}\n\nFormat: \`YYYY-MM-DD HH:MM · ${key} · MARKER · what\`\n\n${events.map(([at, m, t]) => `${stamp(at)} · ${key} · ${m} · ${line(t)}`).join("\n")}\n`);
 	const dBlock = (d) => [
@@ -743,6 +745,17 @@ if (!cmd) {
 } else if (cmd === "finding") {
 	const s = load(key);
 	if (!s) return console.log(`no status for ${key}; run init first`);
+	if (/^\d+$/.test(rest[0] ?? "") && rest[1] === "resolve") {
+		const n = Number(rest[0]);
+		const finding = (s.findings ?? [])[n - 1];
+		if (!finding) return refuse(`${key} has no finding #${n}`);
+		if (finding.resolved) return refuse(`${key} finding #${n} is already resolved`);
+		const why = rest.slice(2).join(" ").trim();
+		if (!why) return refuse("resolve needs the reason the finding no longer applies");
+		finding.resolved = { at: now(), why };
+		save(key, s);
+		return console.log(`${key} finding #${n} resolved`);
+	}
 	const severity = optValue("--severity") || "non-blocking";
 	if (!SEVERITIES.includes(severity)) return refuse(`--severity must be one of ${SEVERITIES.join(", ")}`);
 	const at = rest.indexOf("--severity");
@@ -765,8 +778,8 @@ if (!cmd) {
 	const { flags: f, words } = takeFlags(rest, ["--ticket", "--pr"]);
 	const verdict = words[0];
 	if (!VERDICTS.includes(verdict)) return refuse(`verdict must be one of ${VERDICTS.join(", ")}`);
-	const blockers = (s.findings ?? []).filter((f) => f.severity === "blocker").length;
-	if (verdict === "approve" && blockers) return refuse(`${key} has ${blockers} blocker finding(s); approve needs none`);
+	const blockers = (s.findings ?? []).filter((f) => f.severity === "blocker" && !f.resolved).length;
+	if (verdict === "approve" && blockers) return refuse(`${key} has ${blockers} unresolved blocker finding(s); approve needs none (status.cjs finding ${key} <n> resolve "<why>")`);
 	const prs = f["--pr"]?.filter(Boolean) ?? [s.pr?.be, s.pr?.fe].filter(Boolean);
 	s.verdict = { at: now(), value: verdict, ticket: f["--ticket"]?.[0] || key, prs };
 	save(key, s);
@@ -889,5 +902,5 @@ if (!cmd) {
 		console.log(`| ${name} | ${list.length} | ${mean(tracked, (row) => row.c.fixRounds)} | ${mean(list, (row) => (row.s.findings ?? []).length)} | ${mean(timed, (row) => row.c.hours)} |`);
 	}
 } else {
-	console.log("usage: status.cjs [show KEY | init KEY title bePort fePort beDir feDir | set KEY k=v... | ac KEY n STATE text evidence | ac-set KEY @file [jiraUpdated] | stale [KEY jiraUpdated [@file]] | handoff KEY who k=v...|@file.json | fail KEY type evidence [what] | assume KEY text falsifier | assume KEY n confirmed|refuted evidence | replan KEY reason | finding KEY [--severity blocker|non-blocking|nit] text | lgtm KEY text | verdict KEY approve|request-change [--ticket KEY] [--pr url]... | metrics | brief KEY text|@file | decide KEY text [--status SHOV|USULAN|DECIDED] [--by owner|arbiter|sous|agent] [--issue n] [--effect text] [--alt \"option::effect\"]... [--replaces n] | issue KEY TYPE text [--options \"A::effect|B::effect\"] | issue KEY n escalate sous|owner why | issue KEY n resolve decisionN | round KEY [why] | lock name KEY [--wait s] [--pid n] | unlock name KEY | render KEY | sync [KEY] | remote | handover KEY --to machine [--note text] | pull KEY [--force]]");
+	console.log("usage: status.cjs [show KEY | init KEY title bePort fePort beDir feDir | set KEY k=v... | ac KEY n STATE text evidence | ac-set KEY @file [jiraUpdated] | stale [KEY jiraUpdated [@file]] | handoff KEY who k=v...|@file.json | fail KEY type evidence [what] | assume KEY text falsifier | assume KEY n confirmed|refuted evidence | replan KEY reason | finding KEY [--severity blocker|non-blocking|nit] text | finding KEY n resolve why | lgtm KEY text | verdict KEY approve|request-change [--ticket KEY] [--pr url]... | metrics | brief KEY text|@file | decide KEY text [--status SHOV|USULAN|DECIDED] [--by owner|arbiter|sous|agent] [--issue n] [--effect text] [--alt \"option::effect\"]... [--replaces n] | issue KEY TYPE text [--options \"A::effect|B::effect\"] | issue KEY n escalate sous|owner why | issue KEY n resolve decisionN | round KEY [why] | lock name KEY [--wait s] [--pid n] | unlock name KEY | render KEY | sync [KEY] | remote | handover KEY --to machine [--note text] | pull KEY [--force]]");
 }

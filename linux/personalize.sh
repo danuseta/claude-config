@@ -65,6 +65,28 @@ s_hook() {
   cp "$source" "$hook" && chmod 755 "$hook" && note "refreshed $hook"
 }
 
+# Without BRAIN_URL and BRAIN_TOKEN this workspace has no Brain behind it: the brain hooks would ask its own DOCK on
+# every prompt and turn, get "503 Brain is not configured", and ask the agent to save notes that cannot be stored.
+s_brainhooks() {
+  local settings=$CCFG_CLAUDE_DIR/settings.json want=on
+  [ -f "$settings" ] || { note "no settings.json yet"; return 10; }
+  command -v node >/dev/null 2>&1 || { note "node not found"; return 10; }
+  { grep -Eq '^BRAIN_URL=.+' "$CCFG_SECRETS" && grep -Eq '^BRAIN_TOKEN=.+' "$CCFG_SECRETS"; } 2>/dev/null || want=off
+  if [ "$DRY" = 1 ]; then note "would turn the brain hooks $want"; return 0; fi
+  node -e '
+const fs = require("fs");
+const [file, want] = process.argv.slice(1);
+const s = JSON.parse(fs.readFileSync(file, "utf8"));
+const env = s.env || {};
+const now = env.BRAIN_HOOKS === "off" ? "off" : "on";
+if (now === want) { console.log(`brain hooks already ${want}`); process.exit(0); }
+if (want === "off") env.BRAIN_HOOKS = "off"; else delete env.BRAIN_HOOKS;
+s.env = env;
+fs.writeFileSync(file, JSON.stringify(s, null, 2) + "\n");
+console.log(`brain hooks turned ${want}`);
+' "$(native_path "$settings")" "$want" >"$STEP_NOTE"
+}
+
 track_branch() {
   local dir=$1 want=$2
   timeout 60 git -C "$dir" fetch -q origin "+refs/heads/$want:refs/remotes/origin/$want" 2>/dev/null || return 10
@@ -585,6 +607,7 @@ main() {
   step binaries s_binaries 1500
   step secrets s_secrets
   step install s_install 300
+  step brainhooks s_brainhooks
   step coord s_coord 300
   step tailscale s_tailscale 300
   step reach s_reach 90
