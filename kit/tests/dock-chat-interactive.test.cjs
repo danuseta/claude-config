@@ -650,8 +650,10 @@ test('pruneFiles runs at bridge start: a session folder untouched for 8 days is 
 test('a slash command goes through as the message text, never through argv', async () => {
   const t = await turn({ script: SAY, dock: { message: { text: '/review 123 --fast' } } });
   assert.equal(t.user.message.content.at(-1).text, '/review 123 --fast');
-  assert.ok(!t.argv.some((a) => a.includes('review')));
-  assert.ok(!t.argv.some((a) => a.includes('123')));
+  // The appended system prompt is DOCK's own text and may name a review; only the turn's own arguments count.
+  const own = t.argv.filter((_, i) => t.argv[i - 1] !== '--append-system-prompt');
+  assert.ok(!own.some((a) => a.includes('review')));
+  assert.ok(!own.some((a) => a.includes('123')));
 });
 
 test('options: model, effort and mode become flags after validation against the probe catalogue; fast only when available', async () => {
