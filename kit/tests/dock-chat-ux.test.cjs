@@ -7,13 +7,13 @@ const catalog = require('../dock-chat-catalog.cjs');
 const files = require('../dock-chat-files.cjs');
 const { KIT, tmp, rmrf, startServer, runNode, waitFor, sandboxEnv } = require('./helpers.cjs');
 
-test('machineDefaults reads settings.json, lets the environment win, and falls back to null and "default"', () => {
+test('machineDefaults reads settings.json, lets the environment win, and falls back to null', () => {
   const dir = tmp('defaults');
   try {
     fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ model: 'opus', effortLevel: 'high', permissions: { defaultMode: 'acceptEdits' } }));
     assert.deepEqual(catalog.machineDefaults({ configDir: dir }, {}), { model: 'opus', effort: 'high', permissionMode: 'acceptEdits' });
     assert.deepEqual(catalog.machineDefaults({ configDir: dir, permissionMode: 'auto' }, { ANTHROPIC_MODEL: 'sonnet', CLAUDE_CODE_EFFORT_LEVEL: 'low' }), { model: 'sonnet', effort: 'low', permissionMode: 'auto' });
-    assert.deepEqual(catalog.machineDefaults({ configDir: path.join(dir, 'missing') }, {}), { model: null, effort: null, permissionMode: 'default' });
+    assert.deepEqual(catalog.machineDefaults({ configDir: path.join(dir, 'missing') }, {}), { model: null, effort: null, permissionMode: null });
   } finally { rmrf(dir); }
 });
 

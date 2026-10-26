@@ -48,7 +48,7 @@ au_pass() {
     if [ "$AU_DRY" = 1 ]; then say DRY "would pull claude-config and apply binaries, install and plugins"
     else
       say INFO "claude-config moved, updating"
-      bash "$CCFG_LINUX_DIR/personalize.sh" --stdout --only=repo,binaries,install,brainhooks,plugins
+      bash "$CCFG_LINUX_DIR/personalize.sh" --stdout --only=repo,binaries,pdftools,install,brainhooks,plugins
     fi
   fi
 
