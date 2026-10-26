@@ -57,6 +57,14 @@ s_link() {
   mkdir -p "$CCFG_BIN" && ln -sfn "$target" "$link" && note "linked $link"
 }
 
+# A workspace bootstrapped before a hook fix keeps its old copy; Coder runs ~/personalize, not the repo file.
+s_hook() {
+  local source=$CCFG_LINUX_DIR/personalize hook=$HOME/personalize
+  cmp -s "$source" "$hook" && { note "~/personalize is current"; return 0; }
+  if [ "$DRY" = 1 ]; then note "would refresh $hook"; return 0; fi
+  cp "$source" "$hook" && chmod 755 "$hook" && note "refreshed $hook"
+}
+
 track_branch() {
   local dir=$1 want=$2
   timeout 60 git -C "$dir" fetch -q origin "+refs/heads/$want:refs/remotes/origin/$want" 2>/dev/null || return 10
@@ -572,6 +580,7 @@ main() {
   step toolchain s_toolchain $((TOOLCHAIN_WAIT_SECS + 60))
   load_template_env
   step link s_link
+  step hook s_hook
   step repo s_repo 90
   step binaries s_binaries 1500
   step secrets s_secrets
