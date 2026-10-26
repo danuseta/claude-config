@@ -201,6 +201,15 @@ s_binaries() {
   return 0
 }
 
+# The Read tool turns PDF pages into images with pdftoppm; without it an agent cannot read a PDF a teammate posted.
+s_pdftools() {
+  command -v pdftoppm >/dev/null 2>&1 && { note "poppler-utils present"; return 0; }
+  command -v apt-get >/dev/null 2>&1 && sudo -n true 2>/dev/null || { note "no apt-get or no passwordless sudo, PDFs stay unreadable"; return 10; }
+  if [ "$DRY" = 1 ]; then note "would install poppler-utils"; return 0; fi
+  sudo -n apt-get update -qq >/dev/null && sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq poppler-utils >/dev/null || { note "poppler-utils install failed"; return 1; }
+  note "installed poppler-utils"
+}
+
 s_secrets() {
   local st n
   st=$(secrets_state)
@@ -605,6 +614,7 @@ main() {
   step hook s_hook
   step repo s_repo 90
   step binaries s_binaries 1500
+  step pdftools s_pdftools 300
   step secrets s_secrets
   step install s_install 300
   step brainhooks s_brainhooks
