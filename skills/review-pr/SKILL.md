@@ -132,7 +132,7 @@ Prefer a verified catch over a plausible one. When a finding rests on a divergen
 
 ## 8. Report
 
-Order by severity: blocking, then non-blocking, then nits. State what was verified and what was only reasoned about.
+Order by severity: blocking, then non-blocking, then nits. A red CI is never a blocker on its own: record it as non-blocking (`CI red: <job>, <cause from its log>; re-run or fix`). Only an unmet AC or broken behaviour, quoted from the AC or contract, blocks. State what was verified and what was only reasoned about.
 
 Each finding carries its impact and its blast radius, not just its location.
 
