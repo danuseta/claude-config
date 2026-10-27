@@ -1,0 +1,10 @@
+{
+  "discord": {
+    "guild": "1389235158414000200",
+    "channels": [
+      { "id": "1525182530184286289", "name": "bugreport", "kind": "bug" },
+      { "id": "1527229030439321820", "name": "uat-bug-report", "kind": "uat" },
+      { "id": "1527228669725114459", "name": "pull-request", "kind": "pr" }
+    ]
+  }
+}
