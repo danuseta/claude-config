@@ -248,6 +248,9 @@ service_prepare() {
         [ -z "$v" ] || export "$n=$v"
       done
       if [ "$ENABLE_TAILSCALE" = 1 ] && [ -S "$TS_SOCK" ]; then export DOCK_LEDGER_PEER_PROXY="http://127.0.0.1:$TS_PROXY_PORT"; fi
+      # The team's Discord server and forums, for a DOCK whose Settings leave them empty. The bot token comes from the
+      # template as DOCK_DISCORD_BOT_TOKEN in the agent's environment, which this service inherits.
+      if [ -f "$CCFG_CLAUDE_DIR/kit/dock-team.json" ]; then export DOCK_TEAM_FILE="$CCFG_CLAUDE_DIR/kit/dock-team.json"; fi
       ;;
     updater) setup_path; command -v node >/dev/null 2>&1 || load_template_env ;;
   esac
