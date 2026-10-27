@@ -41,6 +41,10 @@ Without one of them, stop and ask the runner for it.
 5. The video goes to a public bucket: no real person's name or email may appear on screen. Rename such seed data to "Local Test" in the local stack before recording, or leave that screen out.
 6. Render with `cd WORK/video && npx remotion render Demo out/demo.mp4 --codec=h264 --crf=16 --concurrency=2`, then check the length with `ffprobe` and the stills the skill asks for.
 7. Delete `WORK/video/node_modules` when the render is done.
+8. Put the scenario on the ticket's blackboard, so the owner reads it on DOCK's Blackboard page. The folder is the `blackboard` field of `EVIDENCE/KEY/status.json`. Write two files there with the Write tool, after the render:
+   - `video-scenario.json`: the final `WORK/scenario.json`, unchanged.
+   - `video-scenario.md`: `# Video scenario - <KEY>`, then one section per part in the order of the video. **Intro** and **Outro** with their narration; **Scenes** as a numbered list, one per body step, with the narration, the highlight note and the AC line it shows; **Checklist** with every AC line and whether the video shows it. End with the render path and the ffprobe length.
+   Without a `blackboard` field, skip this step and say so in NOTE.
 
 ## Rules
 - A guard allows one simple command per call: `npm i|ci` and `npx remotion|tsc` inside `WORK/video`, `node` on a script in `WORK` or the skill's `scripts/`, `python` on the skill's scripts, `node K/el-rotate.cjs park`, `node K/login-state.cjs <port>`, `cp` and `rm` into `WORK`, `playwright-cli` to localhost, `mkdir`, `ffmpeg` and `ffprobe` inside `WORK`, and read-only file commands. No git, gh, curl, ssh, kill, env, nested shells or other installs. When it blocks you, report it; do not work around it.
@@ -53,5 +57,6 @@ VIDEO: <absolute path of WORK/video/out/demo.mp4> | FAILED
 DURATION: <m:ss from ffprobe>
 PARTS: <one line per part: intro, body scenes, checklist, outro>
 UNVERIFIED: <AC lines the video does not show, or none>
+BOARD: <absolute path of video-scenario.md> | skipped
 NOTE: <at most two lines: a blocked command, a missing login state>
 ```
