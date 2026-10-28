@@ -28,9 +28,19 @@ Continue without a contract only when the ticket names no contract and every sea
 
 The MCP is not logged in, or the fetch returns 401, 404, or a timeout: stop. Do not write code. Report the page and the reason in the chat.
 
-## 5. Evidence
+## 5. Design artifacts
+
+A `claude.ai/artifact/<id>` link in the ticket, the epic, a comment or a remote link (storyboard, wireframe, sprint plan) is a design source the change must follow, with or without a Confluence contract. It is never skipped as "not Confluence".
+
+1. List every such link with where it was named.
+2. Read each one from a saved copy: `<board>/materials/artifacts/<id>.html`, or an HTML file the owner attached in the chat (copy it there first). The copy is one self-contained HTML file: its screens, labels and sample data sit in the source, so search it for the ticket's terms and read those parts, or open it from `file://` in a browser where that is allowed.
+3. A machine with the Artifact tool (the laptop) reads the link itself and saves the HTML there. The workspace cannot: WebFetch gets an empty shell and the browser gets a Cloudflare check.
+4. A link with no copy: stop before planning, like an unreadable contract. Ask the owner for the HTML of that link, named in the question, and say how: open it in Claude Code on the laptop, then attach the saved HTML in the chat.
+
+## 6. Evidence
 
 - The PR body carries `Contract: Confluence <id> "<title>" v<version>` and quotes the contract sentences the change relies on.
+- The PR body carries `Design: <artifact link>` for every artifact the change follows.
 - When the sprint blackboard disagrees with the contract, the contract wins. Record the difference with `status.cjs decide <KEY> "<what and why>"`.
 
 ## Check
@@ -38,4 +48,5 @@ The MCP is not logged in, or the fetch returns 401, 404, or a timeout: stop. Do 
 - [ ] Ticket fields, epic, remote links, and both page searches were tried, in that order
 - [ ] Page id, title, version, and last-modified date are recorded
 - [ ] An unreadable contract stopped the session
-- [ ] The PR body has the `Contract:` line
+- [ ] Every artifact link was read from a saved copy, or the session stopped and asked for it
+- [ ] The PR body has the `Contract:` line and a `Design:` line per artifact

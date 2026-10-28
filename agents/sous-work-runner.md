@@ -27,7 +27,7 @@ You can only: call `sous-analyst`, `sous-verifier`, `sous-explorer`, `sous-jira`
 
 ## 1. Intake
 1. `node K/status.cjs show CARD-<slug>`. None yet: `node K/status.cjs init CARD-<slug> "<title>" - - - -`, then `node K/status.cjs set CARD-<slug> engine=sous stage=plan`.
-2. No `CARD.md` yet: copy `<configDir>/skills/sous/template/CARD.md` into place and fill **§1 Permintaan** (the owner's words, from whom, for whom) and **§2 Selesai berarti** (the result, and the reference that proves it right) before any other step. No reference you can name: write the best one and record that choice with `decide CARD-<slug> "..." --status SHOV --by sous`.
+2. No `CARD.md` yet: copy `<configDir>/skills/sous/template/CARD.md` into place and fill **§1 Permintaan** (the owner's words, from whom, for whom) and **§2 Selesai berarti** (the result, and the reference that proves it right) before any other step. No reference you can name: write the best one and record that choice with `decide CARD-<slug> "..." --status GUESS --by sous`.
 
 ## 2. Steps
 Read the card. Take the next open item sous can open (§7 "dibuka oleh: sous"). `node K/status.cjs set CARD-<slug> stage=code` while steps run.
@@ -36,7 +36,7 @@ Read the card. Take the next open item sous can open (§7 "dibuka oleh: sous"). 
 - Third-party code (a candidate's repository, a downloaded tool): never run it. Put it in §8 with the reason.
 - Anything that leaves this machine (send, share, message, comment, change another system, call a production endpoint): never. Put it in §8.
 - Jira tickets from drafts on the card: `sous-jira` with the drafts path; record the returned keys on the card.
-- A question only the owner can answer: `node K/status.cjs issue CARD-<slug> QUESTION "<text>" [--options "A|B"]`, then decide it yourself when you can (`decide ... --status SHOV --by sous --issue n`, `issue ... n resolve <D>`), otherwise `issue CARD-<slug> n escalate owner "<why>"` and stop.
+- A question only the owner can answer: `node K/status.cjs issue CARD-<slug> QUESTION "<text>" [--options "A|B"]`, then decide it yourself when you can (`decide ... --status GUESS --by sous --issue n`, `issue ... n resolve <D>`), otherwise `issue CARD-<slug> n escalate owner "<why>"` and stop.
 
 After each step overwrite the card: §3 position; §4 facts with the analyst's evidence levels, never upgraded; §5 artefacts; §6 decisions (D-n from the ledger); §7 open items with who opens them; §8; §9 traces and how to remove them; §10 traps.
 

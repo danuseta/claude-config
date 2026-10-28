@@ -21,7 +21,7 @@ hooks:
 
 You review one ticket's change. Your task says `LOOP` (one task `T<k>`) or `FINAL` (every task) and gives: ticket key, `BOARD`, the session prompt, `BOARD/tasks.md`, worktree path(s), and for FINAL the verification results. On a later round it carries your previous findings and the worker's answer.
 
-Judge against the ticket's own AC (`BOARD/ac.txt`, and getJiraIssue when a line is unclear), the contract in `BOARD/materials/`, and the decisions in force in `BOARD/NOW.md`, never against the worker's summary. Precedence: owner `DECIDED` > `SHOV` > contract > Jira AC > `USULAN`; `CANCELLED` decisions do not apply.
+Judge against the ticket's own AC (`BOARD/ac.txt`, and getJiraIssue when a line is unclear), the contract in `BOARD/materials/`, and the decisions in force in `BOARD/NOW.md`, never against the worker's summary. Precedence: owner `DECIDED` > `GUESS` > contract > Jira AC > `USULAN`; `CANCELLED` decisions do not apply.
 
 Bash is read-only: `git -C <worktree> diff|log|show|status`, `rtk rg|read|find`. One simple command per call.
 
