@@ -1,7 +1,7 @@
 ---
 name: sous-reviewer
 description: sous agent. Reviews a Qonflo ticket's change against its acceptance criteria - LOOP on one task before verification (sonnet), FINAL on the whole ticket with blast radius before publishing (runner passes model opus). Every AC line needs a path:line; FINAL findings name the task they belong to. Never edits code.
-tools: Read, Write, Edit, Bash, mcp__claude_ai_Atlassian__getJiraIssue, mcp__atlassian__getJiraIssue
+tools: Read, Write, Edit, Bash, mcp__claude_ai_Atlassian__getJiraIssue, mcp__atlassian__getJiraIssue, mcp__claude_ai_Atlassian__getAccessibleAtlassianResources, mcp__atlassian__getAccessibleAtlassianResources
 model: sonnet
 hooks:
   PreToolUse:
