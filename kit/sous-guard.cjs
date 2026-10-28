@@ -493,6 +493,33 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 			try { if (/co-authored-by|generated with \[?claude/i.test(fs.readFileSync(norm(f["--body-file"]), "utf8"))) return "no AI attribution in a PR body"; } catch {}
 			return null;
 		}
+		if (w[0] === "gh" && w[1] === "pr" && w[2] === "edit") {
+			const num = w[3] || "";
+			if (!/^\d+$/.test(num)) return "gh pr edit <number> --repo <owner>/<repo> [--title <title>] [--body-file <file>]";
+			const f = {};
+			const args = w.slice(4);
+			for (let i = 0; i < args.length; i++) {
+				if (!["--repo", "--title", "--body-file"].includes(args[i]) || args[i + 1] === undefined || f[args[i]]) return `gh pr edit: argument not allowed: ${args[i]}`;
+				f[args[i]] = args[++i];
+			}
+			if (!f["--repo"] || (!f["--title"] && !f["--body-file"])) return "gh pr edit needs --repo and a --title or --body-file";
+			const url = `https://github.com/${f["--repo"]}/pull/${num}`.toLowerCase();
+			let known = false;
+			try {
+				for (const dir of fs.readdirSync(paths.evidence)) {
+					try {
+						const pr = JSON.parse(fs.readFileSync(`${paths.evidence}/${dir}/status.json`, "utf8")).pr || {};
+						if (Object.values(pr).some((u) => typeof u === "string" && u.toLowerCase() === url)) known = true;
+					} catch {}
+				}
+			} catch {}
+			if (!known) return `${f["--repo"]}#${num} is not a pull request recorded in a sous ledger`;
+			if (f["--body-file"]) {
+				if (!rootOf(norm(f["--body-file"]), ["@evidence"])) return "the PR body file lives under the evidence folder";
+				try { if (/co-authored-by|generated with \[?claude/i.test(fs.readFileSync(norm(f["--body-file"]), "utf8"))) return "no AI attribution in a PR body"; } catch {}
+			}
+			return null;
+		}
 		if (w[0] === "gh") return checkGhRead(w);
 		return `${w[0]} is not allowed for the publisher`;
 	}

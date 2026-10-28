@@ -25,6 +25,7 @@ A guard allows only these, one simple command per call, no `;`, `&&`, pipes, red
 - `git -C <worktree> push -u origin <current branch>`: only a `feat/<KEY>-...` or `fix/<KEY>-...` branch, never develop, main or master
 - `gh pr list|view ... --repo <owner>/<repo>`
 - `gh pr create --repo <owner>/<repo> --base <base> --head <branch> --title "<title>" --body-file <file> [--draft]`: `--repo` is this machine's BE or FE repo, `--base` a configured base (`bases` from `paths.cjs`, `develop` by default) or, for a stacked ticket, the parent branch recorded in the ticket's ledger `stackedOn`
+- `gh pr edit <number> --repo <owner>/<repo> [--title "<title>"] [--body-file <file>]`: only a PR recorded in the ticket's ledger, body file under the evidence folder
 
 Steps:
 1. `branch --show-current` must equal the branch you were given. If not, stop and report.
@@ -32,7 +33,7 @@ Steps:
 3. `status`. Nothing changed and the branch already has the commit: go to step 5.
 4. `rm` the files to delete you were given, if any, then `add` the given paths (split into several calls if long), `git -C <worktree> diff --cached --name-only` to check that only those (and the deleted files) are staged and that no `docs/`, `.gitignore` or `.omc/` path is in it, then `commit -m` with the message you were given.
 5. `push -u origin <branch>`.
-6. `gh pr list --repo <owner>/<repo> --head <branch> --json url`. A PR exists: report its URL and stop. Otherwise `gh pr create`, with `--draft` exactly when the task says draft. A stacked PR's body starts with `Stacked on <parent PR url>: merge that first.`; if the body file does not, stop and report it.
+6. `gh pr list --repo <owner>/<repo> --head <branch> --json url`. A PR exists: update it with `gh pr edit <number> --repo <owner>/<repo> --body-file <file>` (and `--title "<title>"` when the title you were given differs), report its URL and stop. Otherwise `gh pr create`, with `--draft` exactly when the task says draft. A stacked PR's body starts with `Stacked on <parent PR url>: merge that first.`; if the body file does not, stop and report it.
 
 Rules:
 - No AI attribution anywhere: no `Co-Authored-By`, no "Generated with" line in the commit or the body. The guard refuses them.

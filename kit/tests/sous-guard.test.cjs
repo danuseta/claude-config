@@ -145,6 +145,13 @@ test('publish guard: per path staging, commit -m, ticket branches only, gh pr cr
     const body = `${root}/.evidence/QRD-77/pr-body-be.md`;
     const pr = (repo, base, head = 'feat/QRD-77-thing') => bash(`gh pr create${repo ? ` --repo ${repo}` : ''}${base ? ` --base ${base}` : ''} --head ${head} --title t --body-file ${body}`);
     for (const [repo, base, head] of [['o/r', 'develop'], ['o/f', 'feat/V1-Playbook'], ['O/R', 'develop'], ['o/r', 'feat/QRD-77-thing', 'feat/QRD-78-child']]) assert.equal(g.check('publish', [], pr(repo, base, head)), null, `${repo} ${base} ${head}`);
+    fs.writeFileSync(`${root}/.evidence/QRD-77/status.json`, JSON.stringify({ key: 'QRD-77', pr: { be: 'https://github.com/o/r/pull/15', fe: 'https://github.com/o/f/pull/9' } }));
+    for (const c of [`gh pr edit 15 --repo o/r --body-file ${body}`, `gh pr edit 9 --repo O/F --title "QRD-77 feat: thing" --body-file ${body}`, `gh pr edit 9 --repo o/f --title t`]) assert.equal(g.check('publish', [], bash(c)), null, `QRD-1275 I-17: ${c}`);
+    for (const [c, why] of [[`gh pr edit 16 --repo o/r --body-file ${body}`, /not a pull request recorded in a sous ledger/], [`gh pr edit 15 --repo o/f --title t`, /not a pull request recorded/],
+      [`gh pr edit 15 --repo o/r --body-file ${root}/.evidence/QRD-77/bad-body.md`, /attribution/], [`gh pr edit 15 --repo o/r --body-file ${base}/elsewhere.md`, /evidence folder/],
+      [`gh pr edit 15 --repo o/r --add-reviewer x`, /argument not allowed/], ['gh pr edit 15 --repo o/r', /a --title or --body-file/], [`gh pr edit 15 --body-file ${body}`, /needs --repo/], ['gh pr edit x --repo o/r --title t', /gh pr edit <number>/]]) {
+      assert.match(g.check('publish', [], bash(c)) || '', why, c);
+    }
     for (const [repo, base, head, why] of [['x/r', 'develop', undefined, /not this machine's BE or FE repo/], ['o/r', 'main', undefined, /not a configured base/], ['o/r', 'feat/QRD-77-thing', undefined, /not a configured base/], ['o/f', 'feat/QRD-77-thing', 'feat/QRD-78-child', /not a configured base/], ['', 'develop', undefined, /needs --repo/], ['o/r', '', undefined, /needs --repo/]]) {
       assert.match(g.check('publish', [], pr(repo, base, head)) || '', why, `${repo} ${base} ${head}`);
     }
