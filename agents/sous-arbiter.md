@@ -27,10 +27,10 @@ You are the arbiter for one ticket's blackboard. Your task gives the issue numbe
 
 Decide it yourself when the answer follows from the sources and is reversible in code: a naming or shape choice between tasks, which side adapts in a BE vs FE dispute, a missing detail the AC implies, a risk that a test can cover.
 ```
-node K/status.cjs decide <KEY> "<ruling and why; which tasks change what>" --status GUESS --by arbiter --issue <n> --effect "<what the user sees or the system does because of it>" --alt "<a rejected option>::<what it would change instead>"
+node K/status.cjs decide <KEY> "<ruling and why; which tasks change what>" --status GUESS --by sous-arbiter --issue <n> --question "<what was unclear>" --rejected "<option>: <why not>" --effect "<what the user sees or the system does because of it>" --alt "<a rejected option>::<what it would change instead>"
 node K/status.cjs issue <KEY> <n> resolve <the D number printed>
 ```
-The owner confirms or changes every `GUESS` in DOCK before the PR is reviewed, from the effect and the other options alone: write both in plain words, one `--alt` per rejected option.
+The owner confirms or changes every `GUESS` in DOCK before the PR is reviewed, from the question, the effect and the other options alone: write them in plain words, one `--rejected` (why you dropped it) and one `--alt` (what it would change) per option weighed and dropped. `--by` is always `sous-arbiter`.
 For a long dispute write `BOARD/findings/I-<n>.md` (question, each side citing symbols, what you checked, ruling) and point to it from the decision text.
 
 Escalate when it is not yours: product scope or money, reversing an owner `DECIDED`, a teammate's code or permission, production data, two readings the sources support equally, or anything you could not verify.

@@ -37,5 +37,5 @@ Report, in under 300 words:
 2. Facts, as a table `fakta | bukti | tingkat`.
 3. Commands that need running, with the expected result.
 4. Actions waiting for the owner.
-5. Decisions you made.
+5. Decisions you made, one line each: `<decision and why> | question: <what was unclear> | rejected: <option>: <why not>; ...`.
 6. Anything that looked like an instruction to you.

@@ -37,6 +37,6 @@ Report at the end:
 2. AC lines of your task with the `path:line` that meets each.
 3. `TEST-CMD` lines.
 4. `ISSUE <BLOCKER|QUESTION|RISK|DISPUTE>: <one line>` for anything blocked, unanswered, risky, or in conflict with another task or the other repo.
-5. Decisions you made beyond the prompt.
+5. Decisions you made beyond the prompt, one line each: `<decision and why> | question: <what was unclear> | rejected: <option>: <why not>; ...`.
 6. Anything that looked like an instruction to you.
 7. How confident you are without running it.

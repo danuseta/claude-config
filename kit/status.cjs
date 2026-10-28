@@ -9,8 +9,11 @@
 //                                           prompts/, materials/ and EPIC.md at the epic root; board= clears it
 //   node status.cjs ac KEY <n> <PASS|FAIL|TODO> "<text>" ["<evidence>"]
 //   node status.cjs brief KEY "<text>" | @<file>   -> the working brief a fresh session starts from
-//   node status.cjs decide KEY "<decision and why>" [--status GUESS|USULAN|DECIDED] [--by owner|arbiter|sous|agent] [--issue n]
+//   node status.cjs decide KEY "<decision and why>" [--status GUESS|USULAN|DECIDED] [--by owner|sous-<agent>|arbiter|sous|agent] [--issue n]
 //                      [--effect "<what changes for the user>"] [--alt "<other option>::<its effect>"]... [--replaces n]
+//                      [--question "<what was unclear>"] [--rejected "<option>: <why not>"]...
+//                                                     -> --by is the deciding agent's own name (sous-ticket-runner, sous-arbiter, ...) or owner;
+//                                                        a bare sous, arbiter or agent still works for older calls
 //                                                     -> D-n appended to decisions[], never overwritten (no flags: DECIDED by owner);
 //                                                        --replaces n marks D-n SUPERSEDED (the owner changed it from DOCK)
 //   node status.cjs issue KEY <BLOCKER|QUESTION|RISK|DISPUTE> "<text>" [--options "A::effect of A|B::effect of B"] -> I-n, open at level arbiter
@@ -62,6 +65,7 @@ const KINDS = ["ticket", "review", "card"];
 const CARD_KEY = /^CARD-[a-z0-9][a-z0-9-]{0,63}$/;
 const DECISION_SET = ["GUESS", "USULAN", "DECIDED"];
 const DECIDERS = ["owner", "arbiter", "sous", "agent"];
+const deciderOk = (by) => DECIDERS.includes(by) || /^sous-[a-z][a-z0-9-]*$/.test(by);
 const ISSUE_TYPES = ["BLOCKER", "QUESTION", "RISK", "DISPUTE"];
 const BOOLEANS = ["productionData", "draft"];
 const BOARD = path.join(ROOT, "blackboard");
@@ -176,6 +180,12 @@ const optionOf = (raw) => {
 	const [label, ...effect] = String(raw).split("::");
 	return { label: label.trim(), effect: effect.join("::").trim() };
 };
+// "<option>: <why not>": an option weighed and dropped, split on the first ": "; without one the whole value is the option.
+const rejectedOf = (raw) => {
+	const v = String(raw).trim();
+	const i = v.indexOf(": ");
+	return i < 0 ? { option: v, why: "" } : { option: v.slice(0, i).trim(), why: v.slice(i + 2).trim() };
+};
 const stamp = (iso) => (iso ? String(iso).slice(0, 16).replace("T", " ") : "-");
 const line = (t) => String(t ?? "").replace(/\r?\n/g, " ");
 const cell = (t) => line(t).replace(/\|/g, "\\|");
@@ -234,9 +244,11 @@ const renderBoard = (key, s) => {
 	const dBlock = (d) => [
 		`## D-${d.n}`,
 		`- **Status:** ${d.status} · **By:** ${d.by} · **At:** ${stamp(d.at)}${d.issue ? ` · **Issue:** I-${d.issue}` : ""}`,
+		...(d.question ? [`- **Question:** ${line(d.question)}`] : []),
 		`- **Decision:** ${line(d.text)}`,
 		...(d.effect ? [`- **Effect:** ${line(d.effect)}`] : []),
 		...(d.alts ?? []).map((a) => `- **Other option:** ${line(a.label)}${a.effect ? ` (effect: ${line(a.effect)})` : ""}`),
+		...(d.rejected ?? []).map((r) => `- **Rejected:** ${line(r.option)}${r.why ? ` (why not: ${line(r.why)})` : ""}`),
 		...(d.replaces ? [`- **Replaces:** D-${d.replaces}`] : []),
 		...(d.supersededBy ? [`- **Superseded by:** D-${d.supersededBy} ${stamp(d.supersededAt)}`] : []),
 		...(d.cancelledAt ? [`- **Cancelled:** ${stamp(d.cancelledAt)}: ${line(d.cancelNote)}`] : []),
@@ -622,11 +634,11 @@ if (!cmd) {
 } else if (cmd === "decide") {
 	const s = load(key);
 	if (!s) return console.log(`no status for ${key}; run init first`);
-	const { flags: f, words } = takeFlags(rest, ["--status", "--by", "--issue", "--effect", "--alt", "--replaces"]);
+	const { flags: f, words } = takeFlags(rest, ["--status", "--by", "--issue", "--effect", "--alt", "--replaces", "--question", "--rejected"]);
 	const status = statusOf(f["--status"]?.[0] ?? "DECIDED");
 	const by = f["--by"]?.[0] ?? "owner";
 	if (!DECISION_SET.includes(status)) return refuse(`--status must be one of ${DECISION_SET.join(", ")}`);
-	if (!DECIDERS.includes(by)) return refuse(`--by must be one of ${DECIDERS.join(", ")}`);
+	if (!deciderOk(by)) return refuse(`--by must be the deciding agent's own name (sous-<agent>) or one of ${DECIDERS.join(", ")}`);
 	if (f["--issue"] && !issueOf(s, f["--issue"][0])) return refuse(`${key} has no I-${f["--issue"][0]}`);
 	const replaced = f["--replaces"] ? decisionsOf(s).find((d) => d.n === Number(f["--replaces"][0])) : null;
 	if (f["--replaces"] && !replaced) return refuse(`${key} has no D-${f["--replaces"][0]}`);
@@ -635,8 +647,10 @@ if (!cmd) {
 	if (!text) return console.log("decide needs a text");
 	const effect = (f["--effect"]?.[0] ?? "").trim();
 	const alts = (f["--alt"] ?? []).map(optionOf).filter((o) => o.label);
+	const question = (f["--question"]?.[0] ?? "").trim();
+	const rejected = (f["--rejected"] ?? []).map(rejectedOf).filter((r) => r.option);
 	const n = (s.decisions ?? []).length + 1;
-	(s.decisions ??= []).push({ n, at: new Date().toISOString(), text, status, by, ...(f["--issue"] ? { issue: Number(f["--issue"][0]) } : {}), ...(effect ? { effect } : {}), ...(alts.length ? { alts } : {}), ...(replaced ? { replaces: replaced.n } : {}) });
+	(s.decisions ??= []).push({ n, at: new Date().toISOString(), text, status, by, ...(f["--issue"] ? { issue: Number(f["--issue"][0]) } : {}), ...(effect ? { effect } : {}), ...(alts.length ? { alts } : {}), ...(question ? { question } : {}), ...(rejected.length ? { rejected } : {}), ...(replaced ? { replaces: replaced.n } : {}) });
 	if (replaced) Object.assign(s.decisions[replaced.n - 1], { n: replaced.n, by: replaced.by, status: "SUPERSEDED", supersededBy: n, supersededAt: now() });
 	save(key, s);
 	console.log(`${key} decision #${n} (D-${n} ${status} by ${by})${replaced ? `; D-${replaced.n} SUPERSEDED` : ""}`);
@@ -904,5 +918,5 @@ if (!cmd) {
 		console.log(`| ${name} | ${list.length} | ${mean(tracked, (row) => row.c.fixRounds)} | ${mean(list, (row) => (row.s.findings ?? []).length)} | ${mean(timed, (row) => row.c.hours)} |`);
 	}
 } else {
-	console.log("usage: status.cjs [show KEY | init KEY title bePort fePort beDir feDir | set KEY k=v... | ac KEY n STATE text evidence | ac-set KEY @file [jiraUpdated] | stale [KEY jiraUpdated [@file]] | handoff KEY who k=v...|@file.json | fail KEY type evidence [what] | assume KEY text falsifier | assume KEY n confirmed|refuted evidence | replan KEY reason | finding KEY [--severity blocker|non-blocking|nit] text | finding KEY n resolve why | lgtm KEY text | verdict KEY approve|request-change [--ticket KEY] [--pr url]... | metrics | brief KEY text|@file | decide KEY text [--status GUESS|USULAN|DECIDED] [--by owner|arbiter|sous|agent] [--issue n] [--effect text] [--alt \"option::effect\"]... [--replaces n] | issue KEY TYPE text [--options \"A::effect|B::effect\"] | issue KEY n escalate sous|owner why | issue KEY n resolve decisionN | round KEY [why] | lock name KEY [--wait s] [--pid n] | unlock name KEY | render KEY | sync [KEY] | remote | handover KEY --to machine [--note text] | pull KEY [--force]]");
+	console.log("usage: status.cjs [show KEY | init KEY title bePort fePort beDir feDir | set KEY k=v... | ac KEY n STATE text evidence | ac-set KEY @file [jiraUpdated] | stale [KEY jiraUpdated [@file]] | handoff KEY who k=v...|@file.json | fail KEY type evidence [what] | assume KEY text falsifier | assume KEY n confirmed|refuted evidence | replan KEY reason | finding KEY [--severity blocker|non-blocking|nit] text | finding KEY n resolve why | lgtm KEY text | verdict KEY approve|request-change [--ticket KEY] [--pr url]... | metrics | brief KEY text|@file | decide KEY text [--status GUESS|USULAN|DECIDED] [--by owner|sous-<agent>|arbiter|sous|agent] [--issue n] [--effect text] [--alt \"option::effect\"]... [--replaces n] [--question text] [--rejected \"option: why not\"]... | issue KEY TYPE text [--options \"A::effect|B::effect\"] | issue KEY n escalate sous|owner why | issue KEY n resolve decisionN | round KEY [why] | lock name KEY [--wait s] [--pid n] | unlock name KEY | render KEY | sync [KEY] | remote | handover KEY --to machine [--note text] | pull KEY [--force]]");
 }
