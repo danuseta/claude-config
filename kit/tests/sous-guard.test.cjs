@@ -120,6 +120,10 @@ test('runner guard: sous agents and browser-verifier only; kit scripts by their 
     assert.equal(g.check('runner', roots, bash(c)), null, c);
   }
   assert.equal(g.check('runner', roots, bash(`node ${K}/status.cjs set QRD-1 draft=true`)), null, 'draft=true stays allowed');
+  for (const c of [`node ${K}/status.cjs decide QRD-1 "keep the endpoint" --status GUESS --by sous-ticket-runner --question "the AC names no endpoint" --rejected "a new endpoint: two calls from the FE" --rejected "do nothing"`,
+    `${K}/bin/kit-node status.cjs decide QRD-1 "take B" --status GUESS --by sous-arbiter --issue 1 --question "A or B?" --rejected "A: breaks saved data"`]) {
+    assert.equal(g.check('runner', roots, bash(c)), null, c);
+  }
   for (const c of [`node ${K}/status.cjs set QRD-1 rounds.max=9`, `node ${K}/status.cjs set QRD-1 stage=code rounds.max=3`, `node ${K}/status.cjs set QRD-1 draft=false`, `${K}/bin/kit-node status.cjs set QRD-1 rounds.max=9`, `${K}/bin/kit-node status.cjs set QRD-1 draft=false`]) {
     assert.match(g.check('runner', roots, bash(c)) || '', /owner's to set/, c);
   }

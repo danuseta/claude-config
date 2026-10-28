@@ -60,6 +60,64 @@ test('decide keeps the old form and adds status, by, issue, effect, other option
   }
 });
 
+test('decide records the question and every rejected option, by the agent that decided', async () => {
+  const { base, status, ledger } = scratch('sous-decide-why');
+  try {
+    await status('init', 'ZED-420', 'Invented', '-', '-', '-', '-');
+    let r = await status('decide', 'ZED-420', 'keep the old endpoint', '--status', 'GUESS', '--by', 'sous-ticket-runner',
+      '--question', 'the AC names no endpoint', '--rejected', 'a new endpoint: the FE would need a second call',
+      '--rejected', 'a query flag: still has: a colon', '--rejected', 'do nothing', '--rejected', ' ');
+    assert.match(r.stdout, /D-1 GUESS by sous-ticket-runner/);
+    r = await status('decide', 'ZED-420', 'plain', '--by', 'sous');
+    assert.match(r.stdout, /D-2 DECIDED by sous/);
+    r = await status('decide', 'ZED-420', 'x', '--by', 'robot');
+    assert.equal(r.code, 2);
+    r = await status('decide', 'ZED-420', 'x', '--by', 'sous-');
+    assert.equal(r.code, 2);
+    const d = ledger('ZED-420').decisions;
+    assert.equal(d[0].question, 'the AC names no endpoint');
+    assert.deepEqual(d[0].rejected, [
+      { option: 'a new endpoint', why: 'the FE would need a second call' },
+      { option: 'a query flag', why: 'still has: a colon' },
+      { option: 'do nothing', why: '' },
+    ]);
+    assert.ok(!('question' in d[1]) && !('rejected' in d[1]), 'no flags, no fields');
+    r = await status('show', 'ZED-420');
+    assert.match(r.stdout, /"question": "the AC names no endpoint"/);
+    assert.match(r.stdout, /"option": "a new endpoint"/);
+    await status('render', 'ZED-420');
+    const md = fs.readFileSync(path.join(base, 'evidence', 'blackboard', 'ZED-420', 'decisions.md'), 'utf8');
+    assert.match(md, /- \*\*Question:\*\* the AC names no endpoint\n- \*\*Decision:\*\* keep the old endpoint/);
+    assert.match(md, /- \*\*Rejected:\*\* a new endpoint \(why not: the FE would need a second call\)/);
+    assert.match(md, /- \*\*Rejected:\*\* a query flag \(why not: still has: a colon\)/);
+    assert.match(md, /- \*\*Rejected:\*\* do nothing\n/);
+    assert.match(md, /## D-2\n- \*\*Status:\*\* DECIDED · \*\*By:\*\* sous · \*\*At:\*\* [^\n]+\n- \*\*Decision:\*\* plain\n*$/);
+  } finally {
+    rmrf(base);
+  }
+});
+
+test('an old ledger without question or rejected renders exactly as before', async () => {
+  const { base, evidence, status } = scratch('sous-decide-old');
+  try {
+    fs.mkdirSync(path.join(evidence, 'ZED-421'), { recursive: true });
+    fs.writeFileSync(path.join(evidence, 'ZED-421', 'status.json'), JSON.stringify({ key: 'ZED-421', title: 'Old', stage: 'code', ac: [], decisions: [
+      { at: '2026-10-01T08:00:00.000Z', text: 'written by the old flow' },
+      { n: 2, at: '2026-10-02T09:30:00.000Z', text: 'take B', status: 'GUESS', by: 'arbiter', effect: 'B shows', alts: [{ label: 'A', effect: '' }] },
+    ] }));
+    await status('render', 'ZED-421');
+    const md = fs.readFileSync(path.join(evidence, 'blackboard', 'ZED-421', 'decisions.md'), 'utf8');
+    assert.equal(md.split('\n').slice(1).join('\n'), [
+      '# Decisions - ZED-421', '',
+      'Precedence: owner DECIDED > GUESS > contract > Jira AC > USULAN. CANCELLED and SUPERSEDED entries do not apply.', '',
+      '## D-1', '- **Status:** DECIDED · **By:** owner · **At:** 2026-10-01 08:00', '- **Decision:** written by the old flow', '',
+      '## D-2', '- **Status:** GUESS · **By:** arbiter · **At:** 2026-10-02 09:30', '- **Decision:** take B', '- **Effect:** B shows', '- **Other option:** A', '',
+    ].join('\n'));
+  } finally {
+    rmrf(base);
+  }
+});
+
 test('an issue climbs arbiter, sous, owner and is resolved by a decision', async () => {
   const { base, status, ledger } = scratch('sous-issue');
   try {
