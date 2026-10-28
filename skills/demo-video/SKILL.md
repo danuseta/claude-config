@@ -1,6 +1,6 @@
 ---
 name: demo-video
-description: Use when making a narrated demo video of a Qonflo ticket or PR (for the boss or a reviewer). Writes Indonesian narration from the AC, voices it with ElevenLabs (Chris), records the local app headless in sharp 1080p, and renders the final video in Remotion with an editorial intro, karaoke subtitles, zoom-and-callout notes on the component being discussed, and a calm outro.
+description: Use when making a narrated demo video of a Qonflo ticket or PR (for the boss or a reviewer). Writes Indonesian narration from the AC, voices it with ElevenLabs (Chris), records the local app headless in sharp 1080p as a real demo (a visible cursor that glides to each target and clicks, navigation by clicking, no jumps), and renders the final video in Remotion with an editorial intro, karaoke subtitles, zoom-and-callout notes on the component being discussed, the AC checklist before the outro, and a calm outro.
 ---
 
 > On the Linux workspace, read the Machine map at the top of `AGENTS.md` first: it maps the Windows paths and commands below.
@@ -28,6 +28,18 @@ Work in a scratch folder, never in a repo.
   - No AI-slop visuals: no gradient blobs, particles, glow rings, glass pills or flash transitions.
   - Subtitles have no background box. The words sit directly on the video with only a thin dark text shadow for legibility.
 - **Licence.** Remotion is free only for individuals and companies of up to 3 people, and Qonflo is larger. Check the Company License (remotion.pro/license) before using this for official work.
+
+## Demo, not slides
+
+The viewer must see every move, the way a person would do it. Nothing changes on screen without the cursor causing it.
+
+- `record.cjs` draws a visible cursor. Before every `click`, `hover`, `type` and highlight it glides from its last position to the target, pauses, then clicks with a pink ring. `"cursor": false` in the scenario turns it off.
+- Move between pages by clicking the real navigation (`click` on the menu link), never with `goto`. `goto` and `eval` are for setup before the first body step only; the recorder warns when one runs while recording.
+- `type` with a `selector` clicks the field first, then types at 70 ms per character.
+- `scroll` (`by`, optional `selector`) and `scrollTop` use the mouse wheel in small steps, so the page slides instead of jumping.
+- Highlight frames fade in after the cursor reaches the component. Number the notes (`"1. Filter channel"`, `"2. Cari chat"`) so the steps read in order.
+- The demo style changes only how the body is filmed. A ticket demo still ends with the AC checklist scene (step 7c) before the outro.
+- `storageState` in the scenario reuses a saved login (e.g. `E:/qonflo/.evidence/<KEY>/auth-<port>.json`) instead of `login`.
 
 ## Narration and pronunciation
 
@@ -68,7 +80,7 @@ Write narration the way people talk:
    ```
    python scripts/tts.py <work>/scenario.json
    ```
-   This writes `<work>/audio/*.mp3` and `<work>/audio.json`. Set `voice.provider = "edge"` for a free draft while the script is still changing.
+   This writes `<work>/audio/*.mp3` and `<work>/audio.json`. Set `voice.provider = "edge"` for a free draft while the script is still changing. Edge needs `edge-tts` 7.3 or newer; older versions get `403` from Bing.
 4. **Record.**
    ```
    node scripts/record.cjs <work>/scenario.json
@@ -93,8 +105,9 @@ Write narration the way people talk:
    cp <work>/recording.mp4 <work>/audio/*.mp3 public/
    cp <work>/demo.json src/demo.json
    npx tsc --noEmit
-   npx remotion render Demo out/demo.mp4 --codec=h264 --crf=16
+   npx remotion render Demo out/demo.mp4 --codec=h264 --crf=16 --concurrency=2
    ```
+   Without `--concurrency=2` the render died with `Error: write EOF` when the laptop was short on memory.
    Use `npm run dev` (Remotion Studio) to preview before rendering.
 
    Then upload it: `node <kitDir>/demo-upload.cjs <KEY> <work>/video/out/demo.mp4`. It goes into DOCK's bucket as `<KEY>.mp4` and prints the permanent link. The ticket page of both DOCKs shows it and the Discord broadcast uses it; give the owner that link. A new render for the same ticket replaces the video and keeps the link.
