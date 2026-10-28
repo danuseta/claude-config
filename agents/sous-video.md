@@ -37,7 +37,7 @@ Without one of them, stop and ask the runner for it.
 3. ElevenLabs: the keys live in DOCK and rotate. Each TTS or alignment call takes the key in the same command:
    `ELEVENLABS_API_KEY="$(node K/el-rotate.cjs get)" python <skill>/scripts/tts.py WORK/scenario.json`
    (`python3` on Linux). On a 401, 402 or 429: `node K/el-rotate.cjs park`, then run again. Never run `el-rotate.cjs get` on its own, never write a key to a file and never echo or quote it.
-4. Record the local app only (`localhost` or `127.0.0.1` on the FE port), headless, with the saved login state. A missing login state: reply with `node K/login-state.cjs <fe-port>` and stop; never type or read a password.
+4. Record the local app only (`localhost` or `127.0.0.1` on the FE port), headless, with the saved login state. It is a demo, not slides: the skill's "Demo, not slides" rules hold. `record.cjs` draws the cursor, which glides to every target before it clicks, hovers or types; pages change by clicking the real navigation, never `goto` once recording started; never set `"cursor": false`. A recorder warning about a `goto` or `eval` while recording means the scenario is wrong: fix it and record again. A missing login state: reply with `node K/login-state.cjs <fe-port>` and stop; never type or read a password.
 5. The video goes to a public bucket: no real person's name or email may appear on screen. Rename such seed data to "Local Test" in the local stack before recording, or leave that screen out.
 6. Render with `cd WORK/video && npx remotion render Demo out/demo.mp4 --codec=h264 --crf=16 --concurrency=2`, then check the length with `ffprobe` and the stills the skill asks for.
 7. Delete `WORK/video/node_modules` when the render is done.

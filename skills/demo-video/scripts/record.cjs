@@ -34,6 +34,94 @@ const clearHighlight = (page) =>
 		document.getElementById("__demo_note")?.remove();
 	});
 
+const CURSOR_SCRIPT = () => {
+	const draw = () => {
+		if (!document.documentElement || document.getElementById("__demo_cursor")) return;
+		const saved = JSON.parse(sessionStorage.getItem("__demo_cursor") || "null") || { x: innerWidth / 2, y: innerHeight / 2 };
+		const cursor = document.createElement("div");
+		cursor.id = "__demo_cursor";
+		cursor.style.cssText = `position:fixed;left:0;top:0;width:28px;height:28px;z-index:2147483647;pointer-events:none;transform:translate(${saved.x}px,${saved.y}px);transition:scale .12s ease;transform-origin:2px 2px`;
+		cursor.innerHTML =
+			'<svg width="28" height="28" viewBox="0 0 28 28"><path d="M3 2 L3 22 L8.5 17 L12 25.5 L15.5 24 L12 15.8 L19.5 15.8 Z" fill="#fff" stroke="#0b0b12" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+		document.documentElement.appendChild(cursor);
+		const place = (x, y) => {
+			cursor.style.transform = `translate(${x}px,${y}px)`;
+			sessionStorage.setItem("__demo_cursor", JSON.stringify({ x, y }));
+		};
+		addEventListener("mousemove", (e) => place(e.clientX, e.clientY), true);
+		addEventListener(
+			"mousedown",
+			(e) => {
+				cursor.style.scale = "0.82";
+				const ring = document.createElement("div");
+				ring.style.cssText = `position:fixed;left:${e.clientX - 22}px;top:${e.clientY - 22}px;width:44px;height:44px;border-radius:50%;border:3px solid #f472b6;z-index:2147483646;pointer-events:none;opacity:.9;transition:transform .45s ease-out,opacity .45s ease-out`;
+				document.documentElement.appendChild(ring);
+				requestAnimationFrame(() => {
+					ring.style.transform = "scale(1.6)";
+					ring.style.opacity = "0";
+				});
+				setTimeout(() => ring.remove(), 500);
+			},
+			true
+		);
+		addEventListener("mouseup", () => (cursor.style.scale = "1"), true);
+	};
+	if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", draw);
+	else draw();
+};
+
+const ease = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
+const mouse = { x: null, y: null };
+
+async function glideTo(page, x, y) {
+	if (mouse.x === null) {
+		const [w, h] = await page.evaluate(() => [innerWidth, innerHeight]);
+		mouse.x = w / 2;
+		mouse.y = h / 2;
+	}
+	const from = { ...mouse };
+	const distance = Math.hypot(x - from.x, y - from.y);
+	const steps = Math.round(Math.min(45, Math.max(14, distance / 14)));
+	for (let i = 1; i <= steps; i++) {
+		const p = ease(i / steps);
+		await page.mouse.move(from.x + (x - from.x) * p, from.y + (y - from.y) * p);
+		await page.waitForTimeout(16);
+	}
+	mouse.x = x;
+	mouse.y = y;
+}
+
+async function pointAt(page, target) {
+	await target.evaluate((el) => {
+		const r = el.getBoundingClientRect();
+		if (r.top < 0 || r.bottom > innerHeight) el.scrollIntoView({ behavior: "smooth", block: "center" });
+	});
+	await page.waitForTimeout(450);
+	const box = await target.boundingBox();
+	if (!box) return null;
+	await glideTo(page, box.x + Math.min(box.width / 2, 60), box.y + box.height / 2);
+	await page.waitForTimeout(280);
+	return box;
+}
+
+async function humanClick(page, target) {
+	const box = await pointAt(page, target);
+	if (!box) return target.click();
+	await page.mouse.down();
+	await page.waitForTimeout(90);
+	await page.mouse.up();
+	await page.waitForTimeout(350);
+}
+
+async function smoothScroll(page, deltaY) {
+	const steps = Math.max(4, Math.round(Math.abs(deltaY) / 80));
+	for (let i = 0; i < steps; i++) {
+		await page.mouse.wheel(0, deltaY / steps);
+		await page.waitForTimeout(40);
+	}
+	await page.waitForTimeout(300);
+}
+
 function resolveTarget(page, highlight) {
 	let locator = highlight.text ? page.getByText(highlight.text).first() : page.locator(highlight.selector).first();
 	if (highlight.line) locator = locator.locator("xpath=ancestor::div[@class='cm-line'][1]");
@@ -44,9 +132,16 @@ async function showHighlight(page, highlight) {
 	await clearHighlight(page);
 	if (!highlight) return null;
 	const target = resolveTarget(page, highlight);
-	await target.evaluate((el) => el.scrollIntoView({ behavior: "smooth", block: "center" }));
-	await page.waitForTimeout(700);
-	const box = await target.boundingBox();
+	const box = highlight.point === false ? null : await pointAt(page, target);
+	if (!box) {
+		await target.evaluate((el) => el.scrollIntoView({ behavior: "smooth", block: "center" }));
+		await page.waitForTimeout(700);
+	}
+	const finalBox = await target.boundingBox();
+	return drawFrame(page, finalBox, highlight);
+}
+
+async function drawFrame(page, box, highlight) {
 	if (!box) return null;
 	return page.evaluate(
 		([box, note]) => {
@@ -54,8 +149,9 @@ async function showHighlight(page, highlight) {
 			const height = Math.min(innerHeight - top - 4, box.height + 16);
 			const frame = document.createElement("div");
 			frame.id = "__demo_hl";
-			frame.style.cssText = `position:fixed;left:${box.x - 8}px;top:${top}px;width:${box.width + 16}px;height:${height}px;border:3px solid #f472b6;border-radius:10px;box-shadow:0 0 0 9999px rgba(0,0,0,.25),0 0 20px #f472b6;z-index:99998;pointer-events:none`;
+			frame.style.cssText = `position:fixed;left:${box.x - 8}px;top:${top}px;width:${box.width + 16}px;height:${height}px;border:3px solid #f472b6;border-radius:10px;box-shadow:0 0 0 9999px rgba(0,0,0,.25),0 0 20px #f472b6;z-index:99998;pointer-events:none;opacity:0;transition:opacity .35s ease`;
 			document.documentElement.appendChild(frame);
+			requestAnimationFrame(() => (frame.style.opacity = "1"));
 			const rect = frame.getBoundingClientRect();
 			const dpr = devicePixelRatio;
 			const logged = [rect.left, rect.top, rect.right, rect.bottom].map((v) => Math.round(v * dpr));
@@ -89,16 +185,25 @@ async function showHighlight(page, highlight) {
 	);
 }
 
+const locate = (page, action) =>
+	(action.role ? page.getByRole(action.role, { name: new RegExp(action.name) }) : action.text ? page.getByText(action.text) : page.locator(action.selector)).first();
+
+let recording = false;
+
 async function runAction(page, action) {
-	if (action.type === "click") {
-		const target = action.role ? page.getByRole(action.role, { name: new RegExp(action.name) }) : page.locator(action.selector);
-		await target.first().click();
-	} else if (action.type === "press") await page.keyboard.press(action.key);
-	else if (action.type === "type") await page.keyboard.type(action.text, { delay: action.delayPerChar || 40 });
-	else if (action.type === "scrollTop") {
-		await page.evaluate(() => window.scrollTo({ top: 0, behavior: "smooth" }));
-		await page.waitForTimeout(500);
-	} else if (action.type === "wait") await page.waitForTimeout(action.ms);
+	if (recording && (action.type === "goto" || action.type === "eval"))
+		console.warn(`warning: "${action.type}" while recording jumps the screen; use click/type/scroll so the viewer sees each move`);
+	if (action.type === "click") await humanClick(page, locate(page, action));
+	else if (action.type === "hover") await pointAt(page, locate(page, action));
+	else if (action.type === "press") await page.keyboard.press(action.key);
+	else if (action.type === "type") {
+		if (action.selector || action.role) await humanClick(page, locate(page, { ...action, text: undefined }));
+		await page.keyboard.type(action.text, { delay: action.delayPerChar || 70 });
+	} else if (action.type === "scroll") {
+		if (action.selector) await pointAt(page, page.locator(action.selector).first());
+		await smoothScroll(page, action.by || 400);
+	} else if (action.type === "scrollTop") await smoothScroll(page, -(action.by || 2400));
+	else if (action.type === "wait") await page.waitForTimeout(action.ms);
 	else if (action.type === "goto") {
 		await page.goto(scenario.baseUrl + action.url);
 		await page.waitForLoadState("networkidle").catch(() => {});
@@ -117,7 +222,7 @@ async function dismissPrompts(page) {
 
 (async () => {
 	const browser = await chromium.launch({ channel: "chrome", args: [`--force-device-scale-factor=${SCALE}`, `--window-size=${WINDOW[0]},${WINDOW[1]}`] });
-	const context = await browser.newContext({ viewport: null, colorScheme: "dark" });
+	const context = await browser.newContext({ viewport: null, colorScheme: "dark", ...(scenario.storageState ? { storageState: scenario.storageState } : {}) });
 	await context.grantPermissions(["notifications"], { origin: scenario.baseUrl });
 	await context.addInitScript(() => {
 		localStorage.setItem("v2-theme", "dark");
@@ -125,6 +230,7 @@ async function dismissPrompts(page) {
 			for (const b of document.querySelectorAll("button")) if (b.textContent && b.textContent.trim() === "Maybe Later") b.click();
 		}, 150);
 	});
+	if (scenario.cursor !== false) await context.addInitScript(CURSOR_SCRIPT);
 	const page = await context.newPage();
 
 	if (scenario.login) {
@@ -157,6 +263,8 @@ async function dismissPrompts(page) {
 		await cdp.send("Page.screencastFrameAck", { sessionId: frame.sessionId }).catch(() => {});
 	});
 	await cdp.send("Page.startScreencast", { format: "jpeg", quality: 95 });
+	await glideTo(page, cssW / 2, cssH / 2);
+	recording = true;
 
 	const t0 = Date.now() / 1000;
 	const now = () => Date.now() / 1000 - t0;
