@@ -1,0 +1,667 @@
+{
+ "ticket": "QRD-1261",
+ "title": "Chip di body SKILL.md",
+ "subtitle": "Demo fitur",
+ "closing": "Terima kasih",
+ "src": {
+  "file": "recording.mp4",
+  "w": 1440,
+  "h": 900,
+  "start": 12.83,
+  "end": 58.13
+ },
+ "intro": {
+  "dur": 9.646
+ },
+ "outro": {
+  "dur": 7.971
+ },
+ "transition": 0.6,
+ "keywords": [
+  "QRD-1261",
+  "SKILL.md",
+  "AC4",
+  "Backspace",
+  "Save",
+  "chip",
+  "chip-nya",
+  "dicoret",
+  "nolak"
+ ],
+ "cues": [
+  {
+   "file": "s0_0.mp3",
+   "show": "Halo, ini demo singkat QRD-1261.",
+   "at": 0.37,
+   "dur": 4.152,
+   "words": [
+    {
+     "w": "Halo,",
+     "from": 0.24,
+     "to": 0.56
+    },
+    {
+     "w": "ini",
+     "from": 1.02,
+     "to": 1.18
+    },
+    {
+     "w": "demo",
+     "from": 1.2,
+     "to": 1.38
+    },
+    {
+     "w": "singkat",
+     "from": 1.42,
+     "to": 1.68
+    },
+    {
+     "w": "QRD-1261.",
+     "from": 1.74,
+     "to": 3.32
+    }
+   ]
+  },
+  {
+   "file": "s0_1.mp3",
+   "show": "Fiturnya: chip di body SKILL.md.",
+   "at": 4.888,
+   "dur": 3.216,
+   "words": [
+    {
+     "w": "Fiturnya:",
+     "from": 0.22,
+     "to": 0.7
+    },
+    {
+     "w": "chip",
+     "from": 1.12,
+     "to": 1.28
+    },
+    {
+     "w": "di",
+     "from": 1.3,
+     "to": 1.36
+    },
+    {
+     "w": "body",
+     "from": 1.4,
+     "to": 1.58
+    },
+    {
+     "w": "SKILL.md.",
+     "from": 1.6,
+     "to": 2.38
+    }
+   ]
+  },
+  {
+   "file": "s1_0.mp3",
+   "show": "Oke, jadi semua referensi di sini udah jadi chip.",
+   "at": 9.744,
+   "dur": 3.696,
+   "words": [
+    {
+     "w": "Oke,",
+     "from": 0.28,
+     "to": 0.54
+    },
+    {
+     "w": "jadi",
+     "from": 1.02,
+     "to": 1.18
+    },
+    {
+     "w": "semua",
+     "from": 1.24,
+     "to": 1.4
+    },
+    {
+     "w": "referensi",
+     "from": 1.44,
+     "to": 1.82
+    },
+    {
+     "w": "di",
+     "from": 1.86,
+     "to": 1.9
+    },
+    {
+     "w": "sini",
+     "from": 1.96,
+     "to": 2.16
+    },
+    {
+     "w": "udah",
+     "from": 2.2,
+     "to": 2.36
+    },
+    {
+     "w": "jadi",
+     "from": 2.4,
+     "to": 2.56
+    },
+    {
+     "w": "chip.",
+     "from": 2.62,
+     "to": 2.86
+    }
+   ]
+  },
+  {
+   "file": "s1_1.mp3",
+   "show": "Namanya selalu ngikutin nama terbaru, walaupun filenya di-rename.",
+   "at": 13.793,
+   "dur": 4.248,
+   "words": [
+    {
+     "w": "Namanya",
+     "from": 0.22,
+     "to": 0.54
+    },
+    {
+     "w": "selalu",
+     "from": 0.6,
+     "to": 0.82
+    },
+    {
+     "w": "ngikutin",
+     "from": 0.84,
+     "to": 1.14
+    },
+    {
+     "w": "nama",
+     "from": 1.16,
+     "to": 1.3
+    },
+    {
+     "w": "terbaru,",
+     "from": 1.34,
+     "to": 1.74
+    },
+    {
+     "w": "walaupun",
+     "from": 2.2,
+     "to": 2.6
+    },
+    {
+     "w": "filenya",
+     "from": 2.62,
+     "to": 2.94
+    },
+    {
+     "w": "di-rename.",
+     "from": 2.98,
+     "to": 3.42
+    }
+   ]
+  },
+  {
+   "file": "s2_0.mp3",
+   "show": "Kalau targetnya udah dihapus, chip-nya dicoret kayak gini.",
+   "at": 19.526,
+   "dur": 3.72,
+   "words": [
+    {
+     "w": "Kalau",
+     "from": 0.18,
+     "to": 0.36
+    },
+    {
+     "w": "targetnya",
+     "from": 0.4,
+     "to": 0.82
+    },
+    {
+     "w": "udah",
+     "from": 0.84,
+     "to": 0.96
+    },
+    {
+     "w": "dihapus,",
+     "from": 1.0,
+     "to": 1.44
+    },
+    {
+     "w": "chip-nya",
+     "from": 1.8,
+     "to": 2.08
+    },
+    {
+     "w": "dicoret",
+     "from": 2.1,
+     "to": 2.38
+    },
+    {
+     "w": "kayak",
+     "from": 2.4,
+     "to": 2.58
+    },
+    {
+     "w": "gini.",
+     "from": 2.62,
+     "to": 2.88
+    }
+   ]
+  },
+  {
+   "file": "s2_1.mp3",
+   "show": "Jadi langsung kelihatan, nggak hilang diam-diam.",
+   "at": 23.605,
+   "dur": 3.408,
+   "words": [
+    {
+     "w": "Jadi",
+     "from": 0.26,
+     "to": 0.44
+    },
+    {
+     "w": "langsung",
+     "from": 0.48,
+     "to": 0.7
+    },
+    {
+     "w": "kelihatan,",
+     "from": 0.72,
+     "to": 1.22
+    },
+    {
+     "w": "nggak",
+     "from": 1.66,
+     "to": 1.8
+    },
+    {
+     "w": "hilang",
+     "from": 1.82,
+     "to": 2.04
+    },
+    {
+     "w": "diam-diam.",
+     "from": 2.06,
+     "to": 2.58
+    }
+   ]
+  },
+  {
+   "file": "s3_0.mp3",
+   "show": "Sekarang coba kita hapus chip pointer ini.",
+   "at": 28.499,
+   "dur": 2.832,
+   "words": [
+    {
+     "w": "Sekarang",
+     "from": 0.22,
+     "to": 0.5
+    },
+    {
+     "w": "coba",
+     "from": 0.54,
+     "to": 0.78
+    },
+    {
+     "w": "kita",
+     "from": 0.82,
+     "to": 0.98
+    },
+    {
+     "w": "hapus",
+     "from": 1.02,
+     "to": 1.26
+    },
+    {
+     "w": "chip",
+     "from": 1.28,
+     "to": 1.42
+    },
+    {
+     "w": "pointer",
+     "from": 1.44,
+     "to": 1.7
+    },
+    {
+     "w": "ini.",
+     "from": 1.74,
+     "to": 1.98
+    }
+   ]
+  },
+  {
+   "file": "s3_1.mp3",
+   "show": "Cukup sekali Backspace, chip-nya hilang satu utuh.",
+   "at": 31.697,
+   "dur": 3.456,
+   "words": [
+    {
+     "w": "Cukup",
+     "from": 0.2,
+     "to": 0.42
+    },
+    {
+     "w": "sekali",
+     "from": 0.46,
+     "to": 0.7
+    },
+    {
+     "w": "Backspace,",
+     "from": 0.72,
+     "to": 1.2
+    },
+    {
+     "w": "chip-nya",
+     "from": 1.56,
+     "to": 1.84
+    },
+    {
+     "w": "hilang",
+     "from": 1.88,
+     "to": 2.08
+    },
+    {
+     "w": "satu",
+     "from": 2.12,
+     "to": 2.3
+    },
+    {
+     "w": "utuh.",
+     "from": 2.34,
+     "to": 2.56
+    }
+   ]
+  },
+  {
+   "file": "s4_0.mp3",
+   "show": "Nah, ini yang jadi catatan.",
+   "at": 36.974,
+   "dur": 2.664,
+   "words": [
+    {
+     "w": "Nah,",
+     "from": 0.24,
+     "to": 0.44
+    },
+    {
+     "w": "ini",
+     "from": 0.86,
+     "to": 1.02
+    },
+    {
+     "w": "yang",
+     "from": 1.04,
+     "to": 1.16
+    },
+    {
+     "w": "jadi",
+     "from": 1.18,
+     "to": 1.36
+    },
+    {
+     "w": "catatan.",
+     "from": 1.38,
+     "to": 1.84
+    }
+   ]
+  },
+  {
+   "file": "s4_1.mp3",
+   "show": "Card pointer-nya nggak ngasih tanda apa-apa.",
+   "at": 39.998,
+   "dur": 2.664,
+   "words": [
+    {
+     "w": "Card",
+     "from": 0.2,
+     "to": 0.32
+    },
+    {
+     "w": "pointer-nya",
+     "from": 0.38,
+     "to": 0.76
+    },
+    {
+     "w": "nggak",
+     "from": 0.8,
+     "to": 0.9
+    },
+    {
+     "w": "ngasih",
+     "from": 0.92,
+     "to": 1.16
+    },
+    {
+     "w": "tanda",
+     "from": 1.18,
+     "to": 1.38
+    },
+    {
+     "w": "apa-apa.",
+     "from": 1.42,
+     "to": 1.82
+    }
+   ]
+  },
+  {
+   "file": "s5_0.mp3",
+   "show": "Baru pas di-Save, servernya nolak.",
+   "at": 45.461,
+   "dur": 3.096,
+   "words": [
+    {
+     "w": "Baru",
+     "from": 0.24,
+     "to": 0.4
+    },
+    {
+     "w": "pas",
+     "from": 0.46,
+     "to": 0.6
+    },
+    {
+     "w": "di-Save,",
+     "from": 0.62,
+     "to": 1.1
+    },
+    {
+     "w": "servernya",
+     "from": 1.52,
+     "to": 1.9
+    },
+    {
+     "w": "nolak.",
+     "from": 1.94,
+     "to": 2.28
+    }
+   ]
+  },
+  {
+   "file": "s5_1.mp3",
+   "show": "Padahal di AC4, harusnya langsung kelihatan di card pointer.",
+   "at": 48.912,
+   "dur": 4.104,
+   "words": [
+    {
+     "w": "Padahal",
+     "from": 0.18,
+     "to": 0.52
+    },
+    {
+     "w": "di",
+     "from": 0.56,
+     "to": 0.66
+    },
+    {
+     "w": "AC4,",
+     "from": 0.68,
+     "to": 1.18
+    },
+    {
+     "w": "harusnya",
+     "from": 1.58,
+     "to": 1.9
+    },
+    {
+     "w": "langsung",
+     "from": 1.94,
+     "to": 2.16
+    },
+    {
+     "w": "kelihatan",
+     "from": 2.18,
+     "to": 2.58
+    },
+    {
+     "w": "di",
+     "from": 2.62,
+     "to": 2.66
+    },
+    {
+     "w": "card",
+     "from": 2.72,
+     "to": 2.88
+    },
+    {
+     "w": "pointer.",
+     "from": 2.9,
+     "to": 3.28
+    }
+   ]
+  },
+  {
+   "file": "s6_0.mp3",
+   "show": "Jadi kesimpulannya, chip-nya udah oke semua.",
+   "at": 53.693,
+   "dur": 3.336,
+   "words": [
+    {
+     "w": "Jadi",
+     "from": 0.26,
+     "to": 0.42
+    },
+    {
+     "w": "kesimpulannya,",
+     "from": 0.46,
+     "to": 1.08
+    },
+    {
+     "w": "chip-nya",
+     "from": 1.52,
+     "to": 1.78
+    },
+    {
+     "w": "udah",
+     "from": 1.82,
+     "to": 1.94
+    },
+    {
+     "w": "oke",
+     "from": 1.98,
+     "to": 2.1
+    },
+    {
+     "w": "semua.",
+     "from": 2.14,
+     "to": 2.48
+    }
+   ]
+  },
+  {
+   "file": "s6_1.mp3",
+   "show": "Tinggal satu yang perlu dibenerin, yaitu AC4.",
+   "at": 57.387,
+   "dur": 3.6,
+   "words": [
+    {
+     "w": "Tinggal",
+     "from": 0.18,
+     "to": 0.4
+    },
+    {
+     "w": "satu",
+     "from": 0.44,
+     "to": 0.62
+    },
+    {
+     "w": "yang",
+     "from": 0.66,
+     "to": 0.76
+    },
+    {
+     "w": "perlu",
+     "from": 0.78,
+     "to": 0.96
+    },
+    {
+     "w": "dibenerin,",
+     "from": 0.98,
+     "to": 1.4
+    },
+    {
+     "w": "yaitu",
+     "from": 1.84,
+     "to": 2.12
+    },
+    {
+     "w": "AC4.",
+     "from": 2.22,
+     "to": 2.76
+    }
+   ]
+  }
+ ],
+ "notes": [
+  {
+   "from": 1.07,
+   "to": 9.67,
+   "box": [
+    528,
+    272,
+    1405,
+    685
+   ],
+   "text": "Semua referensi di body jadi chip"
+  },
+  {
+   "from": 10.87,
+   "to": 18.87,
+   "box": [
+    528,
+    462,
+    1405,
+    495
+   ],
+   "text": "Target dihapus â†’ chip dicoret"
+  },
+  {
+   "from": 20.07,
+   "to": 27.27,
+   "box": [
+    528,
+    460,
+    1405,
+    495
+   ],
+   "text": "Sekali Backspace, satu chip hilang utuh"
+  },
+  {
+   "from": 28.47,
+   "to": 34.67,
+   "box": [
+    510,
+    42,
+    1423,
+    895
+   ],
+   "text": "Card pointer belum ngasih tanda (AC4)"
+  },
+  {
+   "from": 37.07,
+   "to": 45.07,
+   "box": [
+    264,
+    186,
+    1405,
+    221
+   ],
+   "text": "Error baru muncul setelah Save"
+  }
+ ]
+}
