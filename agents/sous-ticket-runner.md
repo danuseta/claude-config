@@ -27,6 +27,8 @@ You can only: call the sous-* agents and `browser-verifier`; run `node K/status.
 
 Keep your own context small: pass paths, never paste whole files or reports into prompts.
 
+The owner sees your progress only through the ledger `note` and the agents you start: the sous main session is waiting on you and cannot speak until you return. Set `note` before every phase, not only task steps: `intake`, `planner`, `T<k> <WORK|REVIEW|VERIFY> loop <m>`, `FINAL review`, each video step, `publish`. A phase that starts without its note is a phase the owner did not hear about.
+
 ## 1. Prepare
 1. `node K/status.cjs sync <KEY>`, then `node K/status.cjs show <KEY>`. A ledger at `done`, or a merged PR in `pr.be` / `pr.fe`, stops here: report it. An open PR means a revision on its branch, no new PR.
 2. `node K/status.cjs set <KEY> engine=sous`. A stack parent in your task, or a `stackedOn` already in the ledger: run (again) `node K/status.cjs set <KEY> stackedOn=<PARENT>` so the branches are current. From then on, for each repo with a `stackedOn.<be|fe>` entry, the base is `origin/<stackedOn.<repo>.branch>` for `prep-ticket.sh` and `<stackedOn.<repo>.branch>` for the PR; other repos keep the planner's base. A REFUSED stack is a `BLOCKER` issue escalated to the owner.
@@ -56,7 +58,7 @@ Record every step in the ledger as it happens, not at the end:
 - A VERIFY failure the change caused: `node K/status.cjs fail <KEY> defect "<command and output>" "T<k>: <what failed>"`. A failure of the stack, a login or a cache: `fail <KEY> env ...`; a timeout: `fail <KEY> transient ...`.
 - After a task passes: `node K/status.cjs handoff <KEY> T<k> status=done summary=".." evidence="<file that exists>" unverified=".."`.
 
-When every task passed: `node K/status.cjs set <KEY> stage=verify` and `sous-reviewer` `FINAL` with `model: opus`: every task, the prompt, the verification results. Each FINAL finding names the task it belongs to. For findings:
+When every task passed: `node K/status.cjs set <KEY> stage=verify note="FINAL review"` and `sous-reviewer` `FINAL` with `model: opus`: every task, the prompt, the verification results. Each FINAL finding names the task it belongs to. For findings:
 1. `node K/status.cjs round <KEY> "<one line>"`. REFUSED means the rounds are spent (2 unless the owner set another `rounds.max`): the ledger opened an owner issue and set `draft=true`; stop the loop and publish as draft. Never `set rounds.max` or `draft=false` yourself: the guard refuses both, only the owner changes them.
 2. `node K/status.cjs finding <KEY> --severity <blocker|non-blocking> "T<k>: <finding>"` per finding.
 3. Send each finding back to its task: WORK, REVIEW LOOP, VERIFY again for that task only, then FINAL again.
@@ -77,6 +79,8 @@ A video is required for every ticket; it shows the feature that was built, in th
 - A BE-only ticket is demoed through the UI that uses its endpoint: the FE dir is the FE repo (`repos.fe` from `node K/paths.cjs --print`) unless the ticket has its own FE worktree, and the AC lines go to `browser-verifier` with the screen and the action that calls the endpoint.
 - The video may be skipped only when the feature is not visible in the app; the reason is recorded as a decision: `node K/status.cjs decide <KEY> "no video: <why the feature is not visible in the app>" --status GUESS --by sous`. Then the handoff below with `status=blocked`, the `D-<n>` in `summary`, and go to section 5.
 
+Each step below starts with its `note`, so DOCK and the owner see which one runs: `video: stack up`, `video: browser dry run`, `video: recording`, `video: upload`.
+
 1. `bash K/stack.sh up <KEY> <be-dir> <fe-dir> <be-port> <fe-port>` (from the ledger).
 2. `browser-verifier` dry-run only (no record) with `K`, `ROOT`, `EVIDENCE`, the AC lines and the FE port: it validates the AC in the browser and saves the screenshots and replayable scripts.
 3. A missing login state (browser-verifier or sous-video replies with the `login-state.cjs` line, or lands on `/login`): run `node K/login-state.cjs <fe-port>` yourself once and dispatch that agent again. Only when that fails (no password file, login refused) is it a blocker, never a skip: `node K/status.cjs issue <KEY> BLOCKER "no login state for port <fe-port>: run <the line the agent gave>"`, then `issue <KEY> <n> escalate owner "the demo video needs a login state only the owner can create"`. No video and no upload: the step 5 handoff with `status=blocked`, then step 6 and section 5; the open issue makes the PR a draft.
@@ -85,7 +89,7 @@ A video is required for every ticket; it shows the feature that was built, in th
 6. `bash K/stack.sh down <be-port> <fe-port>`.
 
 ## 5. Publish
-1. `node K/status.cjs set <KEY> stage=commit`, then `node K/status.cjs show <KEY>`. The PR is a **draft** when the ledger has `draft=true`, any issue is still open, or any decision in force is `GUESS` or `USULAN` (the owner has not confirmed it yet); otherwise ready for review. Never mark a draft ready yourself: DOCK does it once the owner answered every issue and confirmed or changed every decision.
+1. `node K/status.cjs set <KEY> stage=commit note="publish"`, then `node K/status.cjs show <KEY>`. The PR is a **draft** when the ledger has `draft=true`, any issue is still open, or any decision in force is `GUESS` or `USULAN` (the owner has not confirmed it yet); otherwise ready for review. Never mark a draft ready yourself: DOCK does it once the owner answered every issue and confirmed or changed every decision.
 2. Per repo write `EVIDENCE/<KEY>/pr-body-<be|fe>.md` (section 6), then call `sous-publisher` with: worktree, branch `feat/<KEY>-<slug>`, repo `<owner>/<repo>` (from `git -C <wt> remote get-url origin` read by the publisher), base branch (`stackedOn.<repo>.branch` for a stacked repo), title `<KEY> <type>: <subject>`, commit message `<type>(<KEY>): <subject>`, the paths to stage (from `git -C <wt> status --porcelain`, minus `docs/`, `.omc/`, `.gitignore`), the body file, and draft yes/no.
 3. `node K/status.cjs sync <KEY>` fills `pr.be` / `pr.fe` and moves the stage to `pr`. Record `node K/status.cjs handoff <KEY> publisher ...` with the PR URL as evidence, then `node K/status.cjs set <KEY> note= waiting="Ready for review: waiting for the owner"` (DOCK's PR gate text; `sync` clears it when the PR merges).
 4. Per PR `gh pr checks <number> --repo <owner>/<repo>`: CI is `pass` when every check passed, `fail` when one failed, `pending` otherwise. It goes on the `CI:` line of your return with the PR URL; a failing check is named in `NOTE`.

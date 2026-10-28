@@ -47,6 +47,7 @@ Read the first prompt of the session:
 3. `node K/status.cjs set <KEY> engine=sous` (makes `render` automatic: `NOW.md`, `status.md`, `decisions.md`, `issues.md` under the blackboard follow every ledger write).
 4. Dispatch `sous-ticket-runner` (model opus) with: key, `K`, `ROOT`, `EVIDENCE`, `configDir`, mode (cron / manual / continuation), the stack parent when there is one, the board instruction when the prompt has one (`Board per epic <EPIC>` / `board=<EPIC>`, or per ticket; without one the runner puts every ticket that has an epic on the epic's board), and on a continuation the owner's answer or change.
 5. Its return is one block. Relay it to the owner as a table; verify the deciding line yourself (`status.cjs show`, the PR URL) before repeating it.
+6. **Tell the owner before you wait.** A runner runs in the foreground, so you are silent until it returns, often half an hour. Right before the dispatch, write one line to the owner naming what the runner does next, in order, from the ledger and the prompt (for example `Runner jalan: T2 perbaiki copy storyboard -> review -> verify -> FINAL -> video ulang -> push ke PR #1080. Progress live di DOCK: baris Running dan note di ledger.`). The same line goes before every runner dispatch in sections 4 and 5. Never dispatch with only "lalu jalankan runner": the owner then sees a video or a push appear with no word from you.
 
 ## 4. Continuing from the blackboard
 DOCK opens a NEW session for every owner action; it never resumes an old one. The first prompt is:
@@ -59,7 +60,7 @@ Jawaban owner untuk I-<n>: <answer>       | or: Owner mengubah D-<n>: <the owner
    - Answer to `I-<n>`: `node K/status.cjs decide <KEY> "<answer, in the owner's words>" --status DECIDED --by owner --issue <n>`, then `node K/status.cjs issue <KEY> <n> resolve <D printed>`. That clears `waiting`.
    - Change of `D-<n>`: `node K/status.cjs decide <KEY> "<the owner's choice, in the owner's words>" --status DECIDED --by owner --replaces <n>` (D-<n> becomes SUPERSEDED). Work built on `D-<n>` is now a finding: tell the runner which tasks it touches; the revision is pushed to the same PR.
    - `Jawaban owner: <answer>` with no issue: `node K/status.cjs decide <KEY> "<answer>" --by owner`, then `node K/status.cjs set <KEY> waiting=`.
-3. Dispatch the same runner for the board (ticket, review or card) as a continuation from the recorded stage, with the decision numbers just written. A continuation started by DOCK runs like a cron run: no GATE 1, through to the PR.
+3. Dispatch the same runner for the board (ticket, review or card) as a continuation from the recorded stage, with the decision numbers just written. First the one line of section 3 step 6: what the runner redoes because of the owner's word (which tasks, a new video or not, which PRs get the push). A continuation started by DOCK runs like a cron run: no GATE 1, through to the PR.
 
 ## 5. Escalation: you are level `sous`
 Issues climb `arbiter -> sous -> owner`. The runner holds the sous level for its own key; you hold it across keys and whenever a runner returns `WAITING-OWNER`.
