@@ -106,6 +106,12 @@ test('runner guard: sous agents and browser-verifier only; kit scripts by their 
   assert.match(g.check('runner', roots, { tool_name: 'Agent', tool_input: { subagent_type: 'sous-ticket-worker', run_in_background: true } }), /no background agents/, 'QRD-1346: background workers died with the turn');
   assert.match(g.check('runner', roots, { tool_name: 'Bash', tool_input: { command: 'rtk ls E:/qonflo', run_in_background: true } }), /no background/);
   assert.equal(g.check('runner', roots, { tool_name: 'Agent', tool_input: { subagent_type: 'sous-ticket-worker', run_in_background: false } }), null);
+  const del = (c) => ({ tool_name: 'Bash', tool_input: { command: c } });
+  const wt = 'E:/qonflo/wt-77-be';
+  assert.equal(g.check('runner', roots, del(`git -C ${wt} rm src/a.helper.ts tests/a.test.ts`)), null, 'QRD-1275: a decision ordered files deleted and no agent could');
+  assert.match(g.check('runner', roots, del(`git -C ${wt} rm -r src`)) || '', /named files only/);
+  assert.match(g.check('runner', roots, del('git -C E:/qonflo/ms-admin-worker-backend rm src/a.ts')) || '', /only inside a ticket worktree/);
+  assert.match(g.check('bash', roots, del(`git -C ${wt} rm src/a.ts`)) || '', /not a read-only git/, 'a worker still cannot delete');
   for (const t of ['general-purpose', 'oh-my-claudecode:executor', 'sous-ticket-runner', undefined]) {
     assert.match(g.check('runner', roots, { tool_name: 'Task', tool_input: { subagent_type: t } }), /subagent type not allowed/, String(t));
   }
@@ -142,11 +148,13 @@ test('publish guard: per path staging, commit -m, ticket branches only, gh pr cr
     for (const [repo, base, head, why] of [['x/r', 'develop', undefined, /not this machine's BE or FE repo/], ['o/r', 'main', undefined, /not a configured base/], ['o/r', 'feat/QRD-77-thing', undefined, /not a configured base/], ['o/f', 'feat/QRD-77-thing', 'feat/QRD-78-child', /not a configured base/], ['', 'develop', undefined, /needs --repo/], ['o/r', '', undefined, /needs --repo/]]) {
       assert.match(g.check('publish', [], pr(repo, base, head)) || '', why, `${repo} ${base} ${head}`);
     }
-    const ok = [`git -C ${wt} status`, `git -C ${wt} add src/a.ts src/b.ts`, `git -C ${wt} commit -m "fix(QRD-77): thing" -m "second"`, `git -C ${wt} push -u origin feat/QRD-77-thing`, `rtk git -C ${wt} diff --cached --name-only`, `git -C ${wt} remote get-url origin`,
+    const ok = [`git -C ${wt} status`, `git -C ${wt} add src/a.ts src/b.ts`, `git -C ${wt} commit -m "fix(QRD-77): thing" -m "second"`, `git -C ${wt} push -u origin feat/QRD-77-thing`, `rtk git -C ${wt} diff --cached --name-only`, `git -C ${wt} remote get-url origin`, `git -C ${wt} rm src/old.ts tests/old.test.ts`, `git -C ${wt} rm -- src/old.ts`,
       `gh pr create --repo o/r --base develop --head feat/QRD-77-thing --title "QRD-77 fix: thing" --body-file ${root}/.evidence/QRD-77/pr-body-be.md --draft`, 'gh pr list --repo o/r --head feat/QRD-77-thing --json url'];
     for (const c of ok) assert.equal(g.check('publish', [], bash(c)), null, c);
     const denied = {
       [`git -C ${wt} add -A`]: /named paths only/, [`git -C ${wt} add .`]: /named paths only/, [`git -C ${wt} add --all`]: /named paths only/, [`git -C ${wt} add -u`]: /named paths only/, [`git -C ${wt} add ${wt}`]: /named paths only/,
+      [`git -C ${wt} rm -r src`]: /named files only/, [`git -C ${wt} rm -f src/a.ts`]: /named files only/, [`git -C ${wt} rm --cached src/a.ts`]: /named files only/, [`git -C ${wt} rm .`]: /named files only/, [`git -C ${wt} rm src/*.ts`]: /named files only/,
+      [`git -C ${wt} rm`]: /needs the files/, [`git -C ${wt} rm ../wt-78-be/src/a.ts`]: /inside the ticket worktree/, [`git -C ${wt} rm ${wt}`]: /inside the ticket worktree/,
       [`git -C ${wt} commit --no-verify -m x`]: /-m <message> only/, [`git -C ${wt} commit -m "x" -m "Co-Authored-By: Claude"`]: /attribution/,
       [`git -C ${wt} push origin develop`]: /not a ticket branch/, [`git -C ${wt} push origin main`]: /not a ticket branch/, [`git -C ${wt} push -f origin feat/QRD-77-thing`]: /push is git/, [`git -C ${wt} push origin feat/QRD-78-other`]: /only the current branch/, [`git -C ${wt} push origin feature/QRD-77-thing`]: /not a ticket branch/,
       [`git -C ${root}/ms-admin-worker-backend push origin feat/QRD-77-thing`]: /only inside a ticket worktree/, [`git -C ${wt} reset --hard`]: /not a read-only git/,
