@@ -210,12 +210,24 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 		return "";
 	}
 
+	function checkGitRm(w) {
+		if (w[1] !== "-C" || !w[2]) return "git runs as git -C <worktree> <subcommand>";
+		const wt = rootOf(norm(w[2]), ["@wt"]);
+		if (!wt) return `git rm only inside a ticket worktree (${paths.root}/wt-*), not ${w[2]}`;
+		const args = w.slice(4);
+		const files = args[0] === "--" ? args.slice(1) : args;
+		if (!files.length) return "git rm needs the files to delete";
+		if (files.some((a) => a.startsWith("-") || a === "." || a === "*" || a === ":/" || /[*?[\]]/.test(a))) return "git rm deletes named files only: no flags, no . and no globs";
+		if (files.some((a) => norm(a, w[2]) === wt || !inside(norm(a, w[2]), wt))) return "git rm only deletes files inside the ticket worktree";
+		return null;
+	}
+
 	function checkBash(cmd, roots, runner) {
 		const bad = simple(cmd);
 		if (bad) return bad;
 		const w = words(cmd);
 		if (!w.length) return "empty command";
-		if (w[0] === "git") return checkGitRead(w, roots);
+		if (w[0] === "git") return runner && w[3] === "rm" ? checkGitRm(w) : checkGitRead(w, roots);
 		if (w[0] === "gh") return checkGhRead(w);
 		if (READ_CMDS.has(w[0])) return checkRead(w, roots);
 		if (runner) {
@@ -440,6 +452,7 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 				if (args.some((a) => a.startsWith("-") || a === "." || a === "*" || a === ":/" || norm(a, w[2]) === wt)) return "git add stages named paths only: never -A, --all, -u or .";
 				return null;
 			}
+			if (sub === "rm") return checkGitRm(w);
 			if (sub === "commit") {
 				for (let i = 0; i < args.length; i += 2) if (args[i] !== "-m" || args[i + 1] === undefined) return "git commit takes -m <message> only";
 				if (!args.length) return "git commit needs -m";
