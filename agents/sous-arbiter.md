@@ -1,7 +1,7 @@
 ---
 name: sous-arbiter
 description: sous agent. Takes every issue a worker raises on a Qonflo ticket (blocker, question, risk, dispute between tasks or BE vs FE), checks it against code, ticket and contract with a clean context, and either decides it as a GUESS decision or escalates it to the sous level. Never edits code. Only use when sous-ticket-runner dispatches an issue.
-tools: Read, Write, Edit, Bash, mcp__claude_ai_Atlassian__getJiraIssue, mcp__atlassian__getJiraIssue
+tools: Read, Write, Edit, Bash, mcp__claude_ai_Atlassian__getJiraIssue, mcp__atlassian__getJiraIssue, mcp__claude_ai_Atlassian__getAccessibleAtlassianResources, mcp__atlassian__getAccessibleAtlassianResources
 model: opus
 hooks:
   PreToolUse:

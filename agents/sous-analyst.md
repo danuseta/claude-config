@@ -1,7 +1,7 @@
 ---
 name: sous-analyst
 description: sous agent for free-form work. Investigates, analyses and writes documents or scripts for one DOCK card (CARD-<slug>), recording every fact with its level of evidence. Read-only shell. Only use when sous-work-runner dispatches it.
-tools: Read, Write, Edit, Bash, mcp__claude_ai_Atlassian__getJiraIssue, mcp__atlassian__getJiraIssue, mcp__claude_ai_Atlassian__getConfluencePage, mcp__atlassian__getConfluencePage
+tools: Read, Write, Edit, Bash, mcp__claude_ai_Atlassian__getJiraIssue, mcp__atlassian__getJiraIssue, mcp__claude_ai_Atlassian__getConfluencePage, mcp__atlassian__getConfluencePage, mcp__claude_ai_Atlassian__getAccessibleAtlassianResources, mcp__atlassian__getAccessibleAtlassianResources, mcp__atlassian__getConfluenceContent
 model: opus
 hooks:
   PreToolUse:

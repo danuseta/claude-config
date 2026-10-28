@@ -2,7 +2,7 @@
 
 Applies to every session that builds or reviews a Jira ticket: the orchestrator cron, a DOCK chat, or a terminal session. Run it before reading the sprint blackboard and before writing any code or finding.
 
-Operations below are named by what they do (fetch an issue, search pages, fetch a page). Use whichever Atlassian MCP the machine has; tool name prefixes differ between the claude.ai connector and the `atlassian` MCP server.
+Operations below are named by what they do (fetch an issue, search pages, fetch a page). Use whichever Atlassian MCP the machine has. The claude.ai connector names them `getJiraIssueRemoteIssueLinks`, `searchConfluenceUsingCql`, `getConfluencePage`; the workspace's `atlassian` server names them `discover` + `executeRead`, `searchConfluence`, `getConfluenceContent`. Take the `cloudId` from `getAccessibleAtlassianResources`, never guess it.
 
 ## 1. Find the contract, in this order
 

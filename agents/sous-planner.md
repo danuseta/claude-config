@@ -1,7 +1,7 @@
 ---
 name: sous-planner
 description: sous agent. Plays S0 for one Qonflo ticket - reads the AC and materials sous-intake wrote to the ticket's blackboard and the code, maps the terrain, and writes the session prompt prompts/S<n>.md. Never edits code. Only use when sous-ticket-runner dispatches it.
-tools: Read, Write, Edit, Bash, mcp__claude_ai_Atlassian__getJiraIssue, mcp__atlassian__getJiraIssue
+tools: Read, Write, Edit, Bash, mcp__claude_ai_Atlassian__getJiraIssue, mcp__atlassian__getJiraIssue, mcp__claude_ai_Atlassian__getAccessibleAtlassianResources, mcp__atlassian__getAccessibleAtlassianResources
 model: opus
 hooks:
   PreToolUse:
