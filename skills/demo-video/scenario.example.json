@@ -1,0 +1,29 @@
+{
+ "ticket": "QRD-1261",
+ "title": "Chip di body SKILL.md",
+ "subtitle": "Demo fitur",
+ "closing": "Terima kasih",
+ "baseUrl": "http://localhost:5191",
+ "login": { "email": "local@test.com", "passwordFile": "C:/path/to/.pbpass" },
+ "startUrl": "/robo/playbook/skills/<skillId>",
+ "voice": { "provider": "elevenlabs", "voiceId": "iP95p4xoKVk53GoZ742B", "model": "eleven_v3" },
+ "lexicon": {},
+ "keywords": ["QRD-1261", "SKILL.md", "AC4", "Backspace", "Save", "chip", "chip-nya"],
+ "steps": [
+  { "part": "intro",
+    "lines": ["Halo, ini demo singkat QRD-1261.", "Fiturnya: chip di body SKILL.md."] },
+  { "highlight": { "selector": "section[aria-label=\"SKILL.md\"] .cm-editor", "note": "Semua referensi di body jadi chip" },
+    "lines": ["Oke, jadi semua referensi di sini udah jadi chip.", "Namanya selalu ngikutin nama terbaru, walaupun filenya di-rename."] },
+  { "highlight": { "selector": ".cm-pb-chip:has-text(\"Returns policy\")", "line": true, "note": "Sekali Backspace, satu chip hilang utuh" },
+    "actions": [
+     { "type": "eval", "js": "(() => { const v = document.querySelector('section[aria-label=\"SKILL.md\"] .cm-content').cmTile.view; const d = v.state.doc.toString(); const s = d.indexOf('[Returns policy](pb://pointer/'); const e = d.indexOf(')', s) + 1; v.focus(); v.dispatch({ selection: { anchor: e, head: e } }); })()" },
+     { "type": "press", "key": "Backspace", "atLine": 1, "delayMs": 900 }
+    ],
+    "lines": ["Sekarang coba kita hapus chip pointer ini.", "Cukup sekali Backspace, chip-nya hilang satu utuh."] },
+  { "actions": [ { "type": "scrollTop" }, { "type": "click", "role": "button", "name": "^Save$" }, { "type": "wait", "ms": 900 } ],
+    "highlight": { "text": "A merged pointer needs exactly one chip", "note": "Error baru muncul setelah Save" },
+    "lines": ["Baru pas di-Save, servernya nolak.", "Padahal di AC4, harusnya langsung kelihatan di card pointer."] },
+  { "part": "outro",
+    "lines": ["Jadi kesimpulannya, chip-nya udah oke semua.", "Tinggal satu yang perlu dibenerin, yaitu AC4."] }
+ ]
+}
