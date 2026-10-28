@@ -1,6 +1,6 @@
 ---
 name: sous
-description: Use to build a Qonflo ticket, review a teammate's PR, or do free-form work as the sous main session, and to continue any of them from the blackboard. Triggers on "Pakai skill sous", "kerjakan QRD-...", "review QRD-...", "hey sous", "what's cookin'?", DOCK cron starts and DOCK owner replies. Dispatches one sous runner per piece of work and keeps the ledger (status.cjs) as the only status.
+description: Use to build a Qonflo ticket, review a teammate's PR, or do free-form work as the sous main session, and to continue any of them from the blackboard. Triggers on "Pakai skill sous", "kerjakan QRD-...", "review QRD-...", "hey sous", "what's cookin'?", "retro <sprint>", DOCK cron starts and DOCK owner replies. Dispatches one sous runner per piece of work and keeps the ledger (status.cjs) as the only status.
 ---
 
 # sous
@@ -40,6 +40,8 @@ Read the first prompt of the session:
 | `review <KEY>` / a PR link | review | `sous-review-runner`. When it returns, the reply ends with the author message from the `review-message` skill, without being asked: read that skill and follow its output shape, attachments included (on the workspace one `DOCK_ATTACH:` line per image). Files the owner names in the request (a Discord thread, a PDF) are fetched first, see section 7. |
 | Anything else that is work | free form | Pick or make `CARD-<slug>`, `sous-work-runner`. |
 | A greeting or "what's cookin'?" only | progress | Section 6, then wait. |
+| `Pakai skill sous: retro <sprint name>` (e.g. `retro QRD Sprint 26`) | retro | Section 8. |
+| `Pakai skill sous: retro apply <id>` with the line's text and dest | retro apply | Section 8. |
 
 ## 3. Starting a ticket
 1. Contract and readiness are the runner's job (its `sous-intake` reads the Jira custom fields and applies `rules/ticket-contract.md` before the planner maps the terrain). You only check: `node K/status.cjs show <KEY>`. A ledger at `pr` or `done`, or waiting on the owner, is reported, not restarted. A ledger made by the old orchestrate flow (no `engine`) is continued from its stage: tell the runner the stage.
@@ -57,7 +59,7 @@ Jawaban owner untuk I-<n>: <answer>       | or: Owner mengubah D-<n>: <the owner
 ```
 1. Resolve `$K` from section 0. `node K/status.cjs show <KEY>`, then read `NOW.md` in the ledger's `blackboard` and the ticket's `prompts/S<n>.md`. On an epic board (`epicBoard` set) the prompts are under `epicBoard/prompts/`; also read `epicBoard/EPIC.md` and the `tickets/<KEY>/NOW.md` of the sibling tickets: decisions there can bind this one.
 2. Record the owner's word before anything else:
-   - Answer to `I-<n>`: `node K/status.cjs decide <KEY> "<answer, in the owner's words>" --status DECIDED --by owner --issue <n>`, then `node K/status.cjs issue <KEY> <n> resolve <D printed>`. That clears `waiting`.
+   - Answer to `I-<n>`: `node K/status.cjs decide <KEY> "<answer, in the owner's words>" --status DECIDED --by owner --issue <n> --question "<the I-<n> text>"` plus one `--rejected "<option>: <why the owner did not take it>"` per offered option the owner dropped, then `node K/status.cjs issue <KEY> <n> resolve <D printed>`. That clears `waiting`.
    - Change of `D-<n>`: `node K/status.cjs decide <KEY> "<the owner's choice, in the owner's words>" --status DECIDED --by owner --replaces <n>` (D-<n> becomes SUPERSEDED). Work built on `D-<n>` is now a finding: tell the runner which tasks it touches; the revision is pushed to the same PR.
    - `Jawaban owner: <answer>` with no issue: `node K/status.cjs decide <KEY> "<answer>" --by owner`, then `node K/status.cjs set <KEY> waiting=`.
 3. Dispatch the same runner for the board (ticket, review or card) as a continuation from the recorded stage, with the decision numbers just written. First the one line of section 3 step 6: what the runner redoes because of the owner's word (which tasks, a new video or not, which PRs get the push). A continuation started by DOCK runs like a cron run: no GATE 1, through to the PR.
@@ -65,7 +67,7 @@ Jawaban owner untuk I-<n>: <answer>       | or: Owner mengubah D-<n>: <the owner
 ## 5. Escalation: you are level `sous`
 Issues climb `arbiter -> sous -> owner`. The runner holds the sous level for its own key; you hold it across keys and whenever a runner returns `WAITING-OWNER`.
 1. `node K/status.cjs show <KEY>`; read the open issues at level `sous` or `owner`.
-2. For each one at level `sous` you can settle from the ticket, the contract, the terrain, sibling boards and the code: `decide <KEY> "<ruling and why>" --status GUESS --by sous --issue <n>`, `issue <KEY> <n> resolve <D>`, and dispatch the runner again.
+2. For each one at level `sous` you can settle from the ticket, the contract, the terrain, sibling boards and the code: `decide <KEY> "<ruling and why>" --status GUESS --by sous --issue <n> --question "<what was unclear>" --rejected "<option>: <why not>"...`, `issue <KEY> <n> resolve <D>`, and dispatch the runner again.
 3. What you cannot settle: `node K/status.cjs issue <KEY> <n> escalate owner "<what was checked, why neither arbiter nor sous could decide>"`. Give it options (`A|B`) when the issue has none, through the text. That sets `waiting` (DOCK shows WAITING ON YOU) and `draft=true`. Then **stop**: do not guess, do not work around it. The owner's answer arrives as a new session (section 4).
 
 Owner `DECIDED` > `GUESS` > contract > Jira AC > `USULAN`. A `D-n` from arbiter or sous applies at once and shows on DOCK with its effect and other options; the owner confirms or changes it there. Until every open issue is answered and every `GUESS` / `USULAN` is confirmed, the PR stays a draft; DOCK marks it ready.
@@ -74,6 +76,7 @@ Owner `DECIDED` > `GUESS` > contract > Jira AC > `USULAN`. A `D-n` from arbiter 
 `node K/status.cjs` (every key), then per key with a non-empty `waiting`: the decision needed, from its open owner issue. Nothing else.
 
 ## 7. Rules that hold in every mode
+- Every decision is written with `--question "<what was unclear>"` and one `--rejected "<option>: <why not>"` per option weighed and dropped; DOCK's Thinking column shows both. `--by` is who decided: `owner`, `sous` for you, and the agent's own name for an agent (`sous-ticket-runner`, `sous-arbiter`, `sous-planner`, `sous-reviewer`, `sous-ticket-worker`, `sous-work-runner`, ...).
 - The ledger is the only status. Never edit `status.json`, `NOW.md`, `status.md`, `decisions.md` or `issues.md` by hand; a `REFUSED` from status.cjs is followed, not bypassed.
 - The ledger follows every result in the same turn, without the owner asking. Whatever you or a runner did in this session that changes a status (a re-check, a browser check, a re-review, an owner answer, a fix pushed, a PR opened or merged) is written with status.cjs before the turn ends: a finding that no longer applies `finding <KEY> <n> resolve "<why>"`, a new one `finding`, a part that passed `lgtm`, a changed verdict `verdict`, the next step `set <KEY> waiting="..."` (or `waiting=` when nothing waits). Then `node K/status.cjs show <KEY>` and name in the reply what changed in the ledger. A reply whose result disagrees with the ledger ("verdict sekarang approve, tapi ledger masih request-change") is an unfinished turn: fix the ledger, do not report the gap.
 - Review rounds: at most 2 returns from FINAL to a task (`status.cjs round`); past that the ledger opens an owner issue and the PR goes out as draft. Verify rounds: at most 2 per task. Only the owner changes `rounds.max` or clears `draft`; the runner guard refuses both.
@@ -85,3 +88,22 @@ Owner `DECIDED` > `GUESS` > contract > Jira AC > `USULAN`. A `D-n` from arbiter 
 - Files the owner points to in Discord (a thread id or a discord.com/channels link): `node K/discord-files.cjs <thread> ROOT/.evidence/<MMDD>/<KEY>-discord`, then read them (a PDF with the Read tool). DOCK holds the bot token in its Settings; an empty `DISCORD_BOT_TOKEN` in the environment does not mean there is no bot. Only when the script itself fails, name its error and ask the owner for the file.
 - Guards are enforced per agent (`kit/sous-guard.cjs`) on top of `guard.cjs`. A block is reported, never worked around.
 - After a run, queue the note: `python3 "K/brain.py" save --no-ingest --project "qonflo" --topic "<topic>" --title "<title>" --context "<why>" --point "<point>" --decision "<outcome>"` (`python` on Windows).
+
+## 8. Sprint retro
+No runner: you do it yourself, and you change no ticket ledger.
+
+**`retro <sprint name>`** (from the cron on the sprint's last day, or DOCK's "Build draft" button):
+1. The sprint's keys: Atlassian MCP `searchJiraIssuesUsingJql` with `sprint = "<sprint name>"`, then `node K/retro.cjs data "<sprint name>" --keys <KEY,KEY,...>`. Without the MCP: `node K/retro.cjs data "<sprint name>"` (the keys `sprint.md` names when its title is this sprint), or add `--since <start> --until <end>` from the sprint dates. It prints, per ledger: hours, fix rounds, rounds and their reasons, replans, failures, findings, issues escalated to the owner with the wait, decisions with their question and rejected options, the review verdict. Reviews (`kind=review`) are part of it.
+2. When the prompt carries last sprint's accepted TRY lines, judge each on the same numbers first: it becomes a keep (it worked) or a problem (it did not).
+3. Write the draft to `EVIDENCE/retro/<sprint-slug>.json`, neutral English:
+   `{ "sprint": "<sprint name>", "items": [ { "kind": "keep"|"problem"|"try", "text": "...", "evidence": ["<KEY>: <what in the ledger shows it>", ...], "dest": "kit"|"memory"|"dock"|"note" } ] }`
+   Every line carries evidence: ticket keys and the ledger fact (`QRD-1268: 2 fix rounds, both FINAL findings on the empty state`). A line you cannot back with a key is not written. A problem counts when it recurs (two or more tickets) or cost the owner a wait. A try names its `dest`: `kit` (an agent, skill or script change in claude-config), `memory` (a rule to remember), `dock` (a DOCK change), `note` (nothing to build); keep and problem lines use `note`.
+4. `node K/retro.cjs post @<that file>`. It drops a line without ticket evidence and names it, and posts the rest to DOCK (`<DOCK ingest url>/retro`). A REFUSED (DOCK not configured or refusing) is reported with the file path, not retried another way.
+5. Answer the owner with one table: kind, text, evidence, dest.
+
+**`retro apply <id>`** (DOCK sends it when the owner accepts a TRY; the prompt has the line's text and dest). Nothing is merged; report the link.
+- `kit`: in the claude-config repo of `configDir`, a branch `retro/<slug of the text>` from `origin/main` in its own worktree, the smallest change that does what the line says, staged per path, commit `chore: <text>`, push, `gh pr create --draft --base main` with a short body quoting the line and its evidence. No AI attribution.
+- `memory`: `bd remember "<text>"` when `bd --version` works; otherwise a new file in this project's auto-memory folder plus its one line in `MEMORY.md`.
+- `dock`: `gh issue create --repo danuseta/dock --title "<text>" --body "<evidence, one line each>"`.
+- `note`: nothing to build; say so.
+A guard that blocks any of these is reported with its message; never work around it.
