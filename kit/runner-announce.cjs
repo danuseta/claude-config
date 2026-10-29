@@ -9,17 +9,31 @@ const RUNNER = /^sous-[a-z]+-runner$/;
 const LINE = /Runner jalan:/i;
 const REASON = "runner-announce: write one line to the owner first, starting `Runner jalan:`, naming what the runner does next in order " +
 	"(for example `Runner jalan: intake -> planner -> T1 -> review -> verify -> FINAL -> video -> PR draft. Progress live di DOCK.`), " +
-	"then dispatch the runner again.";
+	"Write it together with another tool call (for example `node K/status.cjs set <KEY> note=...`) and dispatch in your next message: " +
+	"a line in the same message as the dispatch is not on disk yet when this hook reads the transcript.";
 
 const isRunner = (tool, input) => (tool === "Agent" || tool === "Task") && RUNNER.test(String(input?.subagent_type || ""));
 const blocks = (entry) => (typeof entry.message?.content === "string" ? [{ type: "text", text: entry.message.content }] : entry.message?.content || []);
 
+// The ids of runner dispatches this hook refused: they never ran, so they do not use up a line written before them.
+function refusedIds(entries) {
+	const ids = new Set();
+	for (const entry of entries) {
+		if (entry.type !== "user") continue;
+		for (const block of blocks(entry)) {
+			if (block.type === "tool_result" && JSON.stringify(block.content ?? "").includes("runner-announce:")) ids.add(block.tool_use_id);
+		}
+	}
+	return ids;
+}
+
 // True when the lead wrote the line after the last owner prompt and after its last runner dispatch other than `toolUseId`.
 function announced(lines, toolUseId) {
 	let skipped = false;
-	for (let i = lines.length - 1; i >= 0; i -= 1) {
-		let entry;
-		try { entry = JSON.parse(lines[i]); } catch { continue; }
+	const entries = lines.flatMap((line) => { try { return [JSON.parse(line)]; } catch { return []; } });
+	const refused = refusedIds(entries);
+	for (let i = entries.length - 1; i >= 0; i -= 1) {
+		const entry = entries[i];
 		if (entry.isSidechain) continue;
 		if (entry.type === "user") {
 			if (!entry.isMeta && blocks(entry).some((block) => block.type === "text")) return false;
@@ -28,7 +42,7 @@ function announced(lines, toolUseId) {
 		if (entry.type !== "assistant") continue;
 		for (const block of [...blocks(entry)].reverse()) {
 			if (block.type === "text" && LINE.test(block.text || "")) return true;
-			if (block.type !== "tool_use" || !isRunner(block.name, block.input)) continue;
+			if (block.type !== "tool_use" || !isRunner(block.name, block.input) || refused.has(block.id)) continue;
 			if (toolUseId ? block.id === toolUseId : !skipped) { skipped = true; continue; }
 			return false;
 		}
@@ -36,11 +50,23 @@ function announced(lines, toolUseId) {
 	return false;
 }
 
-function decide(payload, read = (file) => fs.readFileSync(file, "utf8")) {
+// Claude Code can run this hook before it has written the text and tool_use of the dispatching message to the transcript, so a
+// line written in that same message is not on disk yet (QRD-1286, 2026-10-29). Until the dispatch's own tool_use shows up, read again.
+const WAIT_MS = 3000;
+const STEP_MS = 150;
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+function decide(payload, read = (file) => fs.readFileSync(file, "utf8"), sleep = pause) {
 	if (payload.agent_type || !isRunner(payload.tool_name, payload.tool_input) || !payload.transcript_path) return null;
-	let text;
-	try { text = read(payload.transcript_path); } catch { return null; }
-	return announced(text.split("\n").filter(Boolean), payload.tool_use_id) ? null : REASON;
+	for (let waited = 0; ; waited += STEP_MS) {
+		let text;
+		try { text = read(payload.transcript_path); } catch { return null; }
+		const lines = text.split("\n").filter(Boolean);
+		if (announced(lines, payload.tool_use_id)) return null;
+		const written = !payload.tool_use_id || lines.some((line) => line.includes(`"${payload.tool_use_id}"`));
+		if (written || waited >= WAIT_MS) return REASON;
+		sleep(STEP_MS);
+	}
 }
 
 function main() {
