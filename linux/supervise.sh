@@ -50,6 +50,7 @@ sup_cleanup() {
 sup_main() {
   SUP_NAME=${1:-}
   [ -n "$SUP_NAME" ] || { echo "usage: supervise.sh <tailscaled|bridge> | <name> -- <command...>"; return 2; }
+  local called="supervise.sh $SUP_NAME "
   shift
   local custom=()
   if [ "${1:-}" = "--" ]; then shift; custom=("$@"); else
@@ -57,7 +58,7 @@ sup_main() {
   fi
   mkdir -p "$CCFG_RUN" "$CCFG_STATE"
   SUP_LOG=$CCFG_STATE/$SUP_NAME.log
-  if ! lock_acquire "$CCFG_RUN/$SUP_NAME.lock" supervise.sh; then
+  if ! lock_acquire "$CCFG_RUN/$SUP_NAME.lock" "$called"; then
     echo "supervise $SUP_NAME: already running (pid $(cat "$CCFG_RUN/$SUP_NAME.lock" 2>/dev/null))"
     return 4
   fi

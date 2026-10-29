@@ -210,12 +210,24 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 		return "";
 	}
 
+	function checkGitRm(w) {
+		if (w[1] !== "-C" || !w[2]) return "git runs as git -C <worktree> <subcommand>";
+		const wt = rootOf(norm(w[2]), ["@wt"]);
+		if (!wt) return `git rm only inside a ticket worktree (${paths.root}/wt-*), not ${w[2]}`;
+		const args = w.slice(4);
+		const files = args[0] === "--" ? args.slice(1) : args;
+		if (!files.length) return "git rm needs the files to delete";
+		if (files.some((a) => a.startsWith("-") || a === "." || a === "*" || a === ":/" || /[*?[\]]/.test(a))) return "git rm deletes named files only: no flags, no . and no globs";
+		if (files.some((a) => norm(a, w[2]) === wt || !inside(norm(a, w[2]), wt))) return "git rm only deletes files inside the ticket worktree";
+		return null;
+	}
+
 	function checkBash(cmd, roots, runner) {
 		const bad = simple(cmd);
 		if (bad) return bad;
 		const w = words(cmd);
 		if (!w.length) return "empty command";
-		if (w[0] === "git") return checkGitRead(w, roots);
+		if (w[0] === "git") return runner && w[3] === "rm" ? checkGitRm(w) : checkGitRead(w, roots);
 		if (w[0] === "gh") return checkGhRead(w);
 		if (READ_CMDS.has(w[0])) return checkRead(w, roots);
 		if (runner) {
@@ -440,6 +452,7 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 				if (args.some((a) => a.startsWith("-") || a === "." || a === "*" || a === ":/" || norm(a, w[2]) === wt)) return "git add stages named paths only: never -A, --all, -u or .";
 				return null;
 			}
+			if (sub === "rm") return checkGitRm(w);
 			if (sub === "commit") {
 				for (let i = 0; i < args.length; i += 2) if (args[i] !== "-m" || args[i + 1] === undefined) return "git commit takes -m <message> only";
 				if (!args.length) return "git commit needs -m";
@@ -478,6 +491,33 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 			if (!bases.includes(f["--base"]) && f["--base"] !== stacked) return `base ${f["--base"]} is not a configured base (${bases.join(", ")})${stacked ? ` or the stack parent's branch ${stacked}` : ""}`;
 			if (!rootOf(norm(f["--body-file"]), ["@evidence"])) return "the PR body file lives under the evidence folder";
 			try { if (/co-authored-by|generated with \[?claude/i.test(fs.readFileSync(norm(f["--body-file"]), "utf8"))) return "no AI attribution in a PR body"; } catch {}
+			return null;
+		}
+		if (w[0] === "gh" && w[1] === "pr" && w[2] === "edit") {
+			const num = w[3] || "";
+			if (!/^\d+$/.test(num)) return "gh pr edit <number> --repo <owner>/<repo> [--title <title>] [--body-file <file>]";
+			const f = {};
+			const args = w.slice(4);
+			for (let i = 0; i < args.length; i++) {
+				if (!["--repo", "--title", "--body-file"].includes(args[i]) || args[i + 1] === undefined || f[args[i]]) return `gh pr edit: argument not allowed: ${args[i]}`;
+				f[args[i]] = args[++i];
+			}
+			if (!f["--repo"] || (!f["--title"] && !f["--body-file"])) return "gh pr edit needs --repo and a --title or --body-file";
+			const url = `https://github.com/${f["--repo"]}/pull/${num}`.toLowerCase();
+			let known = false;
+			try {
+				for (const dir of fs.readdirSync(paths.evidence)) {
+					try {
+						const pr = JSON.parse(fs.readFileSync(`${paths.evidence}/${dir}/status.json`, "utf8")).pr || {};
+						if (Object.values(pr).some((u) => typeof u === "string" && u.toLowerCase() === url)) known = true;
+					} catch {}
+				}
+			} catch {}
+			if (!known) return `${f["--repo"]}#${num} is not a pull request recorded in a sous ledger`;
+			if (f["--body-file"]) {
+				if (!rootOf(norm(f["--body-file"]), ["@evidence"])) return "the PR body file lives under the evidence folder";
+				try { if (/co-authored-by|generated with \[?claude/i.test(fs.readFileSync(norm(f["--body-file"]), "utf8"))) return "no AI attribution in a PR body"; } catch {}
+			}
 			return null;
 		}
 		if (w[0] === "gh") return checkGhRead(w);

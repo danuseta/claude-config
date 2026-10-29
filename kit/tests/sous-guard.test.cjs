@@ -106,14 +106,24 @@ test('runner guard: sous agents and browser-verifier only; kit scripts by their 
   assert.match(g.check('runner', roots, { tool_name: 'Agent', tool_input: { subagent_type: 'sous-ticket-worker', run_in_background: true } }), /no background agents/, 'QRD-1346: background workers died with the turn');
   assert.match(g.check('runner', roots, { tool_name: 'Bash', tool_input: { command: 'rtk ls E:/qonflo', run_in_background: true } }), /no background/);
   assert.equal(g.check('runner', roots, { tool_name: 'Agent', tool_input: { subagent_type: 'sous-ticket-worker', run_in_background: false } }), null);
+  const del = (c) => ({ tool_name: 'Bash', tool_input: { command: c } });
+  const wt = 'E:/qonflo/wt-77-be';
+  assert.equal(g.check('runner', roots, del(`git -C ${wt} rm src/a.helper.ts tests/a.test.ts`)), null, 'QRD-1275: a decision ordered files deleted and no agent could');
+  assert.match(g.check('runner', roots, del(`git -C ${wt} rm -r src`)) || '', /named files only/);
+  assert.match(g.check('runner', roots, del('git -C E:/qonflo/ms-admin-worker-backend rm src/a.ts')) || '', /only inside a ticket worktree/);
+  assert.match(g.check('bash', roots, del(`git -C ${wt} rm src/a.ts`)) || '', /not a read-only git/, 'a worker still cannot delete');
   for (const t of ['general-purpose', 'oh-my-claudecode:executor', 'sous-ticket-runner', undefined]) {
     assert.match(g.check('runner', roots, { tool_name: 'Task', tool_input: { subagent_type: t } }), /subagent type not allowed/, String(t));
   }
   const K = 'C:/Users/danus/.claude-kantor/kit';
-  for (const c of [`node ${K}/status.cjs show QRD-1`, `node "${K}/status.cjs" decide QRD-1 "x" --status SHOV --by sous`, `node ${K}/demo-upload.cjs QRD-1 E:/qonflo/.evidence/QRD-1/evidence.mp4`, `bash ${K}/prep-ticket.sh QRD-1 slug origin/develop - "t"`, `bash ${K}/wt.sh add be E:/qonflo/wt-1-be feat/QRD-1-x origin/develop`, `bash ${K}/stack.sh up QRD-1 a b 3101 5201`, `${K}/bin/kit-node status.cjs show QRD-1`, `node ${K}/login-state.cjs 5346`, `rtk read E:/qonflo/.evidence/blackboard/QRD-1/NOW.md`]) {
+  for (const c of [`node ${K}/status.cjs show QRD-1`, `node "${K}/status.cjs" decide QRD-1 "x" --status GUESS --by sous`, `node ${K}/demo-upload.cjs QRD-1 E:/qonflo/.evidence/QRD-1/evidence.mp4`, `bash ${K}/prep-ticket.sh QRD-1 slug origin/develop - "t"`, `bash ${K}/wt.sh add be E:/qonflo/wt-1-be feat/QRD-1-x origin/develop`, `bash ${K}/stack.sh up QRD-1 a b 3101 5201`, `${K}/bin/kit-node status.cjs show QRD-1`, `node ${K}/login-state.cjs 5346`, `rtk read E:/qonflo/.evidence/blackboard/QRD-1/NOW.md`]) {
     assert.equal(g.check('runner', roots, bash(c)), null, c);
   }
   assert.equal(g.check('runner', roots, bash(`node ${K}/status.cjs set QRD-1 draft=true`)), null, 'draft=true stays allowed');
+  for (const c of [`node ${K}/status.cjs decide QRD-1 "keep the endpoint" --status GUESS --by sous-ticket-runner --question "the AC names no endpoint" --rejected "a new endpoint: two calls from the FE" --rejected "do nothing"`,
+    `${K}/bin/kit-node status.cjs decide QRD-1 "take B" --status GUESS --by sous-arbiter --issue 1 --question "A or B?" --rejected "A: breaks saved data"`]) {
+    assert.equal(g.check('runner', roots, bash(c)), null, c);
+  }
   for (const c of [`node ${K}/status.cjs set QRD-1 rounds.max=9`, `node ${K}/status.cjs set QRD-1 stage=code rounds.max=3`, `node ${K}/status.cjs set QRD-1 draft=false`, `${K}/bin/kit-node status.cjs set QRD-1 rounds.max=9`, `${K}/bin/kit-node status.cjs set QRD-1 draft=false`]) {
     assert.match(g.check('runner', roots, bash(c)) || '', /owner's to set/, c);
   }
@@ -139,14 +149,23 @@ test('publish guard: per path staging, commit -m, ticket branches only, gh pr cr
     const body = `${root}/.evidence/QRD-77/pr-body-be.md`;
     const pr = (repo, base, head = 'feat/QRD-77-thing') => bash(`gh pr create${repo ? ` --repo ${repo}` : ''}${base ? ` --base ${base}` : ''} --head ${head} --title t --body-file ${body}`);
     for (const [repo, base, head] of [['o/r', 'develop'], ['o/f', 'feat/V1-Playbook'], ['O/R', 'develop'], ['o/r', 'feat/QRD-77-thing', 'feat/QRD-78-child']]) assert.equal(g.check('publish', [], pr(repo, base, head)), null, `${repo} ${base} ${head}`);
+    fs.writeFileSync(`${root}/.evidence/QRD-77/status.json`, JSON.stringify({ key: 'QRD-77', pr: { be: 'https://github.com/o/r/pull/15', fe: 'https://github.com/o/f/pull/9' } }));
+    for (const c of [`gh pr edit 15 --repo o/r --body-file ${body}`, `gh pr edit 9 --repo O/F --title "QRD-77 feat: thing" --body-file ${body}`, `gh pr edit 9 --repo o/f --title t`]) assert.equal(g.check('publish', [], bash(c)), null, `QRD-1275 I-17: ${c}`);
+    for (const [c, why] of [[`gh pr edit 16 --repo o/r --body-file ${body}`, /not a pull request recorded in a sous ledger/], [`gh pr edit 15 --repo o/f --title t`, /not a pull request recorded/],
+      [`gh pr edit 15 --repo o/r --body-file ${root}/.evidence/QRD-77/bad-body.md`, /attribution/], [`gh pr edit 15 --repo o/r --body-file ${base}/elsewhere.md`, /evidence folder/],
+      [`gh pr edit 15 --repo o/r --add-reviewer x`, /argument not allowed/], ['gh pr edit 15 --repo o/r', /a --title or --body-file/], [`gh pr edit 15 --body-file ${body}`, /needs --repo/], ['gh pr edit x --repo o/r --title t', /gh pr edit <number>/]]) {
+      assert.match(g.check('publish', [], bash(c)) || '', why, c);
+    }
     for (const [repo, base, head, why] of [['x/r', 'develop', undefined, /not this machine's BE or FE repo/], ['o/r', 'main', undefined, /not a configured base/], ['o/r', 'feat/QRD-77-thing', undefined, /not a configured base/], ['o/f', 'feat/QRD-77-thing', 'feat/QRD-78-child', /not a configured base/], ['', 'develop', undefined, /needs --repo/], ['o/r', '', undefined, /needs --repo/]]) {
       assert.match(g.check('publish', [], pr(repo, base, head)) || '', why, `${repo} ${base} ${head}`);
     }
-    const ok = [`git -C ${wt} status`, `git -C ${wt} add src/a.ts src/b.ts`, `git -C ${wt} commit -m "fix(QRD-77): thing" -m "second"`, `git -C ${wt} push -u origin feat/QRD-77-thing`, `rtk git -C ${wt} diff --cached --name-only`, `git -C ${wt} remote get-url origin`,
+    const ok = [`git -C ${wt} status`, `git -C ${wt} add src/a.ts src/b.ts`, `git -C ${wt} commit -m "fix(QRD-77): thing" -m "second"`, `git -C ${wt} push -u origin feat/QRD-77-thing`, `rtk git -C ${wt} diff --cached --name-only`, `git -C ${wt} remote get-url origin`, `git -C ${wt} rm src/old.ts tests/old.test.ts`, `git -C ${wt} rm -- src/old.ts`,
       `gh pr create --repo o/r --base develop --head feat/QRD-77-thing --title "QRD-77 fix: thing" --body-file ${root}/.evidence/QRD-77/pr-body-be.md --draft`, 'gh pr list --repo o/r --head feat/QRD-77-thing --json url'];
     for (const c of ok) assert.equal(g.check('publish', [], bash(c)), null, c);
     const denied = {
       [`git -C ${wt} add -A`]: /named paths only/, [`git -C ${wt} add .`]: /named paths only/, [`git -C ${wt} add --all`]: /named paths only/, [`git -C ${wt} add -u`]: /named paths only/, [`git -C ${wt} add ${wt}`]: /named paths only/,
+      [`git -C ${wt} rm -r src`]: /named files only/, [`git -C ${wt} rm -f src/a.ts`]: /named files only/, [`git -C ${wt} rm --cached src/a.ts`]: /named files only/, [`git -C ${wt} rm .`]: /named files only/, [`git -C ${wt} rm src/*.ts`]: /named files only/,
+      [`git -C ${wt} rm`]: /needs the files/, [`git -C ${wt} rm ../wt-78-be/src/a.ts`]: /inside the ticket worktree/, [`git -C ${wt} rm ${wt}`]: /inside the ticket worktree/,
       [`git -C ${wt} commit --no-verify -m x`]: /-m <message> only/, [`git -C ${wt} commit -m "x" -m "Co-Authored-By: Claude"`]: /attribution/,
       [`git -C ${wt} push origin develop`]: /not a ticket branch/, [`git -C ${wt} push origin main`]: /not a ticket branch/, [`git -C ${wt} push -f origin feat/QRD-77-thing`]: /push is git/, [`git -C ${wt} push origin feat/QRD-78-other`]: /only the current branch/, [`git -C ${wt} push origin feature/QRD-77-thing`]: /not a ticket branch/,
       [`git -C ${root}/ms-admin-worker-backend push origin feat/QRD-77-thing`]: /only inside a ticket worktree/, [`git -C ${wt} reset --hard`]: /not a read-only git/,

@@ -1,7 +1,7 @@
 ---
 name: sous-pr-reviewer
 description: sous agent. Reviews a teammate's Qonflo pull request following the review-pr skill - contract first, AC to path:line, blast radius, screenshots for frontend work - and returns findings with severities and a verdict. Never edits code, never comments on the PR. Only use when sous-review-runner dispatches it.
-tools: Read, Write, Edit, Bash, mcp__claude_ai_Atlassian__getJiraIssue, mcp__atlassian__getJiraIssue, mcp__claude_ai_Atlassian__getJiraIssueRemoteIssueLinks, mcp__atlassian__getJiraIssueRemoteIssueLinks, mcp__claude_ai_Atlassian__searchConfluenceUsingCql, mcp__atlassian__searchConfluenceUsingCql, mcp__claude_ai_Atlassian__getConfluencePage, mcp__atlassian__getConfluencePage
+tools: Read, Write, Edit, Bash, mcp__claude_ai_Atlassian__getJiraIssue, mcp__atlassian__getJiraIssue, mcp__claude_ai_Atlassian__getJiraIssueRemoteIssueLinks, mcp__atlassian__getJiraIssueRemoteIssueLinks, mcp__claude_ai_Atlassian__searchConfluenceUsingCql, mcp__atlassian__searchConfluenceUsingCql, mcp__claude_ai_Atlassian__getConfluencePage, mcp__atlassian__getConfluencePage, mcp__claude_ai_Atlassian__getAccessibleAtlassianResources, mcp__atlassian__getAccessibleAtlassianResources, mcp__atlassian__searchConfluence, mcp__atlassian__getConfluenceContent, mcp__atlassian__discover, mcp__atlassian__executeRead
 model: opus
 hooks:
   PreToolUse:
