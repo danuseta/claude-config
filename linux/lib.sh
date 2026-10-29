@@ -273,7 +273,7 @@ service_exec() {
   esac
 }
 
-service_pid() { lock_holder "$CCFG_RUN/$1.lock" supervise.sh; }
+service_pid() { lock_holder "$CCFG_RUN/$1.lock" "supervise.sh $1 "; }
 
 service_start() {
   local u=$1 why
