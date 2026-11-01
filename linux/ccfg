@@ -168,7 +168,7 @@ const pre = ((cur.hooks || {}).PreToolUse || []).length;
 console.log([pre, cur.autoUpdatesChannel === orig.autoUpdatesChannel ? "same" : "changed", cur.autoUpdatesChannel].join(" "));
 ' "$(native_path "$CCFG_CLAUDE_DIR/settings.json")" "$(native_path "$CCFG_STATE/orig/settings.json")")
     pre=${out%% *}
-    if [ "$pre" = 3 ] && [ "$(printf '%s' "$out" | cut -d' ' -f2)" = same ]; then chk PASS settings "PreToolUse hooks $pre, autoUpdatesChannel kept"; else chk FAIL settings "PreToolUse hooks '$pre' (want 3), autoUpdatesChannel $(printf '%s' "$out" | cut -d' ' -f2)"; fi
+    if [ "$pre" = 4 ] && [ "$(printf '%s' "$out" | cut -d' ' -f2)" = same ]; then chk PASS settings "PreToolUse hooks $pre, autoUpdatesChannel kept"; else chk FAIL settings "PreToolUse hooks '$pre' (want 4), autoUpdatesChannel $(printf '%s' "$out" | cut -d' ' -f2)"; fi
   else chk FAIL settings "$CCFG_CLAUDE_DIR/settings.json missing"; fi
 
   if grep -qs '"mongodb"' "$HOME/.claude.json"; then chk PASS mongodb-mcp "template MCP mongodb still registered"; else chk WARN mongodb-mcp "mongodb MCP not found in ~/.claude.json"; fi
