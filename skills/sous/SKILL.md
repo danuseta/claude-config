@@ -1,6 +1,6 @@
 ---
 name: sous
-description: Use to build a Qonflo ticket, review a teammate's PR, or do free-form work as the sous main session, and to continue any of them from the blackboard. Triggers on "Pakai skill sous", "kerjakan QRD-...", "review QRD-...", "hey sous", "what's cookin'?", "retro <sprint>", DOCK cron starts and DOCK owner replies. Dispatches one sous runner per piece of work and keeps the ledger (status.cjs) as the only status.
+description: Use to build a Qonflo ticket, review a teammate's PR, or do free-form work as the sous main session, and to continue any of them from the blackboard. Triggers on "Pakai skill sous", "kerjakan QRD-...", "review QRD-...", "hey sous", "what's cookin'?", "retro <sprint>", "plan <sprint>", DOCK cron starts and DOCK owner replies. Dispatches one sous runner per piece of work and keeps the ledger (status.cjs) as the only status.
 ---
 
 # sous
@@ -42,6 +42,7 @@ Read the first prompt of the session:
 | A greeting or "what's cookin'?" only | progress | Section 6, then wait. |
 | `Pakai skill sous: retro <sprint name>` (e.g. `retro QRD Sprint 26`) | retro | Section 8. |
 | `Pakai skill sous: retro apply <id>` with the line's text and dest | retro apply | Section 8. |
+| `Pakai skill sous: plan <sprint name>` with the sentence `Sprint plan run` | plan | Section 9. |
 
 ## 3. Starting a ticket
 1. Contract and readiness are the runner's job (its `sous-intake` reads the Jira custom fields and applies `rules/ticket-contract.md` before the planner maps the terrain). You only check: `node K/status.cjs show <KEY>`. A ledger at `pr` or `done`, or waiting on the owner, is reported, not restarted. A ledger made by the old orchestrate flow (no `engine`) is continued from its stage: tell the runner the stage.
@@ -107,3 +108,13 @@ No runner: you do it yourself, and you change no ticket ledger.
 - `dock`: `gh issue create --repo danuseta/dock --title "<text>" --body "<evidence, one line each>"`.
 - `note`: nothing to build; say so.
 A guard that blocks any of these is reported with its message; never work around it.
+
+## 9. Sprint plan
+No runner and no ledger: read only. No branch, no code, no Jira edits.
+
+**`plan <sprint name>`** (from DOCK when a sprint starts, when one of the owner's tickets joins it, or from "Map again"). The prompt names the owner tickets to order, the other tickets of the sprint, the Jira links DOCK already applies, the accepted TRY lines of the last retro, and in ticket mode the keys to map and the order that stays.
+1. For each owner ticket read the status, the acceptance criteria (`customfield_10332`), the epic and the Jira issue links (Atlassian MCP), and the code areas it will touch (`sous-explorer`).
+2. Decide the edges: a ticket cannot start before `dependsOn` is merged. Each reason names the shared file, API or contract. Do not repeat a Jira link DOCK already applies. Apply the TRY lines.
+3. Write `EVIDENCE/plan/<sprint-slug>.json`: `{ "sprint", "mode", "tickets", "order": [owner keys, first to last], "groups": [[keys safe in parallel]], "edges": [{ "ticket", "dependsOn", "reason" }] }`.
+4. `node K/dock-push.cjs plan <that file>`. A REFUSED or a non-2xx answer is reported with the file path, not retried another way.
+5. Answer the owner with one table: ticket, waits for, reason; then the order.
