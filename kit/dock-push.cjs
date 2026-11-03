@@ -509,6 +509,12 @@ if (require.main === module) {
 		if (cmd === "status") report(args[0], await send("", readLedger(args[0]), 8000));
 		else if (cmd === "all") for (const key of ledgerKeys()) report(key, await send("", readLedger(key), 8000));
 		else if (cmd === "event") await send("/event", { key: args[0], event: args[1], detail: args[2] || undefined }, 3000);
+		else if (cmd === "plan") {
+			let body;
+			try { body = JSON.parse(fs.readFileSync(String(args[0] || "").replace(/^@/, ""), "utf8")); } catch (e) { return console.log(`plan: REFUSED, cannot read the draft: ${e.message}`); }
+			if (!body || typeof body.sprint !== "string" || !Array.isArray(body.edges)) return console.log("plan: REFUSED, the draft needs sprint and edges");
+			report(`plan ${body.sprint}`, await send("/plan", body, 15000));
+		}
 		else if (cmd === "flush") await flush(args[0]);
 		else if (cmd === "flush-later") { await new Promise((r) => setTimeout(r, FLUSH_WINDOW_MS + 200)); await flush(args[0]); }
 		else if (cmd === "transcript") {
@@ -538,6 +544,6 @@ if (require.main === module) {
 		} else if (cmd === "check") {
 			const cfg = config();
 			console.log(cfg ? `url: ${cfg.url}\ntoken: set\nextra mask words: ${cfg.extra.length}\nledgers: ${ledgerKeys().join(", ") || "none"}` : `not configured: set DOCK_INGEST_URL and DOCK_INGEST_TOKEN, or write ${CONFIG_FILE}`);
-		} else console.log("usage: dock-push.cjs status KEY | all | event KEY EVENT [detail] | transcript KEY <session.jsonl> [--from marker] [--agents a,b] | sessions [--all] [--id uuid] | statusline <payload.json> | ledger list|get|handover|accept [json] | hook | check");
+		} else console.log("usage: dock-push.cjs status KEY | all | event KEY EVENT [detail] | transcript KEY <session.jsonl> [--from marker] [--agents a,b] | sessions [--all] [--id uuid] | statusline <payload.json> | ledger list|get|handover|accept [json] | plan <draft.json> | hook | check");
 	})().catch((e) => { if (cmd !== "event" && cmd !== "hook" && cmd !== "statusline" && !String(cmd).startsWith("flush")) console.log(`dock push failed: ${e.message}`); });
 }
