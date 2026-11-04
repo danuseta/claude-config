@@ -36,7 +36,7 @@ test('the wait ends at once when the dispatch is written without the line, and g
 });
 
 test('a runner dispatch without the line since the owner prompt is refused (QRD-1426)', () => {
-  const lines = [owner('Pakai skill sous: kerjakan QRD-1426. Cron run: ...'), say('Skills: ticket, sous / using: sous'), meta('Base directory for this skill'), result(), call('now', 'Agent', 'sous-ticket-runner')];
+  const lines = [owner('Pakai skill sous: kerjakan QRD-1426.'), say('Skills: ticket, sous / using: sous'), meta('Base directory for this skill'), result(), call('now', 'Agent', 'sous-ticket-runner')];
   assert.match(dispatch(lines), /Runner jalan:/);
 });
 
@@ -68,4 +68,20 @@ test('a dispatch the hook refused does not use up the line written before it (QR
   assert.equal(dispatch([owner('go'), say('Runner jalan: T1 -> FINAL -> push.'), call('a', 'Agent', 'sous-ticket-runner'), refused, call('now', 'Agent', 'sous-ticket-runner')]), null);
   const ran = JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content: 'runner done' }] } });
   assert.match(dispatch([owner('go'), say('Runner jalan: T1'), call('a', 'Agent', 'sous-ticket-runner'), ran, call('now', 'Agent', 'sous-ticket-runner')]), /runner-announce/);
+});
+
+test('the line in the Agent description or the first prompt line passes without any transcript line', () => {
+  const lines = [owner('go'), call('now', 'Agent', 'sous-ticket-runner')];
+  const input = (extra) => ({ tool_input: { subagent_type: 'sous-ticket-runner', ...extra } });
+  assert.equal(dispatch(lines, input({ description: 'Runner jalan: intake -> T1 -> PR draft' })), null);
+  assert.equal(dispatch(lines, input({ prompt: 'Runner jalan: intake -> T1\nKerjakan QRD-1' })), null);
+  assert.match(dispatch(lines, input({ description: 'Run QRD-1', prompt: 'Kerjakan QRD-1\nRunner jalan: x' })), /runner-announce/);
+});
+
+test('sessions started by DOCK cron or auto review are skipped, a normal owner prompt is not', () => {
+  const run = (prompt) => dispatch([owner(prompt), result(), call('now', 'Agent', 'sous-ticket-runner')]);
+  assert.equal(run('Pakai skill sous: kerjakan QRD-1. Cron run: 2026-11-04'), null);
+  assert.equal(run('Review PR 12. Ini auto review dari DOCK, jalan sendiri.'), null);
+  assert.match(run('kerjakan QRD-1'), /runner-announce/);
+  assert.match(dispatch([owner('Cron run: x'), owner('kerjakan QRD-1'), call('now', 'Agent', 'sous-ticket-runner')]), /runner-announce/);
 });
