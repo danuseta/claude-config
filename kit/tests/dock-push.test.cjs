@@ -62,7 +62,7 @@ async function viaFake(kitDir, file, args, input, expected) {
   try {
     const r = await runNode([path.join(kitDir, file), ...args], {
       input,
-      env: { ...sandboxEnv(dir), DOCK_INGEST_URL: `${dock.url}/ingest/orchestrator`, DOCK_INGEST_TOKEN: 'dock_ing_test', DOCK_TICKET: 'ZED-101' },
+      env: { ...sandboxEnv(dir), DOCK_INGEST_URL: `${dock.url}/ingest/orchestrator`, DOCK_INGEST_TOKEN: 'dock_ing_test', DOCK_TICKET: 'ZED-101', CLAUDE_CODE_OAUTH_TOKEN: '' },
     });
     await waitFor(() => dock.requests.length >= expected, 10000);
     await new Promise((res) => setTimeout(res, 400));
@@ -103,6 +103,22 @@ test('statusline: same line on screen and the same /chat/status request, with no
   assert.equal(a.requests.length, 1);
   assert.deepEqual(b.requests, a.requests);
   assert.match(b.requests[0], /"url":"\/ingest\/orchestrator\/chat\/status"/);
+});
+
+test('statusline: /chat/status carries the fingerprint of the token the turn runs on, never the token', async () => {
+  const dir = tmp('statusline-fp');
+  const dock = await startServer();
+  try {
+    await runNode([path.join(KIT, 'statusline.cjs')], {
+      input: JSON.stringify(STATUSLINE),
+      env: { ...sandboxEnv(dir), DOCK_INGEST_URL: `${dock.url}/ingest/orchestrator`, DOCK_INGEST_TOKEN: 'dock_ing_test', CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-fp-secret' },
+    });
+    await waitFor(() => dock.requests.length >= 1, 10000);
+    const raw = JSON.stringify(dock.requests[0]);
+    const fp = require('crypto').createHash('sha256').update('sk-ant-oat01-fp-secret').digest('hex').slice(0, 12);
+    assert.equal(dock.requests[0].body.accountFp, fp);
+    assert.doesNotMatch(raw, /fp-secret/);
+  } finally { await dock.close(); rmrf(dir); }
 });
 
 test('statusline: prints a line with no theme file and with unusable input', async () => {
