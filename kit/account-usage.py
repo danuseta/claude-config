@@ -3,12 +3,14 @@
 
 Loads <CLAUDE_CONFIG_DIR or ~/.claude>/account-cycle/cycle.py for names() and secret_get(name), sends one
 max_tokens=1 request per account and prints a JSON array:
-[{name, status, fiveHour: {usedPercentage, resetsAt}|null, sevenDay: {...}|null, error?}].
+[{name, status, fp, fiveHour: {usedPercentage, resetsAt}|null, sevenDay: {...}|null, error?}].
+fp is the first 12 hex of sha256(token), the same value statusline.cjs sends as accountFp.
 claude1 uses the CLAUDE_CODE_OAUTH_TOKEN env var. Tokens are never printed and no file is written.
 Exit 0 even when accounts fail; exit 2 when cycle.py is missing. ACCOUNT_USAGE_API overrides the API base (tests only).
 """
 import argparse
 import datetime
+import hashlib
 import importlib.util
 import json
 import os
@@ -49,6 +51,10 @@ def window(headers, key):
     except (TypeError, ValueError, OverflowError, OSError):
         return None
     return {"usedPercentage": pct, "resetsAt": at}
+
+
+def fingerprint(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:12]
 
 
 def probe(name, token, api):
@@ -106,7 +112,9 @@ def main():
         if not token:
             out.append({"name": name, "status": "no-token", "fiveHour": None, "sevenDay": None})
             continue
-        out.append(probe(name, token.strip(), api))
+        row = probe(name, token.strip(), api)
+        row["fp"] = fingerprint(token.strip())
+        out.append(row)
     print(json.dumps(out))
     return 0
 

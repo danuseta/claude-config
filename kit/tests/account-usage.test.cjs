@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const { execFile } = require('child_process');
+const crypto = require('crypto');
 const { KIT, tmp, rmrf } = require('./helpers.cjs');
 
 const SCRIPT = path.join(KIT, 'account-usage.py');
@@ -77,6 +78,11 @@ test('account-usage.py reports 5h and 7d, a 7d-only account, a 429 rejection and
     assert.equal(by.IT.fiveHour.usedPercentage, 100);
     assert.equal(by.IT.sevenDay.usedPercentage, 99);
     assert.equal(by.claude4.status, 'no-token');
+    const fp = (token) => crypto.createHash('sha256').update(token).digest('hex').slice(0, 12);
+    assert.equal(by.claude1.fp, fp('tok-one-secret'));
+    assert.equal(by.claude2.fp, fp('tok-two-secret'));
+    assert.match(by.IT.fp, /^[0-9a-f]{12}$/);
+    assert.equal(by.claude4.fp, undefined);
     assert.equal(srv.requests.length, 3);
     assert.equal(srv.requests[0].headers['anthropic-beta'], 'oauth-2025-04-20');
     assert.equal(srv.requests[0].body.max_tokens, 1);
