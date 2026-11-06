@@ -1,6 +1,6 @@
 ---
 name: sous
-description: Use to build a Qonflo ticket, review a teammate's PR, or do free-form work as the sous main session, and to continue any of them from the blackboard. Triggers on "Pakai skill sous", "kerjakan QRD-...", "review QRD-...", "hey sous", "what's cookin'?", "retro <sprint>", DOCK cron starts and DOCK owner replies. Dispatches one sous runner per piece of work and keeps the ledger (status.cjs) as the only status.
+description: Use to build a Qonflo ticket, review a teammate's PR, or do free-form work as the sous main session, and to continue any of them from the blackboard. Triggers on "Pakai skill sous", "kerjakan QRD-...", "review QRD-...", "hey sous", "what's cookin'?", "retro <sprint>", "plan <sprint>", DOCK cron starts and DOCK owner replies. Dispatches one sous runner per piece of work and keeps the ledger (status.cjs) as the only status.
 ---
 
 # sous
@@ -42,6 +42,7 @@ Read the first prompt of the session:
 | A greeting or "what's cookin'?" only | progress | Section 6, then wait. |
 | `Pakai skill sous: retro <sprint name>` (e.g. `retro QRD Sprint 26`) | retro | Section 8. |
 | `Pakai skill sous: retro apply <id>` with the line's text and dest | retro apply | Section 8. |
+| `Pakai skill sous: plan <sprint name>` with the sentence `Sprint plan run` | plan | Section 9. |
 
 ## 3. Starting a ticket
 1. Contract and readiness are the runner's job (its `sous-intake` reads the Jira custom fields and applies `rules/ticket-contract.md` before the planner maps the terrain). You only check: `node K/status.cjs show <KEY>`. A ledger at `pr` or `done`, or waiting on the owner, is reported, not restarted. A ledger made by the old orchestrate flow (no `engine`) is continued from its stage: tell the runner the stage.
@@ -49,7 +50,7 @@ Read the first prompt of the session:
 3. `node K/status.cjs set <KEY> engine=sous` (makes `render` automatic: `NOW.md`, `status.md`, `decisions.md`, `issues.md` under the blackboard follow every ledger write).
 4. Dispatch `sous-ticket-runner` (model opus) with: key, `K`, `ROOT`, `EVIDENCE`, `configDir`, mode (cron / manual / continuation), the stack parent when there is one, the board instruction when the prompt has one (`Board per epic <EPIC>` / `board=<EPIC>`, or per ticket; without one the runner puts every ticket that has an epic on the epic's board), and on a continuation the owner's answer or change.
 5. Its return is one block. Relay it to the owner as a table; verify the deciding line yourself (`status.cjs show`, the PR URL) before repeating it.
-6. **Tell the owner before you wait.** A runner runs in the foreground, so you are silent until it returns, often half an hour. Right before the dispatch, write one line to the owner naming what the runner does next, in order, from the ledger and the prompt (for example `Runner jalan: T2 perbaiki copy storyboard -> review -> verify -> FINAL -> video ulang -> push ke PR #1080. Progress live di DOCK: baris Running dan note di ledger.`). The same line goes before every runner dispatch in sections 4 and 5. Never dispatch with only "lalu jalankan runner": the owner then sees a video or a push appear with no word from you. `kit/runner-announce.cjs` refuses a dispatch that has no such line since the owner's last message; write the line with another tool call and dispatch in your next message, because a line in the same message as the dispatch may not be on disk when the hook reads the transcript. Never report the line as written without finding it in the transcript.
+6. **Tell the owner before you wait.** A runner runs in the foreground, so you are silent until it returns, often half an hour. Right before the dispatch, write one line to the owner naming what the runner does next, in order, from the ledger and the prompt (for example `Runner jalan: T2 perbaiki copy storyboard -> review -> verify -> FINAL -> video tetap dari PR pertama -> push ke PR #1080. Progress live di DOCK: baris Running dan note di ledger.`). The same line goes before every runner dispatch in sections 4 and 5. Never dispatch with only "lalu jalankan runner": the owner then sees a video or a push appear with no word from you. `kit/runner-announce.cjs` refuses a dispatch that has no such line since the owner's last message; write the line with another tool call and dispatch in your next message, because a line in the same message as the dispatch may not be on disk when the hook reads the transcript. Never report the line as written without finding it in the transcript.
 
 ## 4. Continuing from the blackboard
 DOCK opens a NEW session for every owner action; it never resumes an old one. The first prompt is:
@@ -62,7 +63,7 @@ Jawaban owner untuk I-<n>: <answer>       | or: Owner mengubah D-<n>: <the owner
    - Answer to `I-<n>`: `node K/status.cjs decide <KEY> "<answer, in the owner's words>" --status DECIDED --by owner --issue <n> --question "<the I-<n> text>"` plus one `--rejected "<option>: <why the owner did not take it>"` per offered option the owner dropped, then `node K/status.cjs issue <KEY> <n> resolve <D printed>`. That clears `waiting`.
    - Change of `D-<n>`: `node K/status.cjs decide <KEY> "<the owner's choice, in the owner's words>" --status DECIDED --by owner --replaces <n>` (D-<n> becomes SUPERSEDED). Work built on `D-<n>` is now a finding: tell the runner which tasks it touches; the revision is pushed to the same PR.
    - `Jawaban owner: <answer>` with no issue: `node K/status.cjs decide <KEY> "<answer>" --by owner`, then `node K/status.cjs set <KEY> waiting=`.
-3. Dispatch the same runner for the board (ticket, review or card) as a continuation from the recorded stage, with the decision numbers just written. First the one line of section 3 step 6: what the runner redoes because of the owner's word (which tasks, a new video or not, which PRs get the push). A continuation started by DOCK runs like a cron run: no GATE 1, through to the PR.
+3. Dispatch the same runner for the board (ticket, review or card) as a continuation from the recorded stage, with the decision numbers just written. First the one line of section 3 step 6: what the runner redoes because of the owner's word (which tasks, which PRs get the push). A continuation started by DOCK runs like a cron run: no GATE 1, through to the PR. The demo video is made once, for the first PR: a continuation on a ticket whose `video` handoff is `done` gets no new video. Tell the runner `new video: yes` only when the owner asked for one in words ("bikin video ulang"), or when the first video was never made (`video` handoff `blocked`).
 
 ## 5. Escalation: you are level `sous`
 Issues climb `arbiter -> sous -> owner`. The runner holds the sous level for its own key; you hold it across keys and whenever a runner returns `WAITING-OWNER`.
@@ -107,3 +108,13 @@ No runner: you do it yourself, and you change no ticket ledger.
 - `dock`: `gh issue create --repo danuseta/dock --title "<text>" --body "<evidence, one line each>"`.
 - `note`: nothing to build; say so.
 A guard that blocks any of these is reported with its message; never work around it.
+
+## 9. Sprint plan
+No runner and no ledger: read only. No branch, no code, no Jira edits.
+
+**`plan <sprint name>`** (from DOCK when a sprint starts, when one of the owner's tickets joins it, or from "Map again"). The prompt names the owner tickets to order, the other tickets of the sprint, the Jira links DOCK already applies, the accepted TRY lines of the last retro, and in ticket mode the keys to map and the order that stays.
+1. For each owner ticket read the status, the acceptance criteria (`customfield_10332`), the epic and the Jira issue links (Atlassian MCP), and the code areas it will touch (`sous-explorer`).
+2. Decide the edges: a ticket cannot start before `dependsOn` is merged. Each reason names the shared file, API or contract. Do not repeat a Jira link DOCK already applies. Apply the TRY lines.
+3. Write `EVIDENCE/plan/<sprint-slug>.json`: `{ "sprint", "mode", "tickets", "order": [owner keys, first to last], "groups": [[keys safe in parallel]], "edges": [{ "ticket", "dependsOn", "reason" }] }`.
+4. `node K/dock-push.cjs plan <that file>`. A REFUSED or a non-2xx answer is reported with the file path, not retried another way.
+5. Answer the owner with one table: ticket, waits for, reason; then the order.

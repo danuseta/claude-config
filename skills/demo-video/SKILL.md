@@ -157,6 +157,7 @@ Write narration the way people talk:
   - Do all the work on E: (e.g. `E:/qonflo/<date>/<ticket>`).
   - Install with `npm_config_cache=E:/qonflo/<date>/.npm-cache`.
   - Delete the template copy's `node_modules` when you are done.
+- **No extra re-encode.** Feed `recording.mp4` to Remotion as it is; the render above already encodes once at `--crf=16`. If a recording must be converted, use `ffmpeg -c:v libx264 -preset veryfast -crf 18` and a timeout of at most 300 s. Never `-preset placebo`/`veryslow` or a crf below 16: on QRD-1500 (5 Nov) `-preset placebo -crf 8` ran for four silent minutes, the turn was stopped and the run had to start again.
 - **Notification dialog.** "Enable Notifications" can pop up over any page. `record.cjs` and the API recorder click "Maybe Later" automatically. If you write a new recorder, keep that init script.
 
 ## Legacy

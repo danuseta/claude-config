@@ -1,15 +1,18 @@
 // PreToolUse hook for the sous lead (the main session, not a subagent): a sous-*-runner dispatch is refused until the lead has
 // written its "Runner jalan:" line to the owner since the owner's last message or its own last runner dispatch. A runner runs in
 // the foreground, so without that line the owner sees nothing for half an hour (QRD-1268, QRD-1426).
+// The line may also sit in the dispatch's own Agent description or the first line of its prompt (DOCK shows the description). Sessions DOCK
+// starts itself (`Cron run:`, `auto review dari DOCK`) have nobody waiting for the line and are skipped.
 // Any other tool, a subagent's call, or a transcript it cannot read gets no answer.
 // Test: echo '{"tool_name":"Agent","tool_input":{"subagent_type":"sous-ticket-runner"},"transcript_path":"t.jsonl"}' | node runner-announce.cjs
 const fs = require("fs");
 
 const RUNNER = /^sous-[a-z]+-runner$/;
 const LINE = /Runner jalan:/i;
+const AUTOMATED = /Cron run:|auto review dari DOCK/i;
 const REASON = "runner-announce: write one line to the owner first, starting `Runner jalan:`, naming what the runner does next in order " +
 	"(for example `Runner jalan: intake -> planner -> T1 -> review -> verify -> FINAL -> video -> PR draft. Progress live di DOCK.`), " +
-	"Write it together with another tool call (for example `node K/status.cjs set <KEY> note=...`) and dispatch in your next message: " +
+	"or put `Runner jalan: ...` in the Agent description. Otherwise write it together with another tool call (for example `node K/status.cjs set <KEY> note=...`) and dispatch in your next message: " +
 	"a line in the same message as the dispatch is not on disk yet when this hook reads the transcript.";
 
 const isRunner = (tool, input) => (tool === "Agent" || tool === "Task") && RUNNER.test(String(input?.subagent_type || ""));
@@ -25,6 +28,18 @@ function refusedIds(entries) {
 		}
 	}
 	return ids;
+}
+
+// True when the owner's last real prompt (the entry announced() stops at) was started by DOCK's cron or auto review.
+function automated(lines) {
+	for (let i = lines.length - 1; i >= 0; i -= 1) {
+		let entry;
+		try { entry = JSON.parse(lines[i]); } catch { continue; }
+		if (entry.type !== "user" || entry.isSidechain || entry.isMeta) continue;
+		const texts = blocks(entry).filter((block) => block.type === "text");
+		if (texts.length) return texts.some((block) => AUTOMATED.test(block.text || ""));
+	}
+	return false;
 }
 
 // True when the lead wrote the line after the last owner prompt and after its last runner dispatch other than `toolUseId`.
@@ -58,11 +73,13 @@ const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 
 
 function decide(payload, read = (file) => fs.readFileSync(file, "utf8"), sleep = pause) {
 	if (payload.agent_type || !isRunner(payload.tool_name, payload.tool_input) || !payload.transcript_path) return null;
+	const input = payload.tool_input;
+	if (LINE.test(String(input.description || "")) || LINE.test(String(input.prompt || "").split("\n")[0])) return null;
 	for (let waited = 0; ; waited += STEP_MS) {
 		let text;
 		try { text = read(payload.transcript_path); } catch { return null; }
 		const lines = text.split("\n").filter(Boolean);
-		if (announced(lines, payload.tool_use_id)) return null;
+		if (automated(lines) || announced(lines, payload.tool_use_id)) return null;
 		const written = !payload.tool_use_id || lines.some((line) => line.includes(`"${payload.tool_use_id}"`));
 		if (written || waited >= WAIT_MS) return REASON;
 		sleep(STEP_MS);

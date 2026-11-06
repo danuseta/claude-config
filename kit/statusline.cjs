@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
+const crypto = require('crypto');
 
 const PUSH_EVERY_MS = 30 * 1000;
 
@@ -130,6 +131,10 @@ function main() {
   return parts.join(paint('os', ' | '));
 }
 
+// The account this turn really runs on, as the first 12 hex of sha256(token); account-usage.py prints the same for each
+// account, so DOCK can credit the limits to the right one. The token itself never leaves this process.
+const accountFingerprint = (token) => (token && token.trim() ? crypto.createHash('sha256').update(token.trim()).digest('hex').slice(0, 12) : undefined);
+
 // Hands the numbers to DOCK in a detached process, at most once per session every 30 s; the line above never waits for it.
 function pushToDock(input) {
   const id = String(input.session_id || '').replace(/[^A-Za-z0-9-]/g, '').slice(0, 64);
@@ -156,6 +161,7 @@ function pushToDock(input) {
     cacheHitRatio: num(pc.hit_ratio) ?? undefined,
     fiveHour: limit(rl.five_hour),
     sevenDay: limit(rl.seven_day),
+    accountFp: accountFingerprint(process.env.CLAUDE_CODE_OAUTH_TOKEN),
   };
   fs.writeFileSync(stamp, '');
   const file = path.join(os.tmpdir(), 'dock-statusline-' + id + '.json');
