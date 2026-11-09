@@ -36,6 +36,7 @@
 //   node status.cjs lgtm KEY "<part>"                -> a part of the change the reviewer found fine
 //   node status.cjs verdict KEY approve|request-change [--ticket KEY] [--pr <url>]... -> the review verdict with the reviewed ticket and
 //                                                     PR urls (default: KEY and pr.be / pr.fe); approve is refused while an unresolved blocker is recorded
+//                                                     [--ready-for-qa yes|no [--qa-reason "<missing>"]...] -> verdict.readyForQa { ready, reasons }
 //   node status.cjs metrics                          -> closing numbers per ticket and per work type
 //   node status.cjs remote                           -> the tickets DOCK knows: owner machine, offered to, local ledger or not
 //   node status.cjs handover KEY --to <machine> [--note "..."] -> offer a pushed ticket to another machine; save then refuses here
@@ -791,13 +792,19 @@ if (!cmd) {
 } else if (cmd === "verdict") {
 	const s = load(key);
 	if (!s) return console.log(`no status for ${key}; run init first`);
-	const { flags: f, words } = takeFlags(rest, ["--ticket", "--pr"]);
+	const { flags: f, words } = takeFlags(rest, ["--ticket", "--pr", "--ready-for-qa", "--qa-reason"]);
 	const verdict = words[0];
 	if (!VERDICTS.includes(verdict)) return refuse(`verdict must be one of ${VERDICTS.join(", ")}`);
 	const blockers = (s.findings ?? []).filter((f) => f.severity === "blocker" && !f.resolved).length;
 	if (verdict === "approve" && blockers) return refuse(`${key} has ${blockers} unresolved blocker finding(s); approve needs none (status.cjs finding ${key} <n> resolve "<why>")`);
+	const ready = f["--ready-for-qa"]?.[0];
+	const reasons = (f["--qa-reason"] ?? []).map((r) => r.trim()).filter(Boolean);
+	if (ready !== undefined && !["yes", "no"].includes(ready)) return refuse("--ready-for-qa must be yes or no");
+	if (ready === undefined && reasons.length) return refuse("--qa-reason goes with --ready-for-qa no");
+	if (ready === "yes" && reasons.length) return refuse("--ready-for-qa yes takes no --qa-reason; a missing item means no");
+	if (ready === "no" && !reasons.length) return refuse("--ready-for-qa no needs one --qa-reason per missing item");
 	const prs = f["--pr"]?.filter(Boolean) ?? [s.pr?.be, s.pr?.fe].filter(Boolean);
-	s.verdict = { at: now(), value: verdict, ticket: f["--ticket"]?.[0] || key, prs };
+	s.verdict = { at: now(), value: verdict, ticket: f["--ticket"]?.[0] || key, prs, ...(ready ? { readyForQa: { ready: ready === "yes", reasons } } : {}) };
 	save(key, s);
 	console.log(`${key} verdict: ${verdict}`);
 } else if (cmd === "issue") {
@@ -918,5 +925,5 @@ if (!cmd) {
 		console.log(`| ${name} | ${list.length} | ${mean(tracked, (row) => row.c.fixRounds)} | ${mean(list, (row) => (row.s.findings ?? []).length)} | ${mean(timed, (row) => row.c.hours)} |`);
 	}
 } else {
-	console.log("usage: status.cjs [show KEY | init KEY title bePort fePort beDir feDir | set KEY k=v... | ac KEY n STATE text evidence | ac-set KEY @file [jiraUpdated] | stale [KEY jiraUpdated [@file]] | handoff KEY who k=v...|@file.json | fail KEY type evidence [what] | assume KEY text falsifier | assume KEY n confirmed|refuted evidence | replan KEY reason | finding KEY [--severity blocker|non-blocking|nit] text | finding KEY n resolve why | lgtm KEY text | verdict KEY approve|request-change [--ticket KEY] [--pr url]... | metrics | brief KEY text|@file | decide KEY text [--status GUESS|USULAN|DECIDED] [--by owner|sous-<agent>|arbiter|sous|agent] [--issue n] [--effect text] [--alt \"option::effect\"]... [--replaces n] [--question text] [--rejected \"option: why not\"]... | issue KEY TYPE text [--options \"A::effect|B::effect\"] | issue KEY n escalate sous|owner why | issue KEY n resolve decisionN | round KEY [why] | lock name KEY [--wait s] [--pid n] | unlock name KEY | render KEY | sync [KEY] | remote | handover KEY --to machine [--note text] | pull KEY [--force]]");
+	console.log("usage: status.cjs [show KEY | init KEY title bePort fePort beDir feDir | set KEY k=v... | ac KEY n STATE text evidence | ac-set KEY @file [jiraUpdated] | stale [KEY jiraUpdated [@file]] | handoff KEY who k=v...|@file.json | fail KEY type evidence [what] | assume KEY text falsifier | assume KEY n confirmed|refuted evidence | replan KEY reason | finding KEY [--severity blocker|non-blocking|nit] text | finding KEY n resolve why | lgtm KEY text | verdict KEY approve|request-change [--ticket KEY] [--pr url]... [--ready-for-qa yes|no [--qa-reason text]...] | metrics | brief KEY text|@file | decide KEY text [--status GUESS|USULAN|DECIDED] [--by owner|sous-<agent>|arbiter|sous|agent] [--issue n] [--effect text] [--alt \"option::effect\"]... [--replaces n] [--question text] [--rejected \"option: why not\"]... | issue KEY TYPE text [--options \"A::effect|B::effect\"] | issue KEY n escalate sous|owner why | issue KEY n resolve decisionN | round KEY [why] | lock name KEY [--wait s] [--pid n] | unlock name KEY | render KEY | sync [KEY] | remote | handover KEY --to machine [--note text] | pull KEY [--force]]");
 }
