@@ -55,3 +55,35 @@ test('a review records severities, lgtm parts and a verdict that approve cannot 
     rmrf(base);
   }
 });
+
+test('a verdict carries readyForQa with the reasons that make it not ready, and stays without it when not given', async () => {
+  const base = tmp('review-ready-qa');
+  const evidence = path.join(base, 'evidence');
+  fs.mkdirSync(path.join(base, 'sandbox'), { recursive: true });
+  const status = (...args) => runNode([path.join(KIT, 'status.cjs'), ...args], { env: { ...sandboxEnv(path.join(base, 'sandbox')), QONFLO_EVIDENCE: evidence } });
+  const verdict = () => JSON.parse(fs.readFileSync(path.join(evidence, 'ZED-202', 'status.json'), 'utf8')).verdict;
+  try {
+    await status('init', 'ZED-202', 'Invented review', '-', '-', '-', '-');
+    await status('verdict', 'ZED-202', 'approve');
+    assert.equal(verdict().readyForQa, undefined);
+
+    for (const [args, want] of [
+      [['--ready-for-qa', 'maybe'], /must be yes or no/],
+      [['--ready-for-qa', 'no'], /needs one --qa-reason/],
+      [['--ready-for-qa', 'yes', '--qa-reason', 'x'], /takes no --qa-reason/],
+      [['--qa-reason', 'x'], /goes with --ready-for-qa no/],
+    ]) {
+      const r = await status('verdict', 'ZED-202', 'approve', ...args);
+      assert.match(r.stdout, want, args.join(' '));
+      assert.equal(r.code, 2);
+    }
+
+    await status('verdict', 'ZED-202', 'approve', '--ready-for-qa', 'no', '--qa-reason', 'AC 3 has no path:line', '--qa-reason', 'AC 2 needs ZED-150, not deployed to UAT');
+    assert.deepEqual(verdict().readyForQa, { ready: false, reasons: ['AC 3 has no path:line', 'AC 2 needs ZED-150, not deployed to UAT'] });
+    assert.equal(verdict().value, 'approve', 'not ready for QA does not change the review verdict');
+    await status('verdict', 'ZED-202', 'approve', '--ready-for-qa', 'yes');
+    assert.deepEqual(verdict().readyForQa, { ready: true, reasons: [] });
+  } finally {
+    rmrf(base);
+  }
+});
