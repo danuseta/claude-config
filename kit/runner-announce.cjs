@@ -4,6 +4,10 @@
 // The line may also sit in the dispatch's own Agent description or the first line of its prompt (DOCK shows the description). Sessions DOCK
 // starts itself (`Cron run:`, `auto review dari DOCK`) have nobody waiting for the line and are skipped.
 // Any other tool, a subagent's call, or a transcript it cannot read gets no answer.
+// A sous-ticket-runner prompt that mentions redoing the demo video must say which: a line `new video: no`,
+// `new video: yes, first video never made`, or `new video: yes, owner: "<words>"` whose quoted words the owner wrote in this
+// session. The video is made once, for the first PR; on QRD-1312 (9 Nov) the lead planned "memperbarui video" itself and the first
+// video was overwritten.
 // Test: echo '{"tool_name":"Agent","tool_input":{"subagent_type":"sous-ticket-runner"},"transcript_path":"t.jsonl"}' | node runner-announce.cjs
 const fs = require("fs");
 
@@ -14,6 +18,12 @@ const REASON = "runner-announce: write one line to the owner first, starting `Ru
 	"(for example `Runner jalan: intake -> planner -> T1 -> review -> verify -> FINAL -> video -> PR draft. Progress live di DOCK.`), " +
 	"or put `Runner jalan: ...` in the Agent description. Otherwise write it together with another tool call (for example `node K/status.cjs set <KEY> note=...`) and dispatch in your next message: " +
 	"a line in the same message as the dispatch is not on disk yet when this hook reads the transcript.";
+
+const VIDEO_WORDS = /re-?render|re-?record|new video|video (ulang|baru)|memperbarui video|update the (demo )?video|redo the (demo )?video/i;
+const VIDEO_LINE = /^\s*new video:\s*(no\b.*|yes, first video never made\b.*|yes, owner:\s*"([^"]+)")\s*$/im;
+const VIDEO_REASON = "runner-announce: this prompt talks about redoing the demo video. The video is made once, for the first PR (sous SKILL.md section 3 step 7). " +
+	"Add one line: `new video: no`, or `new video: yes, first video never made` when the video handoff is blocked, or `new video: yes, owner: \"<the owner's words>\"` " +
+	"quoting the owner's own request in this session. Never plan a new video yourself.";
 
 const isRunner = (tool, input) => (tool === "Agent" || tool === "Task") && RUNNER.test(String(input?.subagent_type || ""));
 const blocks = (entry) => (typeof entry.message?.content === "string" ? [{ type: "text", text: entry.message.content }] : entry.message?.content || []);
@@ -71,9 +81,37 @@ const WAIT_MS = 3000;
 const STEP_MS = 150;
 const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
+// The owner's own words in this session: text of user entries that are not meta and not a subagent's.
+function ownerTexts(lines) {
+	const out = [];
+	for (const line of lines) {
+		let entry;
+		try { entry = JSON.parse(line); } catch { continue; }
+		if (entry.type !== "user" || entry.isSidechain || entry.isMeta) continue;
+		for (const block of blocks(entry)) if (block.type === "text") out.push(String(block.text || ""));
+	}
+	return out;
+}
+
+// Null when the prompt does not talk about a new video or says which with an allowed line; otherwise the reason to refuse.
+function videoCheck(input, readLines) {
+	if (String(input.subagent_type) !== "sous-ticket-runner") return null;
+	const prompt = String(input.prompt || "");
+	if (!VIDEO_WORDS.test(prompt)) return null;
+	const match = prompt.match(VIDEO_LINE);
+	if (!match) return VIDEO_REASON;
+	if (!match[2]) return null;
+	const quote = match[2].trim().toLowerCase();
+	let lines;
+	try { lines = readLines(); } catch { return VIDEO_REASON; }
+	return ownerTexts(lines).some((text) => text.toLowerCase().includes(quote)) ? null : VIDEO_REASON;
+}
+
 function decide(payload, read = (file) => fs.readFileSync(file, "utf8"), sleep = pause) {
 	if (payload.agent_type || !isRunner(payload.tool_name, payload.tool_input) || !payload.transcript_path) return null;
 	const input = payload.tool_input;
+	const video = videoCheck(input, () => read(payload.transcript_path).split("\n").filter(Boolean));
+	if (video) return video;
 	if (LINE.test(String(input.description || "")) || LINE.test(String(input.prompt || "").split("\n")[0])) return null;
 	for (let waited = 0; ; waited += STEP_MS) {
 		let text;
@@ -95,5 +133,5 @@ if (require.main === module) {
 	try { main(); } catch {}
 	process.exitCode = 0;
 } else {
-	module.exports = { decide, announced };
+	module.exports = { decide, announced, videoCheck };
 }

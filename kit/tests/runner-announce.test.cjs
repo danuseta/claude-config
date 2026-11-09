@@ -85,3 +85,29 @@ test('sessions started by DOCK cron or auto review are skipped, a normal owner p
   assert.match(run('kerjakan QRD-1'), /runner-announce/);
   assert.match(dispatch([owner('Cron run: x'), owner('kerjakan QRD-1'), call('now', 'Agent', 'sous-ticket-runner')]), /runner-announce/);
 });
+
+const runner = (prompt, lines) => decide(
+  { tool_name: 'Agent', tool_input: { subagent_type: 'sous-ticket-runner', description: 'Runner jalan: fix -> push', prompt }, transcript_path: 't', tool_use_id: 'now' },
+  () => lines.join('\n'),
+  () => {},
+);
+
+test('a runner prompt that plans a new video without the owner asking is refused (QRD-1312)', () => {
+  const lines = [owner('perbaiki aja bisa ga? jawab singkat')];
+  assert.match(runner('Fix #21-#26 -> push -> sous-video re-render showing Connected clients -> demo-upload', lines), /made once, for the first PR/);
+  assert.match(runner('Fix, push, then update the video.', lines), /new video: no/);
+  assert.match(runner('Fix it.\nnew video: yes, owner: "bikin video ulang"', lines), /runner-announce/, 'a quote the owner never wrote');
+  assert.match(runner('Fix it, re-render.\nnew video: nothing changed', lines), /runner-announce/, 'only an exact no');
+});
+
+test('an allowed new video line lets the dispatch through', () => {
+  const lines = [owner('bikin video ulang ya, UI-nya berubah')];
+  assert.equal(runner('Fix it, then re-render the demo.\nnew video: yes, owner: "bikin video ulang"', lines), null);
+  assert.equal(runner('Fix it. No new video: the change is BE only.\nnew video: no', [owner('go')]), null);
+  assert.equal(runner('Record the demo.\nnew video: yes, first video never made', [owner('go')]), null);
+});
+
+test('a prompt that does not talk about a new video, or another runner, is not checked for it', () => {
+  assert.equal(runner('Make the demo video before the pull request.', [owner('go')]), null);
+  assert.equal(decide({ tool_name: 'Agent', tool_input: { subagent_type: 'sous-review-runner', description: 'Runner jalan: review', prompt: 're-render the video' }, transcript_path: 't' }, () => owner('go'), () => {}), null);
+});
