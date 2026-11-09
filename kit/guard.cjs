@@ -575,6 +575,12 @@ function main() {
 	try { payload = JSON.parse(fs.readFileSync(0, "utf8")); } catch (e) { return fail(`cannot read the hook input (${e.message})`); }
 	const command = payload?.tool_input?.command;
 	if (typeof command !== "string" || !command.trim()) return;
+	let locked = null;
+	try { locked = require("./video-lock.cjs").checkCommand(command, payload.transcript_path); } catch {}
+	if (locked) {
+		process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: locked } }));
+		return;
+	}
 	const out = answer(command, payload.cwd, { agent: payload.agent_type ?? "lead" });
 	if (out) process.stdout.write(out);
 }

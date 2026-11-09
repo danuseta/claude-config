@@ -107,7 +107,17 @@ function videoCheck(input, readLines) {
 	return ownerTexts(lines).some((text) => text.toLowerCase().includes(quote)) ? null : VIDEO_REASON;
 }
 
-function decide(payload, read = (file) => fs.readFileSync(file, "utf8"), sleep = pause) {
+// video-lock.cjs refuses a sous-video dispatch on a ticket that already has its video, for the lead and for a runner alike.
+function lockedVideo(payload, read, deps) {
+	if (payload.tool_name !== "Agent" && payload.tool_name !== "Task") return null;
+	let lock;
+	try { lock = require("./video-lock.cjs"); } catch { return null; }
+	return lock.checkAgent(payload.tool_input, payload.transcript_path, { readTranscript: read, ...deps });
+}
+
+function decide(payload, read = (file) => fs.readFileSync(file, "utf8"), sleep = pause, deps = {}) {
+	const locked = lockedVideo(payload, read, deps);
+	if (locked) return locked;
 	if (payload.agent_type || !isRunner(payload.tool_name, payload.tool_input) || !payload.transcript_path) return null;
 	const input = payload.tool_input;
 	const video = videoCheck(input, () => read(payload.transcript_path).split("\n").filter(Boolean));
