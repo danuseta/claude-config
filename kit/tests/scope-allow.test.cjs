@@ -91,7 +91,7 @@ test('the hook prints the allow only with DOCK_CHAT_TURN=1, and nothing on bad i
   } finally { rmrf(dir); }
 });
 
-test('the hook never denies: no output of it carries a deny', () => {
+test('the scope rules never deny: scope-allow.cjs writes no deny of its own (the UAT CHECK deny comes from deploy-gate.cjs)', () => {
   assert.doesNotMatch(fs.readFileSync(path.join(KIT, 'scope-allow.cjs'), 'utf8'), /permissionDecision:\s*"deny"/);
 });
 
