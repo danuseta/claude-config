@@ -7,7 +7,7 @@
 //          ssh, scp, sudo, docker, systemctl or another machine tool, a nested shell (`bash -c`, eval), $ or backtick expansion
 //   allow  Skill, Agent, Task*, TodoWrite, WebSearch, and the read tools of the Atlassian and Figma MCP servers
 // Anything else gets no answer and falls through to the permission mode and the settings rules, so it still asks.
-// This hook never denies. Claude Code applies deny over ask over allow across every hook and the settings rules, so a deny from
+// The scope part never denies (the UAT CHECK deploy gate below can). Claude Code applies deny over ask over allow across every hook and the settings rules, so a deny from
 // guard.cjs, sous-guard.cjs or permissions.deny wins over this allow. Any error prints nothing: failing silent means it asks.
 // Test: echo '{"tool_name":"Edit","cwd":"E:/qonflo","tool_input":{"file_path":"E:/qonflo/wt-1-be/src/a.ts"}}' | DOCK_CHAT_TURN=1 node scope-allow.cjs
 const fs = require("fs");
@@ -149,15 +149,22 @@ function createScopeAllow({ platform = process.platform, paths = resolvePaths(),
 	return { decide };
 }
 
-function main() {
-	if (process.env.DOCK_CHAT_TURN !== "1") return;
+// deploy-gate.cjs refuses a Jira transition to UAT CHECK before the ticket's merge is deployed, in every session. It lives in
+// this hook because the matcher "*" is already registered, so it reaches sessions that started before it existed.
+async function main() {
 	const payload = JSON.parse(fs.readFileSync(0, "utf8"));
+	let refused = null;
+	try { refused = await require("./deploy-gate.cjs").hookAnswer(payload); } catch {}
+	if (refused) {
+		process.stdout.write(refused);
+		return;
+	}
+	if (process.env.DOCK_CHAT_TURN !== "1") return;
 	if (createScopeAllow().decide(payload)) process.stdout.write(ALLOW);
 }
 
 if (require.main === module) {
-	try { main(); } catch {}
-	process.exitCode = 0;
+	main().catch(() => {}).finally(() => { process.exitCode = 0; });
 } else {
 	module.exports = { createScopeAllow, ALLOW };
 }
