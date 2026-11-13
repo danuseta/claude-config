@@ -1,5 +1,5 @@
 'use strict';
-// kit/sprint-draft.cjs: the Planning chat reads and writes DOCK's sprint draft through five fixed ingest routes.
+// kit/sprint-draft.cjs: the Planning chat reads and writes DOCK's sprint draft through six fixed ingest routes.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { request, run } = require('../sprint-draft.cjs');
@@ -37,6 +37,32 @@ test('each command goes to its route with the contract body', async () => {
   ]);
   assert.equal(JSON.parse(io.lines.out[0]).ok, true, 'the result is printed as JSON');
   assert.ok(seen[5].timeoutMs > seen[0].timeoutMs, 'the storyboard fetch gets longer');
+});
+
+test('summary posts the Intinya body to sprint-draft/summary', async () => {
+  const { seen, send } = recorder();
+  const io = quiet();
+  const readFile = files({ 's.json': JSON.stringify({ acHash: 'h1', made: 'm', checked: 'c', notHere: 'n', waitsOn: ['qrd-1307'], before: 'b', after: 'a', line: 'l', testData: null, ui: true, acId: ['satu'], titleId: 'judul', extra: 'dropped' }) });
+  assert.equal(await run(['summary', '27', 'qrd-1510', 's.json'], { send, readFile, ...io }), 0);
+  assert.deepEqual(seen.map((s) => [s.route, s.body]), [
+    ['/sprint-draft/summary', { sprint: '27', key: 'QRD-1510', acHash: 'h1', made: 'm', checked: 'c', notHere: 'n', waitsOn: ['QRD-1307'], before: 'b', after: 'a', line: 'l', testData: null, ui: true, acId: ['satu'], titleId: 'judul' }],
+  ]);
+  const bare = request(['summary', '27', 'QRD-1510', 'b.json'], files({ 'b.json': JSON.stringify({ acHash: 'h', made: 'm', checked: 'c', before: 'b', after: 'a', line: 'l' }) }));
+  assert.deepEqual(bare.body, { sprint: '27', key: 'QRD-1510', acHash: 'h', made: 'm', checked: 'c', notHere: '', waitsOn: [], before: 'b', after: 'a', line: 'l', testData: null, ui: false, acId: [], titleId: null });
+});
+
+test('a summary that does not fit the contract is refused locally', () => {
+  const base = { acHash: 'h', made: 'm', checked: 'c', before: 'b', after: 'a', line: 'l' };
+  const cases = [
+    [{ ...base, acHash: '' }, /acHash must be a non-empty string/],
+    [{ ...base, waitsOn: ['soon'] }, /soon is not a ticket key/],
+    [{ ...base, ui: 'yes' }, /ui must be true or false/],
+    [{ ...base, acId: 'one' }, /acId must be an array of strings/],
+    [{ ...base, testData: 3 }, /testData must be a string or null/],
+    [{ ...base, key: 'QRD-9' }, /summary of QRD-9, not QRD-1/],
+  ];
+  for (const [s, want] of cases) assert.match(request(['summary', '27', 'QRD-1', 's.json'], files({ 's.json': JSON.stringify(s) })).error, want);
+  assert.match(request(['summary', '27', 'QRD-1']).error, /needs the JSON file/);
 });
 
 test('an AC file can be a JSON array', () => {

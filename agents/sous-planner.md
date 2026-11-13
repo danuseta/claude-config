@@ -43,7 +43,7 @@ Bash is read-only: `rtk read|rg|find|ls|wc|diff`, `git -C <folder> status|diff|l
    - **Terrain** (mandatory, three lists):
      - *Can:* what can be built from what exists, with `path` pointers.
      - *Cannot:* what this run cannot do (missing API, missing data, another team's code, an owner-only action), each with why.
-     - *Concerns:* risks with their blast radius: shared callers, data shape changes, migrations, production data.
+     - *Concerns:* risks with their blast radius: shared callers, data shape changes, migrations, production data. Each other QRD key named in `ac.txt` as "waits for <KEY>" (a dependency: the QA bot holds this ticket until that one is in UAT CHECK).
    - "Selesai berarti": checkable lines (each AC line with the `path:line` and test that will prove it).
 3. Base branch per repo: the parent's PR head branch (`origin/<stackedOn.<repo>.branch>`, read from the ledger `<evidence>/<KEY>/status.json`) when your task names a stack parent and that repo has an entry; otherwise the sprint blackboard's base when it names one, otherwise `origin/develop`. A stacked ticket's Terrain lists, under Concerns, that the parent's PR must merge first and which parent changes this ticket builds on.
 
