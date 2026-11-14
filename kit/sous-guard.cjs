@@ -25,6 +25,9 @@
 //                                          ticket ledger's stackedOn branch for that repo
 //   sous-guard.cjs jira [--record]         createJiraIssue / editJiraIssue for sous-jira: project QRD, label sous, content fields only, edits
 //                                          only on tickets sous-jira created (the PostToolUse --record call keeps that list), label kept
+//   sous-guard.cjs judge                   Bash/PowerShell/MCP of a Judge session only (DOCK_JUDGE=1, or the transcript's first prompt starts
+//                                          "Pakai skill judge:"): read-only git and gh, no Jira/Confluence MCP write, no curl/wget write, status.cjs reads only;
+//                                          any other session passes untouched. Wired globally from settings.base.json
 // Roots: @wt (every <root>/wt-* worktree), @root, @evidence, @board (<evidence>/blackboard), @shots (<root>/<MMDD> screenshot folders),
 // @config (only kit/, skills/, agents/ and rules/ of the config dir), @video (<root>/../qonflo-out/<MMDD>/<KEY>, a ticket's demo
 // video folder), @skill (the demo-video skill: <root>/.claude/skills/demo-video or <config>/skills/demo-video). Values come from paths.cjs.
@@ -608,12 +611,145 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 	return { check, record, norm };
 }
 
+// ---- judge: the read-only profile of a Judge session (skills/judge). It applies only when the session is one: DOCK_JUDGE=1 (set by
+// dock-chat.cjs) or a transcript whose first prompt starts with "Pakai skill judge:", so a resumed turn without the flag is still covered.
+// Refused: git other than reading, gh other than reading, Jira and Confluence writes through MCP, curl/wget/http writes, jira/acli writes,
+// status.cjs other than show, metrics, remote or the bare table.
+const JUDGE_PROMPT = /^\s*Pakai skill judge:/i;
+const JUDGE_GIT_READ = new Set([...GIT_READ, "grep", "ls-tree", "cat-file", "for-each-ref", "shortlog", "describe", "show-ref", "ls-remote", "rev-list", "name-rev", "whatchanged", "count-objects", "version", "help"]);
+const JUDGE_GH_READ = new Set([...GH_READ, "issue list", "issue view", "issue status", "search prs", "search issues", "search code", "search commits", "search repos", "release list", "release view", "workflow list", "workflow view", "label list", "repo list", "auth status"]);
+const JUDGE_WRAP = new Set(["rtk", "proxy", "env", "nohup", "time", "exec", "command", "builtin", "nice", "stdbuf", "xargs"]);
+const JUDGE_SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh", "pwsh", "powershell", "cmd"]);
+const JUDGE_NET = new Set(["curl", "wget", "http", "https", "invoke-restmethod", "invoke-webrequest", "iwr", "irm"]);
+const STATUS_READ = new Set(["show", "metrics", "remote"]);
+const STATUS_FILE = /(^|[\\/])status\.cjs$/i;
+const JUDGE_TOOLS = /\b(git|gh|curl|wget|jira|acli|Invoke-RestMethod|Invoke-WebRequest)\b/i;
+const MCP_READ_OP = /^(get|search|lookup|list|fetch|read|discover|executeRead|atlassianUserInfo|view|query|find)/i;
+const MCP_WRITE_OP = /^(create|update|edit|delete|remove|add|transition|assign|merge|push|close|reopen|publish|upload|send|post|write|comment|link|move|set|executeWrite|executeDestructive)/i;
+const JUDGE_RULE = "this is a Judge session, which is read-only. Report the refused step in your findings and your answer; do not try it another way";
+
+// The text of the first prompt in a transcript, or "". Reads at most 512 KB.
+function firstPrompt(file) {
+	if (!file) return "";
+	let text = "";
+	try {
+		const fd = fs.openSync(file, "r");
+		try {
+			const buf = Buffer.alloc(512 * 1024);
+			text = buf.toString("utf8", 0, fs.readSync(fd, buf, 0, buf.length, 0));
+		} finally { fs.closeSync(fd); }
+	} catch { return ""; }
+	for (const line of text.split("\n")) {
+		let e;
+		try { e = JSON.parse(line); } catch { continue; }
+		if (!e || e.type !== "user" || e.isMeta) continue;
+		const c = e.message && e.message.content;
+		const said = typeof c === "string" ? c : Array.isArray(c) ? c.filter((b) => b && b.type === "text").map((b) => b.text).join("\n") : "";
+		if (!said.trim() || said.trim().startsWith("<")) continue;
+		return said;
+	}
+	return "";
+}
+
+const isJudgeSession = (payload, env = process.env) => env.DOCK_JUDGE === "1" || JUDGE_PROMPT.test(firstPrompt(payload && payload.transcript_path));
+
+const judgeWords = (s) => {
+	const out = [], re = /"((?:\\.|[^"\\])*)"|'([^']*)'|(\S+)/g;
+	let m;
+	while ((m = re.exec(s))) out.push(m[1] !== undefined ? m[1].replace(/\\(.)/g, "$1") : m[2] !== undefined ? m[2] : m[3]);
+	return out;
+};
+// Segments of a command line split on unquoted ; & | and newlines.
+function judgeSegments(cmd) {
+	const out = [];
+	let q = null, cur = "";
+	for (let i = 0; i < cmd.length; i++) {
+		const c = cmd[i];
+		if (q) {
+			if (c === q) q = null;
+			else if (c === "\\" && q === '"') { cur += c + (cmd[++i] ?? ""); continue; }
+			cur += c;
+			continue;
+		}
+		if (c === "'" || c === '"') { q = c; cur += c; continue; }
+		if (";&|\n".includes(c)) { if (cur.trim()) out.push(cur.trim()); cur = ""; continue; }
+		cur += c;
+	}
+	if (cur.trim()) out.push(cur.trim());
+	return out;
+}
+
+const netWrites = (rest) => rest.some((x, k) => (/^(-X|--request|--method|-Method)$/i.test(x) && !/^(GET|HEAD|OPTIONS)$/i.test(rest[k + 1] || ""))
+	|| /^-X(?!GET$|HEAD$)./.test(x) || /^(--request|--method)=(?!GET$|HEAD$)/i.test(x) || /^-[A-Za-z]*[dFT][A-Za-z]*$/.test(x)
+	|| /^--(data(-[a-z]+)?|form(-string)?|json|upload-file|post-data|post-file|body-data|body-file)(=.*)?$/.test(x) || /^-(Body|InFile)$/i.test(x));
+const ghApiWrites = (rest) => rest.some((x, k) => /^(-f|-F|--field|--raw-field|--input)$/.test(x) || /^(--field|--raw-field|--input)=/.test(x)
+	|| (/^(-X|--method)$/.test(x) && !/^(GET|HEAD)$/i.test(rest[k + 1] || "")) || /^(-X|--method=)(?!GET$|HEAD$)[A-Za-z]/.test(x) || /mutation/i.test(x));
+
+// The deny reason for one shell command in a Judge session, or null.
+function judgeShell(cmd, depth = 0) {
+	if (depth > 4) return "the command nests shells too deep to read";
+	if (/\$\(|`|<\(/.test(cmd) && JUDGE_TOOLS.test(cmd)) return "command substitution around git, gh or a network tool cannot be read; write the command out plainly";
+	for (const seg of judgeSegments(cmd)) {
+		const w = judgeWords(seg.replace(/^[({\s!]+/, ""));
+		let i = 0;
+		for (;;) {
+			if (i < w.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w[i]) || JUDGE_WRAP.has(w[i].toLowerCase()))) i++;
+			else if (w[i] === "timeout") i += 2;
+			else break;
+		}
+		const lead = String(w[i] ?? "").split(/[\\/]/).pop().replace(/\.exe$/i, "").toLowerCase();
+		const rest = w.slice(i + 1);
+		if (lead === "eval" || lead === "iex" || lead === "invoke-expression") {
+			if (JUDGE_TOOLS.test(rest.join(" "))) return "eval around git, gh or a network tool cannot be read; write the command out plainly";
+		} else if (JUDGE_SHELLS.has(lead)) {
+			const at = rest.findIndex((x) => /^(-c|-lc|-Command|\/c)$/i.test(x));
+			const inner = at >= 0 && rest[at + 1] ? judgeShell(rest.slice(at + 1).join(" "), depth + 1) : null;
+			if (inner) return inner;
+		} else if (lead === "git") {
+			let k = 0;
+			while (k < rest.length && rest[k].startsWith("-")) k += /^(-C|-c|--git-dir|--work-tree|--namespace|--config-env|--exec-path)$/.test(rest[k]) ? 2 : 1;
+			if (rest[k] && !JUDGE_GIT_READ.has(rest[k])) return `git ${rest[k]} is not a read`;
+		} else if (lead === "gh") {
+			const pos = rest.filter((x) => !x.startsWith("-"));
+			if (pos[0] === "api") { if (ghApiWrites(rest)) return "gh api with a write method, fields or input is not a read"; }
+			else if (pos.length && !JUDGE_GH_READ.has(pos.slice(0, 2).join(" "))) return `gh ${pos.slice(0, 2).join(" ")} is not a read`;
+		} else if (JUDGE_NET.has(lead)) {
+			if (netWrites(rest)) return `${lead} with a write method or a body is not a read`;
+		} else if ((lead === "node" || lead === "kit-node") && rest.some((x) => STATUS_FILE.test(x))) {
+			const sub = rest[rest.findIndex((x) => STATUS_FILE.test(x)) + 1];
+			if (sub !== undefined && !STATUS_READ.has(sub)) return `status.cjs ${sub} writes a ledger; Judge writes only its own result file`;
+		} else if ((lead === "jira" || lead === "acli") && rest.some((x) => MCP_WRITE_OP.test(x))) return `${lead} ${rest.join(" ").slice(0, 60)} writes to Jira`;
+	}
+	return null;
+}
+
+// The deny reason for one tool call of a Judge session, or null. The caller has decided that the session is a Judge session.
+function checkJudge(tool, input) {
+	if (tool === "Bash" || tool === "PowerShell") {
+		const why = judgeShell(String((input && input.command) || ""));
+		return why && `${why}: ${JUDGE_RULE}`;
+	}
+	const m = /^mcp__(.+?)__(.+)$/.exec(tool || "");
+	if (!m) return null;
+	const atlassian = /atlassian|jira|confluence/i.test(m[1]) || /jira|confluence/i.test(m[2]);
+	return (atlassian ? !MCP_READ_OP.test(m[2]) : MCP_WRITE_OP.test(m[2])) ? `${m[2]} writes through ${m[1]}: ${JUDGE_RULE}` : null;
+}
+
 const deny = (why) => JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: `sous guard: ${why}` } });
 
 function main() {
 	const [mode, ...args] = process.argv.slice(2);
 	let payload;
 	try { payload = JSON.parse(fs.readFileSync(0, "utf8")); } catch { return process.stdout.write(deny("could not read the hook input")); }
+	if (mode === "judge") {
+		if (!isJudgeSession(payload)) return;
+		const why = checkJudge(payload.tool_name || "", payload.tool_input || {});
+		if (why) {
+			if (process.env.SOUS_GUARD_NOLOG !== "1") try { fs.appendFileSync(path.join(__dirname, "guard.log"), `${new Date().toISOString()} DENY sous-judge ${payload.agent_type ?? "-"} :: ${String(payload.tool_input?.command ?? payload.tool_name).replace(/\s+/g, " ").slice(0, 300)}\n`); } catch {}
+			process.stdout.write(deny(why));
+		}
+		return;
+	}
 	const g = createSousGuard({ cwd: payload.cwd || process.cwd() });
 	if (mode === "jira" && args[0] === "--record") return void g.record(payload.tool_response);
 	const why = g.check(mode, args, payload);
@@ -626,5 +762,5 @@ function main() {
 if (require.main === module) {
 	try { main(); } catch (e) { process.stdout.write(deny(`internal error (${e.message}); refusing`)); }
 } else {
-	module.exports = { createSousGuard, deny, AGENTS };
+	module.exports = { createSousGuard, deny, AGENTS, JUDGE_PROMPT, isJudgeSession, checkJudge, firstPrompt };
 }

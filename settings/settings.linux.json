@@ -15,6 +15,16 @@
             "command": "[ \"$DOCK_RTK\" = off ] || rtk hook claude"
           }
         ]
+      },
+      {
+        "matcher": "Bash|PowerShell|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"$DOCK_JUDGE\" = 1 ] || exit 0; {{kit:sous-guard.cjs judge}} || exit 2",
+            "timeout": 5
+          }
+        ]
       }
     ]
   }

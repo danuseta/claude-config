@@ -48,6 +48,16 @@
             "command": "rtk hook claude"
           }
         ]
+      },
+      {
+        "matcher": "Bash|PowerShell|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{kit:sous-guard.cjs judge}} || exit 2",
+            "timeout": 5
+          }
+        ]
       }
     ]
   }

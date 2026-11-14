@@ -41,6 +41,11 @@
 //   node status.cjs remote                           -> the tickets DOCK knows: owner machine, offered to, local ledger or not
 //   node status.cjs handover KEY --to <machine> [--note "..."] -> offer a pushed ticket to another machine; save then refuses here
 //   node status.cjs pull KEY [--force]               -> accept a ticket offered to this machine and write its ledger here
+//   node status.cjs checkpoint KEY <step> "<text>" [--agent <name>] [--agent-id <id>] [--untestable "<line>"]... [--missing-data "<line>"]...
+//                                                     -> optional progress report to DOCK (POST /checkpoint); text cut to 400 chars;
+//                                                        prints one line and exits 0 whatever happens (DOCK off, unreachable, slow, or off on DOCK)
+//   decide / issue also take [--id "<the text in Indonesian>"] [--options-id "<A>|<B>"] -> textId and optionsId (parallel to --alt / --options)
+//   set KEY qaMenu="<menu path to the feature>"     -> where QA finds the feature; qaMenu= clears it
 // Refusals print REFUSED and exit 2. PASS needs evidence that exists and a recorded handoff, FAIL needs evidence of what failed; done needs a handoff with proof.
 // QONFLO_EVIDENCE=<dir> points the ledger at a scratch copy and switches the DOCK mirror off.
 const fs = require("fs");
@@ -449,6 +454,14 @@ const [cmd, rawKey, ...rest] = process.argv.slice(2);
 // A free-form card is CARD-<slug>: the prefix upper case, the slug lower case, as DOCK stores it.
 const key = /^card-/i.test(rawKey ?? "") ? `CARD-${rawKey.slice(5).toLowerCase()}` : rawKey;
 const optValue = (name) => { const i = rest.indexOf(name); return i >= 0 ? rest[i + 1] ?? "" : ""; };
+// The Indonesian lines for DOCK's Decisions view: textId, and optionsId only when it has one entry per option (else dropped with a note).
+const indonesian = (f, count) => {
+	const textId = (f["--id"]?.[0] ?? "").trim();
+	const optionsId = f["--options-id"] ? f["--options-id"][0].split("|").map((o) => o.trim()) : [];
+	const fits = optionsId.length > 0 && optionsId.length === count && optionsId.every(Boolean);
+	if (optionsId.length && !fits) console.log(`--options-id dropped: it has ${optionsId.length} entries for ${count} option(s)`);
+	return { ...(textId ? { textId } : {}), ...(fits ? { optionsId } : {}) };
+};
 
 if (!cmd) {
 	const keys = fs.existsSync(ROOT) ? fs.readdirSync(ROOT).filter((k) => fs.existsSync(file(k))) : [];
@@ -527,6 +540,11 @@ if (!cmd) {
 			delete s.engine;
 			continue;
 		}
+		if (k === "qaMenu") {
+			if (v.trim()) s.qaMenu = line(v).trim().slice(0, 200);
+			else delete s.qaMenu;
+			continue;
+		}
 		if (k === "stage" && v === "done" && s.stage !== "done") {
 			if (s.source?.stale) return refuse(`${key} is stale (${s.source.stale.reason}); run ac-set again before closing`);
 			const reports = latestHandoffs(s);
@@ -566,6 +584,23 @@ if (!cmd) {
 	s.ac[idx] = row;
 	save(key, s);
 	console.log(`${key} AC${n}: ${state}`);
+} else if (cmd === "checkpoint") {
+	// An optional progress report for the owner on DOCK. It never holds a run up: every outcome is one line and exit 0.
+	const { flags: f, words } = takeFlags(rest, ["--agent", "--agent-id", "--untestable", "--missing-data"]);
+	const [step, ...textWords] = words;
+	const text = textWords.join(" ").trim().slice(0, 400);
+	if (!key || !step || !text) return console.log('checkpoint skipped: usage status.cjs checkpoint KEY <step> "<text>" [--agent <name>] [--agent-id <id>] [--untestable "<line>"]... [--missing-data "<line>"]...');
+	const lines = (name) => (f[name] ?? []).map((v) => v.trim()).filter(Boolean);
+	const untestable = lines("--untestable"), missingData = lines("--missing-data");
+	const agent = (f["--agent"]?.[0] ?? "").trim(), agentId = (f["--agent-id"]?.[0] ?? "").trim();
+	const body = { key, step, ...(agent ? { agent } : {}), ...(agentId ? { agentId } : {}), text, ...(untestable.length || missingData.length ? { notes: { untestable, missingData } } : {}) };
+	dock().send("/checkpoint", body, 3000).then((r) => {
+		const res = r.result ?? r;
+		if (r.skipped) console.log("checkpoint skipped: DOCK is not configured");
+		else if (r.status < 200 || r.status >= 300) console.log(`checkpoint skipped: DOCK answered ${r.status}`);
+		else if (res.recorded === false) console.log(`checkpoint skipped: ${res.reason || "off"} on DOCK`);
+		else console.log(`${key} checkpoint ${step}: recorded`);
+	}).catch((e) => console.log(`checkpoint skipped: DOCK not reachable (${e.name === "TimeoutError" ? "timeout" : e.message})`));
 } else if (cmd === "remote") {
 	dock().ledger("list", {}).then((r) => {
 		if (r.status !== 200) return refuse(dockError("the list", r));
@@ -635,7 +670,7 @@ if (!cmd) {
 } else if (cmd === "decide") {
 	const s = load(key);
 	if (!s) return console.log(`no status for ${key}; run init first`);
-	const { flags: f, words } = takeFlags(rest, ["--status", "--by", "--issue", "--effect", "--alt", "--replaces", "--question", "--rejected"]);
+	const { flags: f, words } = takeFlags(rest, ["--status", "--by", "--issue", "--effect", "--alt", "--replaces", "--question", "--rejected", "--id", "--options-id"]);
 	const status = statusOf(f["--status"]?.[0] ?? "DECIDED");
 	const by = f["--by"]?.[0] ?? "owner";
 	if (!DECISION_SET.includes(status)) return refuse(`--status must be one of ${DECISION_SET.join(", ")}`);
@@ -651,7 +686,7 @@ if (!cmd) {
 	const question = (f["--question"]?.[0] ?? "").trim();
 	const rejected = (f["--rejected"] ?? []).map(rejectedOf).filter((r) => r.option);
 	const n = (s.decisions ?? []).length + 1;
-	(s.decisions ??= []).push({ n, at: new Date().toISOString(), text, status, by, ...(f["--issue"] ? { issue: Number(f["--issue"][0]) } : {}), ...(effect ? { effect } : {}), ...(alts.length ? { alts } : {}), ...(question ? { question } : {}), ...(rejected.length ? { rejected } : {}), ...(replaced ? { replaces: replaced.n } : {}) });
+	(s.decisions ??= []).push({ n, at: new Date().toISOString(), text, status, by, ...(f["--issue"] ? { issue: Number(f["--issue"][0]) } : {}), ...(effect ? { effect } : {}), ...(alts.length ? { alts } : {}), ...(question ? { question } : {}), ...(rejected.length ? { rejected } : {}), ...(replaced ? { replaces: replaced.n } : {}), ...indonesian(f, alts.length) });
 	if (replaced) Object.assign(s.decisions[replaced.n - 1], { n: replaced.n, by: replaced.by, status: "SUPERSEDED", supersededBy: n, supersededAt: now() });
 	save(key, s);
 	console.log(`${key} decision #${n} (D-${n} ${status} by ${by})${replaced ? `; D-${replaced.n} SUPERSEDED` : ""}`);
@@ -839,7 +874,7 @@ if (!cmd) {
 		}
 		return refuse("issue KEY <n> escalate sous|owner \"<why>\" | issue KEY <n> resolve <decisionN>");
 	}
-	const { flags: f, words } = takeFlags(rest, ["--options"]);
+	const { flags: f, words } = takeFlags(rest, ["--options", "--id", "--options-id"]);
 	const [type, ...textWords] = words;
 	if (!ISSUE_TYPES.includes(type)) return refuse(`issue type must be one of ${ISSUE_TYPES.join(", ")}`);
 	const text = textWords.join(" ").trim();
@@ -848,7 +883,7 @@ if (!cmd) {
 	const parsed = f["--options"] ? f["--options"][0].split("|").map(optionOf).filter((o) => o.label) : [];
 	const options = parsed.map((o) => o.label);
 	const effects = parsed.some((o) => o.effect) ? parsed.map((o) => o.effect) : [];
-	(s.issues ??= []).push({ n, at: now(), type, text, level: "arbiter", status: "open", ...(options.length ? { options } : {}), ...(effects.length ? { effects } : {}) });
+	(s.issues ??= []).push({ n, at: now(), type, text, level: "arbiter", status: "open", ...(options.length ? { options } : {}), ...(effects.length ? { effects } : {}), ...indonesian(f, options.length) });
 	save(key, s);
 	console.log(`${key} I-${n}: ${type} open at level arbiter`);
 } else if (cmd === "round") {
@@ -925,5 +960,5 @@ if (!cmd) {
 		console.log(`| ${name} | ${list.length} | ${mean(tracked, (row) => row.c.fixRounds)} | ${mean(list, (row) => (row.s.findings ?? []).length)} | ${mean(timed, (row) => row.c.hours)} |`);
 	}
 } else {
-	console.log("usage: status.cjs [show KEY | init KEY title bePort fePort beDir feDir | set KEY k=v... | ac KEY n STATE text evidence | ac-set KEY @file [jiraUpdated] | stale [KEY jiraUpdated [@file]] | handoff KEY who k=v...|@file.json | fail KEY type evidence [what] | assume KEY text falsifier | assume KEY n confirmed|refuted evidence | replan KEY reason | finding KEY [--severity blocker|non-blocking|nit] text | finding KEY n resolve why | lgtm KEY text | verdict KEY approve|request-change [--ticket KEY] [--pr url]... [--ready-for-qa yes|no [--qa-reason text]...] | metrics | brief KEY text|@file | decide KEY text [--status GUESS|USULAN|DECIDED] [--by owner|sous-<agent>|arbiter|sous|agent] [--issue n] [--effect text] [--alt \"option::effect\"]... [--replaces n] [--question text] [--rejected \"option: why not\"]... | issue KEY TYPE text [--options \"A::effect|B::effect\"] | issue KEY n escalate sous|owner why | issue KEY n resolve decisionN | round KEY [why] | lock name KEY [--wait s] [--pid n] | unlock name KEY | render KEY | sync [KEY] | remote | handover KEY --to machine [--note text] | pull KEY [--force]]");
+	console.log("usage: status.cjs [show KEY | init KEY title bePort fePort beDir feDir | set KEY k=v... | ac KEY n STATE text evidence | ac-set KEY @file [jiraUpdated] | stale [KEY jiraUpdated [@file]] | handoff KEY who k=v...|@file.json | fail KEY type evidence [what] | assume KEY text falsifier | assume KEY n confirmed|refuted evidence | replan KEY reason | finding KEY [--severity blocker|non-blocking|nit] text | finding KEY n resolve why | lgtm KEY text | verdict KEY approve|request-change [--ticket KEY] [--pr url]... [--ready-for-qa yes|no [--qa-reason text]...] | metrics | brief KEY text|@file | decide KEY text [--status GUESS|USULAN|DECIDED] [--by owner|sous-<agent>|arbiter|sous|agent] [--issue n] [--effect text] [--alt \"option::effect\"]... [--replaces n] [--question text] [--rejected \"option: why not\"]... | issue KEY TYPE text [--options \"A::effect|B::effect\"] | issue KEY n escalate sous|owner why | issue KEY n resolve decisionN | round KEY [why] | lock name KEY [--wait s] [--pid n] | unlock name KEY | render KEY | sync [KEY] | remote | handover KEY --to machine [--note text] | pull KEY [--force] | checkpoint KEY step text [--agent name] [--agent-id id] [--untestable line]... [--missing-data line]...]");
 }

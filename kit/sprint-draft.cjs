@@ -5,6 +5,8 @@
 //                                                                                   --ac-file: one AC line per non-empty line, or a JSON array
 //   node sprint-draft.cjs tc <sprint> <KEY> <json-file>                              test cases: [{ id: "TC-1", ac: 1, title, steps: [], expected }]
 //   node sprint-draft.cjs question <sprint> "<text>" [KEY]                           an open question for the planner
+//   node sprint-draft.cjs summary <sprint> <KEY> <json-file>                         the ticket summary (Intinya): { acHash, made, checked, notHere,
+//                                                                                   waitsOn: [], before, after, line, testData, ui, acId: [], titleId }
 //   node sprint-draft.cjs storyboard <EPIC>                                          the newest storyboard version: { version, path, frames, changed }
 // Prints DOCK's result as JSON. Exit 0 answered, 3 DOCK refused (its error on stderr), 1 usage error or DOCK did not answer.
 const fs = require("fs");
@@ -17,6 +19,7 @@ const USAGE = [
 	"       node sprint-draft.cjs update <sprint> <KEY> [--dev <name>] [--wave <n>] [--sp <n>] [--ac-file <file>]",
 	"       node sprint-draft.cjs tc <sprint> <KEY> <json-file>",
 	"       node sprint-draft.cjs question <sprint> \"<text>\" [KEY]",
+	"       node sprint-draft.cjs summary <sprint> <KEY> <json-file>",
 	"       node sprint-draft.cjs storyboard <EPIC>",
 ].join("\n");
 
@@ -45,6 +48,23 @@ function tcProblem(tc, i) {
 	return null;
 }
 
+const SUMMARY_TEXT = ["acHash", "made", "checked", "before", "after", "line"];
+const SUMMARY_OPTIONAL = ["notHere", "testData", "titleId"];
+
+// Null when the summary fits DOCK's sprint-draft/summary contract, else what is wrong with it.
+function summaryProblem(s) {
+	if (!s || typeof s !== "object" || Array.isArray(s)) return "the summary is not an object";
+	const empty = SUMMARY_TEXT.find((f) => typeof s[f] !== "string" || !s[f].trim());
+	if (empty) return `${empty} must be a non-empty string`;
+	const notText = SUMMARY_OPTIONAL.find((f) => s[f] !== undefined && s[f] !== null && typeof s[f] !== "string");
+	if (notText) return `${notText} must be a string or null`;
+	for (const f of ["waitsOn", "acId"]) if (s[f] !== undefined && (!Array.isArray(s[f]) || s[f].some((l) => typeof l !== "string"))) return `${f} must be an array of strings`;
+	const bad = (s.waitsOn || []).find((k) => !KEY.test(keyOf(k)));
+	if (bad) return `waitsOn: ${bad} is not a ticket key`;
+	if (s.ui !== undefined && typeof s.ui !== "boolean") return "ui must be true or false";
+	return null;
+}
+
 // argv after the script name -> { route, body, timeoutMs } or { error }.
 function request(argv, readFile = (f) => fs.readFileSync(f, "utf8")) {
 	const [cmd, ...rest] = argv;
@@ -53,7 +73,7 @@ function request(argv, readFile = (f) => fs.readFileSync(f, "utf8")) {
 		const epic = keyOf(rest[0]);
 		return KEY.test(epic) ? { route: "/storyboard", body: { epic }, timeoutMs: 120000 } : { error: "storyboard needs the epic key, e.g. QRD-1400" };
 	}
-	if (!["get", "update", "tc", "question"].includes(cmd)) return { error: cmd ? `unknown command ${cmd}` : "no command" };
+	if (!["get", "update", "tc", "question", "summary"].includes(cmd)) return { error: cmd ? `unknown command ${cmd}` : "no command" };
 	if (!sprint) return { error: `${cmd} needs the sprint` };
 	if (cmd === "get") return { route: "/sprint-draft/get", body: { sprint }, timeoutMs: 60000 };
 	if (cmd === "question") {
@@ -77,6 +97,16 @@ function request(argv, readFile = (f) => fs.readFileSync(f, "utf8")) {
 		const twice = ids.find((id, i) => ids.indexOf(id) !== i);
 		if (twice) return { error: `${twice} appears twice` };
 		return { route: "/sprint-draft/tc", body: { sprint, key, tcs: tcs.map(({ id, ac, title, steps, expected }) => ({ id, ac, title, steps, expected })) }, timeoutMs: 60000 };
+	}
+	if (cmd === "summary") {
+		if (!rest[2]) return { error: "summary needs the JSON file of the summary" };
+		let s;
+		try { s = JSON.parse(readText(rest[2], readFile)); } catch (e) { return { error: `cannot read ${rest[2]}: ${e.message}` }; }
+		const problem = summaryProblem(s);
+		if (problem) return { error: problem };
+		if (s.key !== undefined && keyOf(s.key) !== key) return { error: `${rest[2]} is the summary of ${s.key}, not ${key}` };
+		const { acHash, made, checked, notHere = "", waitsOn = [], before, after, line, testData = null, ui = false, acId = [], titleId = null } = s;
+		return { route: "/sprint-draft/summary", body: { sprint, key, acHash, made, checked, notHere, waitsOn: waitsOn.map(keyOf), before, after, line, testData, ui, acId, titleId }, timeoutMs: 60000 };
 	}
 	const body = { sprint, key };
 	const args = rest.slice(2);
@@ -126,5 +156,5 @@ async function run(argv, deps = {}) {
 if (require.main === module) {
 	run(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (e) => { console.error(`sprint-draft: ${e.message || e}`); process.exitCode = 1; });
 } else {
-	module.exports = { request, call, run, acLines, tcProblem };
+	module.exports = { request, call, run, acLines, tcProblem, summaryProblem };
 }

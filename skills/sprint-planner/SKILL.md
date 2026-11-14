@@ -17,11 +17,35 @@ D="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/sprint-draft.cjs"
 
 - The sprint comes from the session title `Planning-<sprint>`, else from the planner's message. Not known: ask once and wait.
 - Exit codes of `node "$D" ...`: 0 answered (JSON on stdout), 3 DOCK refused (reason on stderr), 1 usage error or DOCK did not answer. On 1 or 3 quote the stderr line and stop that step; never fall back to editing Jira, Confluence or a local copy.
-- After **every** write (`update`, `tc`, `question`), run `node "$D" get <sprint>` and check the change is there before you say it is done. A write the draft does not show is reported as not done.
+- After **every** write (`update`, `tc`, `question`, `summary`), run `node "$D" get <sprint>` and check the change is there before you say it is done. A write the draft does not show is reported as not done.
 
 ## 1. Read the draft
 
 `node "$D" get <sprint>`: tickets with `key, summary, dev, sp, wave, ac[], start, end, inSprint` and their `prediction`, plus `findings` (each with its `kind`). Summarise in one table: key, summary, dev, SP, wave, start-end, in sprint, prediction. AC line `n` is `ac[n-1]`.
+
+### AC rule
+AC holds only what is tested in the ticket. When you write or change AC through `sprint-draft/update`:
+- a QRD key of another ticket in an AC line means a dependency; the planner confirms it in Planning › Draft › AC check (Dependency adds the "is blocked by" link at Publish);
+- information about another ticket belongs in the Reference field, not in AC; propose it in the chat, the planner moves the line with "Pindah ke Reference";
+- no fixed phrases or prefixes.
+Never write to Jira yourself and never post a Jira comment about AC lines.
+
+### Ticket summary (Intinya), once per sync
+`sprint-draft/get` returns each ticket's `acHash` and `summaries: {KEY: acHash}` for the summaries DOCK already holds.
+For every open ticket whose key is missing from `summaries`, or whose stored hash differs from the ticket's `acHash`
+(the AC changed), or whose description changed since you last summarised it, post `sprint-draft/summary`: write the body to a JSON file in the scratchpad and run `node "$D" summary <sprint> <KEY> <file>`.
+
+    { "sprint": "<sprint>", "key": "QRD-1510", "acHash": "<ticket.acHash from get>",
+      "made": "...", "checked": "...", "notHere": "...", "waitsOn": ["QRD-1307"],
+      "before": "...", "after": "...", "line": "...",
+      "testData": "member tanpa rule ..." | null, "ui": true,
+      "acId": ["<Indonesian line for AC 1>", "..."], "titleId": "<Indonesian title>" }
+
+All text in casual Indonesian. `made` = what it builds, `checked` = what is checked in this ticket, `notHere` = what is
+not part of it (with keys), `waitsOn` = the dependency keys from AC, `before`/`after` = what a user sees now and after
+this ticket, `line` = one sentence for the board card, `testData` = the test data the AC needs or null when none is
+named, `ui` = true when the ticket changes a screen, `acId` = exactly one line per AC line in order. DOCK refuses a
+summary whose `acHash` is not the current one: read the draft again and rewrite it. Nothing is written to Jira.
 
 ## 2. Storyboard
 

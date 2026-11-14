@@ -13,8 +13,10 @@
 // Defaults come from paths.cjs. On Linux configDir is unset, so Claude Code keeps its own ~/.claude.
 // The DOCK url and token come from dock-push.cjs (dock.json or env).
 // `run` also pushes doctor.cjs on start, every 6 hours, and when DOCK's Health page asks (wantDoctor on a claim).
+// A claimed message may carry `account: "<name>"`: that turn runs on account-cycle/tokens/<name>.token (see turnAccount).
 const crypto = require("crypto");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { spawn, spawnSync, execFile } = require("child_process");
 const { maskString, config, send, sendFile, toolLine, cut, pushLedgersChangedSince } = require("./dock-push.cjs");
@@ -47,6 +49,8 @@ const TURNS_CHECK_MS = 15000;
 const KEEP_AWAKE_EVERY_MS = 10 * 60 * 1000;
 const BRIDGE_SECRET = /^(DOCK_INGEST_TOKEN|DOCK_MASK_EXTRA|BRAIN_TOKEN|CODER_AGENT_TOKEN|CODER_SESSION_TOKEN|(DOCK|BRAIN|CODER)_[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|KEY|PIN))$/;
 const PROXY_VARS = /^(https?_proxy|all_proxy|node_use_env_proxy|dock_proxy)$/i;
+const ACCOUNT_NAME = /^[A-Za-z0-9_-]{1,30}$/;
+const { JUDGE_PROMPT } = require("./sous-guard.cjs");
 const UPLOAD_TIMEOUT_MS = 30000;
 const MAX_UPLOADS_PER_TURN = 20;
 const IMAGE_EXT = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
@@ -117,6 +121,41 @@ function gitOverGh(env) {
 	env.GIT_TERMINAL_PROMPT = "0";
 }
 
+// A message's optional `account` (a name from account-cycle) runs that turn on the account's token from
+// <configDir>/account-cycle/tokens/<name>.token, without touching the machine's active account. A Judge message (first prompt
+// "Pakai skill judge:" or title "Judge-...") gets DOCK_JUDGE=1, which sous-guard.cjs judge reads as the read-only profile.
+// Returns { token, judge } or { error }; no account means { token: null }.
+function turnAccount(msg, opts, cycleDir = path.join(opts.configDir || PATHS.configDir, "account-cycle")) {
+	const judge = JUDGE_PROMPT.test(String(msg.text || "")) || /^Judge-/.test(String(msg.title || ""));
+	const name = typeof msg.account === "string" ? msg.account.trim() : "";
+	if (!name) return { token: null, judge };
+	if (!ACCOUNT_NAME.test(name)) return { error: `account "${name.slice(0, 40)}" is not an account-cycle name; the session was not started` };
+	let token = "";
+	try { token = fs.readFileSync(path.join(cycleDir, "tokens", `${name}.token`), "utf8").trim(); } catch {}
+	if (!token) return { error: `account ${name} has no token file on this machine: Judge needs ${path.join(cycleDir, "tokens", `${name}.token`)} (a keyring or a .dpapi file is not supported); the session was not started on another account` };
+	return { token, judge };
+}
+
+// The user settings' env block outranks the process env, and account-cycle switches accounts by writing CLAUDE_CODE_OAUTH_TOKEN there, so
+// an account turn also passes --settings with only that token. The file lives in its own mkdtemp folder, mode 0600, for one turn: remove()
+// runs in runTurn's finally, and a bridge that exits mid-turn removes every folder still open.
+const liveSettings = new Set();
+function accountSettings(token, tmpRoot = os.tmpdir()) {
+	const dir = fs.mkdtempSync(path.join(tmpRoot, "dock-judge-"));
+	const file = path.join(dir, "settings.json");
+	liveSettings.add(dir);
+	if (!accountSettings.hooked) {
+		accountSettings.hooked = true;
+		process.on("exit", () => { for (const d of liveSettings) try { fs.rmSync(d, { recursive: true, force: true }); } catch {} });
+	}
+	const remove = () => { liveSettings.delete(dir); try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} };
+	try {
+		try { fs.chmodSync(dir, 0o700); } catch {}
+		fs.writeFileSync(file, JSON.stringify({ env: { CLAUDE_CODE_OAUTH_TOKEN: token } }), { mode: 0o600 });
+	} catch (e) { remove(); throw e; }
+	return { file, remove };
+}
+
 // The environment claude runs in. DOCK_CHAT_TURN=1 switches guard.cjs to its unattended profile; CAVEMAN_DEFAULT_MODE switches caveman on,
 // which stays off in a headless session without it; CLAUDE_CONFIG_DIR is set only when configDir is; the proxy variables kit-node sets to
 // reach DOCK are removed so Anthropic traffic does not go through tailscaled.
@@ -130,6 +169,13 @@ function childEnv(opts, base = process.env, platform = process.platform) {
 	else delete env.CLAUDE_CONFIG_DIR;
 	if (base.NODE_USE_ENV_PROXY === "1" || base.DOCK_PROXY) for (const k of Object.keys(env)) if (PROXY_VARS.test(k)) delete env[k];
 	if (/\bcoder gitssh\b/.test(env.GIT_SSH_COMMAND || "") && !env.CODER_AGENT_TOKEN) gitOverGh(env);
+	if (opts.accountToken) {
+		env.CLAUDE_CODE_OAUTH_TOKEN = opts.accountToken;
+		delete env.ANTHROPIC_API_KEY;
+		delete env.ANTHROPIC_AUTH_TOKEN;
+	}
+	if (opts.judge) env.DOCK_JUDGE = "1";
+	else delete env.DOCK_JUDGE;
 	return env;
 }
 
@@ -686,6 +732,24 @@ async function precheckWait(msg, caps, gapMs) {
 
 // A turn without rtk or caveman is refused: the answer in DOCK says what is missing on this machine. DOCK_CHAT_PREFLIGHT=off is for the tests.
 async function runTurn(msg, cfg, opts) {
+	const acct = turnAccount(msg, opts);
+	if (acct.error) {
+		const core = turnCore(msg, cfg, opts);
+		log(`turn refused: ${acct.error}`);
+		await core.post({ done: false, error: core.out(acct.error) });
+		return;
+	}
+	if (acct.judge) opts = { ...opts, judge: true };
+	if (!acct.token) return runTurnWith(msg, cfg, opts);
+	const settings = accountSettings(acct.token);
+	try {
+		return await runTurnWith(msg, { ...cfg, extra: [...(cfg.extra || []), acct.token] }, { ...opts, accountToken: acct.token, settingsFile: settings.file });
+	} finally {
+		settings.remove();
+	}
+}
+
+async function runTurnWith(msg, cfg, opts) {
 	const missing = process.env.DOCK_CHAT_PREFLIGHT === "off" ? [] : preflight.problems(childEnv({ ...opts, agent: msg.agent }), { agent: msg.agent });
 	if (missing.length) {
 		const core = turnCore(msg, cfg, opts);
@@ -772,6 +836,7 @@ async function runLegacy(msg, cfg, opts, claude) {
 	if (opts.maxTurns) args.push("--max-turns", String(opts.maxTurns));
 	args.push(...chosen.args);
 	if (opts.appendSystemPrompt) args.push("--append-system-prompt", opts.appendSystemPrompt);
+	if (opts.settingsFile) args.push("--settings", opts.settingsFile);
 	args.push(...opts.extraArgs);
 
 	const env = childEnv({ ...opts, agent: msg.agent });
@@ -969,7 +1034,7 @@ async function main(cmd, args) {
 	}
 }
 
-module.exports = { resolveClaude, killTree, childEnv, numstatOf, touchedPath, changedFiles, limitsOf, settings, createTurnPool, keepAwake, track, snapshotTree, reap, killAllSync };
+module.exports = { resolveClaude, killTree, childEnv, turnAccount, accountSettings, numstatOf, touchedPath, changedFiles, limitsOf, settings, createTurnPool, keepAwake, track, snapshotTree, reap, killAllSync };
 
 if (require.main === module) {
 	const [cmd, ...args] = process.argv.slice(2);
