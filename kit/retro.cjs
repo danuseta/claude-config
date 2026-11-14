@@ -4,7 +4,8 @@
 //           Which ledgers: --keys (from Jira: sprint = "<sprint>"), else the keys sprint.md names when its title names this sprint,
 //           else the ledgers with activity between --since and --until.
 //   node retro.cjs post @<draft.json> [--dry-run]
-//        -> POST <DOCK ingest url>/retro with { sprint, items: [{ kind, text, evidence, dest }] }. A line whose evidence names no
+//        -> POST <DOCK ingest url>/retro with { sprint, items: [{ kind, text, evidence, dest, source? }] }. source is "ledger" or
+//           "judge" (skills/judge sprint mode) and is sent only when the line has one. A line whose evidence names no
 //           ticket key is dropped and listed; a bad kind or dest is refused. --dry-run prints the body and sends nothing.
 // Refusals print REFUSED and exit 2. QONFLO_EVIDENCE=<dir> points at a scratch copy of the ledgers.
 const fs = require("fs");
@@ -13,6 +14,7 @@ const path = require("path");
 const ROOT = process.env.QONFLO_EVIDENCE || require("./paths.cjs").resolvePaths().evidence;
 const KINDS = ["keep", "problem", "try"];
 const DESTS = ["kit", "memory", "dock", "note"];
+const SOURCES = ["ledger", "judge"];
 const KEY = /\b(?:[A-Z][A-Z0-9]*-\d+|CARD-[a-z0-9-]+)\b/;
 
 const refuse = (msg) => {
@@ -91,8 +93,9 @@ function draftBody(draft) {
 		const text = String(it.text ?? "").trim();
 		if (!text) throw new Error(`item ${i + 1}: text is empty`);
 		const evidence = (Array.isArray(it.evidence) ? it.evidence : []).map((e) => String(e).trim()).filter(Boolean);
+		if (it.source !== undefined && !SOURCES.includes(it.source)) throw new Error(`item ${i + 1}: source must be one of ${SOURCES.join(", ")}`);
 		if (!evidence.some((e) => KEY.test(e))) return dropped.push(text);
-		items.push({ kind: it.kind, text, evidence, dest });
+		items.push({ kind: it.kind, text, evidence, dest, ...(it.source ? { source: it.source } : {}) });
 	});
 	return { body: { sprint: draft.sprint.trim(), items }, dropped };
 }
