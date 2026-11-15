@@ -274,7 +274,8 @@ test('video guard: the demo-video pipeline inside the ticket video folder only',
       `python ${S}/scripts/tts.py ${V}/scenario.json --say`, `python3 ${S}/scripts/tts.py ${V}/scenario.json --test "Baru pas di-Save, servernya nolak."`,
       `ELEVENLABS_API_KEY="$(node ${K}/el-rotate.cjs get)" python3 ${S}/scripts/tts.py ${V}/scenario.json`,
       `ELEVENLABS_API_KEY="$(node ${K}/el-rotate.cjs get)" python ${S}/scripts/align.py ${V}/audio.json ${V}/audio ${V}/words.json`,
-      `node ${S}/scripts/record.cjs ${V}/scenario.json`, `DEMO_FE=http://localhost:5287 node ${V}/record-api.cjs ${V}/scenario.json`, `node ${K}/el-rotate.cjs park`, `node ${K}/login-state.cjs 5287`,
+      `node ${S}/scripts/record.cjs ${V}/scenario.json`, `DEMO_FE=http://localhost:5287 node ${V}/record-api.cjs ${V}/scenario.json`,
+      `PLAYWRIGHT_MODULE=${R}/ms-client-dashboard-frontend/node_modules/playwright node ${S}/scripts/record.cjs ${V}/scenario.json`, `node ${K}/el-rotate.cjs park`, `node ${K}/login-state.cjs 5287`,
       `playwright-cli -s=QRD-1346 open http://localhost:5287/ --config=${R}/.playwright/cli-5287.json`, `ffprobe ${V}/video/out/demo.mp4`, `mkdir -p ${V}/audio`,
       `rtk read ${S}/SKILL.md`, `cat ${R}/.evidence/QRD-1346/scripts/ac-1.js`, `ls ${V}/video/out`,
     ]) assert.equal(v(c), null, c);
@@ -288,6 +289,7 @@ test('video guard: the demo-video pipeline inside the ticket video folder only',
       [`ELEVENLABS_API_KEY="$(cat ${K}/x)" python ${S}/scripts/tts.py ${V}/s.json`]: /\$ and backticks/, [`python ${S}/scripts/tts.py ${V}/s.json | tee x`]: /operator/,
       'playwright-cli open https://example.com': /only opens localhost/, 'DEMO_FE=https://evil.io node x.cjs': /localhost/, [`NODE_OPTIONS=--require=x node ${V}/a.cjs`]: /not allowed here/, [`cat ${R}/wt-1-be/.env`]: /protected path|secret/,
       [`ffmpeg -i ${V}/a.webm /tmp/a.mp4`]: /outside/, 'mkdir -p /tmp/x': /outside/,
+      [`PLAYWRIGHT_MODULE=/tmp/evil node ${S}/scripts/record.cjs ${V}/scenario.json`]: /installed playwright package/,
     };
     for (const [c, why] of Object.entries(denied)) assert.match(v(c) || '', why, c);
     assert.equal(g.check('video', roots, read('/etc/passwd')), null, 'video mode checks Bash only');
