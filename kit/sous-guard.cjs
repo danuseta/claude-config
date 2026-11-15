@@ -62,7 +62,8 @@ const BROWSER_KIT = new Set(["status.cjs", "paths.cjs", "login-state.cjs", "stac
 const PROTECTED_TEXT = /(^|[\\/=])\.(env|ssh|claude|bashrc|profile|config)([^A-Za-z0-9]|$)/i;
 const LOCAL_URL = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?([/?#]|$)/i;
 const VIDEO_DELEGATE = new Set(["playwright-cli", "ffmpeg", "ffprobe", "mkdir"]);
-const VIDEO_ENV = /^(NO_COLOR|FORCE_COLOR|CI|npm_config_cache|DEMO_FE|DEMO_API|DEMO_PASSWORD_FILE)=/;
+const VIDEO_ENV = /^(NO_COLOR|FORCE_COLOR|CI|npm_config_cache|DEMO_FE|DEMO_API|DEMO_PASSWORD_FILE|PLAYWRIGHT_MODULE)=/;
+const PLAYWRIGHT_PKG = /\/node_modules\/(\.pnpm\/playwright@[^/]+\/node_modules\/)?(playwright|playwright-core|@playwright\/cli\/node_modules\/playwright-core)$/;
 const EL_KEY = /^ELEVENLABS_API_KEY="\$\(node ([^\s"'$`()]+) get\)" +/;
 
 function createSousGuard({ platform = process.platform, paths = resolvePaths(), cwd = process.cwd(), ledgerFile = path.join(__dirname, "sous-jira-created.log"), allowFile = path.join(paths.kitDir, "agents-allow.json") } = {}) {
@@ -371,6 +372,7 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 			if (!VIDEO_ENV.test(e)) return `${name}= is not allowed here`;
 			if (/^DEMO_(FE|API)$/.test(name) && !LOCAL_URL.test(v)) return `${name} must be a localhost or 127.0.0.1 URL`;
 			if (name === "npm_config_cache" && !under(v, ["@video"])) return "npm_config_cache goes inside the video folder";
+			if (name === "PLAYWRIGHT_MODULE" && !((inside(norm(v, here), root) || inside(norm(v, here), "/usr/local/lib/node_modules")) && PLAYWRIGHT_PKG.test(norm(v, here)))) return "PLAYWRIGHT_MODULE must point at an installed playwright package folder";
 		}
 		const py = /^(python3?|py)$/.test(prog);
 		if (el && !py) return "ELEVENLABS_API_KEY goes only to the skill's tts.py and align.py";
