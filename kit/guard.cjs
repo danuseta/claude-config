@@ -12,6 +12,7 @@
 // usual path, not every path: `taskkill /PID <n>` names no port and stays stack.sh's job.
 // DOCK_CHAT_TURN=1 (set by dock-chat.cjs for an unattended chat turn) makes every soft rule a deny at once, ignores softUntil, and
 // applies the rules in any folder, not only inside the workspace root.
+// DOCK_GM=1 (a Guild Master session) denies every shell call except one plain `node <kit>/gm.cjs <op>`, and every PowerShell call.
 // Test: echo '{"tool_name":"Bash","cwd":"E:/qonflo","tool_input":{"command":"git add ."}}' | node guard.cjs
 const fs = require("fs");
 const os = require("os");
@@ -504,7 +505,81 @@ function createGuard({ platform = process.platform, paths = resolvePaths(), env 
 			return null;
 		}
 
+		// A Guild Master session (DOCK_GM=1) runs one thing: bare `node`, then <kit>/gm.cjs spelled out in full, then plain words. No
+		// quote, backslash, shell character or `..` anywhere, so what the shell runs is exactly what this check read.
+		function gmCheck(command) {
+			const refused = { rule: "gm-shell", hard: true, why: `this is a Guild Master session: the only command it may run is node ${KIT}/gm.cjs <op>, with plain words and no quotes` };
+			if (typeof command !== "string" || !/^[A-Za-z0-9 _.,:=\/@+-]+$/.test(command)) return refused;
+			const w = command.trim().split(/ +/);
+			if (w[0] !== "node") return refused;
+			if (w.some((t) => /(^|\/)\.\.?(\/|$)/.test(t))) return refused;
+			return w[1] && same(toWin(w[1]), `${KIT}/gm.cjs`) ? null : refused;
+		}
+
+		// The bridge's ingest token (kit/dock.json) and the Guild Master state (manager log, backups, pending changes) are not for any
+		// session to read. The kit's own processes and hooks read them directly; only tool calls come through here.
+		const STATE = toWin(String(env.DOCK_KIT_STATE_DIR || paths.kitDir).replace(/\\/g, "/")).replace(/\/+$/, "");
+		const CONFIG = P.dirname(KIT).replace(/\\/g, "/");
+		const kitRoots = [...new Set([KIT, STATE])];
+		const SECRET = { rule: "kit-secret", hard: true, why: "kit/dock.json and the Guild Master state under kit/gm hold DOCK's token and the manager log; no session reads them. Ask the owner if a value from there is needed" };
+		const under = (p, root) => same(p, root) || (p.length > root.length && same(p.slice(0, root.length + 1), `${root}/`));
+		const secretPath = (p) => /(^|\/)dock\.json$/i.test(p) || kitRoots.some((root) => under(p, `${root}/gm`));
+		const expand = (t) => t
+			.replace(/\$\{CLAUDE_CONFIG_DIR(:-[^}]*)?\}|\$CLAUDE_CONFIG_DIR\b/g, CONFIG)
+			.replace(/\$\{HOME\}|\$HOME\b|(^|(?<=[\s=:(]))~(?=\/|$)/g, homeDir)
+			.replace(/(^|[\s=(])\/([a-zA-Z])\//g, win ? "$1$2:/" : "$&");
+		function kitSecret(command, cwd) {
+			const text = expand(command.replace(/["'`\\]/g, (c) => (c === "\\" ? "/" : "")));
+			if (/dock\.json/i.test(text)) return SECRET;
+			const lower = text.toLowerCase();
+			const mentions = kitRoots.some((root) => lower.includes(root.toLowerCase())) || /\/\.claude(-[a-z]+)?\/kit(\/|\b)/i.test(text);
+			if (mentions && /\b(node|python3?|perl|ruby|deno|bun)(\.exe)?\s+(-[a-z]*[ecp]\b|--eval|--print)|\b(pwsh|powershell)(\.exe)?\s+(-c\b|-command)/i.test(text)) return SECRET;
+			const dir = toWin(String(cwd || "").replace(/\\/g, "/"));
+			const inKit = kitRoots.some((root) => under(dir, root));
+			// A recursive read (rg, grep -r, find, an archive or a recursive copy) of the kit or of a folder above it reads dock.json too.
+			const recursive = /(^|[\s;&|(])(rg|ag|ack|find|tar|zip|7z|rsync|robocopy|xcopy|Get-ChildItem|gci|grep\s+-[a-zA-Z]*[rR]|cp\s+-[a-zA-Z]*[rR]|ls\s+-[a-zA-Z]*R)(\.exe)?(\s|$)/i.test(text);
+			if (inKit && recursive) return SECRET;
+			for (const word of text.split(/[\s;&|()<>]+/).filter(Boolean)) {
+				const at = kitRoots.map((root) => word.toLowerCase().indexOf(root.toLowerCase())).find((i) => i >= 0);
+				const generic = /\/\.claude(-[a-z]+)?\/kit(?=\/|$)/i.exec(word);
+				const start = at !== undefined ? at + kitRoots.find((root) => word.toLowerCase().includes(root.toLowerCase())).length : generic ? generic.index + generic[0].length : -1;
+				if (start >= 0) {
+					// Naming a file of the kit is fine; naming the kit folder itself, its gm state or anything not a plain path is not.
+					const rest = word.slice(start).replace(/^\/+/, "");
+					if (!rest || /^gm(\/|$)/i.test(rest) || !/^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/.test(rest)) return SECRET;
+					continue;
+				}
+				if (inKit && (/[*?[$]/.test(word) || /^(\.|\.\/|\.\.?\/?gm.*|gm(\/.*)?)$/i.test(word))) return SECRET;
+				if (recursive && /[/.~]/.test(word) && !word.startsWith("-")) {
+					const target = P.resolve(dir || "/", toWin(word)).replace(/\\/g, "/");
+					if (kitRoots.some((root) => under(root, target))) return SECRET;
+				}
+			}
+			if (recursive && kitRoots.some((root) => under(root, dir)) && !text.split(/\s+/).slice(1).some((w) => /[/.~]/.test(w) && !w.startsWith("-"))) return SECRET;
+			return null;
+		}
+		function checkTool(tool, input, cwd) {
+			const base = toWin(String(cwd || "").replace(/\\/g, "/"));
+			const at = (p) => P.resolve(base || "/", toWin(String(expand(String(p))).replace(/\\/g, "/"))).replace(/\\/g, "/");
+			const given = ["file_path", "path", "pattern", "glob"].flatMap((k) => (typeof input?.[k] === "string" && input[k] ? [input[k]] : []));
+			if (given.some((p) => /dock\.json/i.test(p) || secretPath(at(p)))) return SECRET;
+			if (tool === "Grep" || tool === "Glob") {
+				const near = (p) => kitRoots.some((r) => under(r, p) || under(p, r));
+				if (near(at(typeof input?.path === "string" && input.path ? input.path : "."))) return SECRET;
+				// The folder part of a glob, before its first wildcard, counts as a search root as well.
+				for (const g of [tool === "Glob" ? input?.pattern : null, input?.glob]) {
+					if (typeof g !== "string" || !/[*?[{]/.test(g)) continue;
+					const lead = g.split(/[*?[{]/)[0].replace(/[^/\\]*$/, "");
+					if (lead && near(at(lead))) return SECRET;
+				}
+			}
+			return null;
+		}
+
 		function check(command, cwd) {
+			if (env.DOCK_GM === "1") return gmCheck(command);
+			const secret = kitSecret(command, cwd);
+			if (secret) return secret;
 			const unattended = env.DOCK_CHAT_TURN === "1";
 			let dir = toWin(cwd || "");
 			const killing = /\b(kill-port|fkill|taskkill|Stop-Process|kill|pkill|killall)\b/i.test(command);
@@ -549,7 +624,7 @@ function createGuard({ platform = process.platform, paths = resolvePaths(), env 
 			if (unattended && parsed.unresolved && /\bgit\b[^\n]*\b(push|branch)\b|\bgh\b/i.test(command)) return { rule: "unresolved-command", why: "cannot read this command line to the end (an unclosed quote or an unreadable nested shell) and it touches git or gh. Write it out plainly" };
 			return null;
 		}
-	return { check };
+	return { check, checkTool };
 }
 
 // The hook answer for one command, or null. guard, env and cfg are inputs for tests.
@@ -574,6 +649,16 @@ function main() {
 	let payload;
 	try { payload = JSON.parse(fs.readFileSync(0, "utf8")); } catch (e) { return fail(`cannot read the hook input (${e.message})`); }
 	const command = payload?.tool_input?.command;
+	const deny = (reason) => process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } }));
+	if (process.env.DOCK_GM === "1" && (payload?.tool_name !== "Bash" || typeof command !== "string")) return deny("guard: a Guild Master session runs only node <kit>/gm.cjs <op> through Bash");
+	if (["Read", "Grep", "Glob"].includes(payload?.tool_name)) {
+		const hit = createGuard().checkTool(payload.tool_name, payload.tool_input, payload.cwd);
+		if (hit) {
+			try { fs.appendFileSync(path.join(__dirname, "guard.log"), `${new Date().toISOString()} DENY ${hit.rule} ${payload.agent_type ?? "lead"} :: ${payload.tool_name} ${JSON.stringify(payload.tool_input).slice(0, 300)}\n`); } catch {}
+			deny(`guard: ${hit.why}`);
+		}
+		return;
+	}
 	if (typeof command !== "string" || !command.trim()) return;
 	let locked = null;
 	try { locked = require("./video-lock.cjs").checkCommand(command, payload.transcript_path); } catch {}
