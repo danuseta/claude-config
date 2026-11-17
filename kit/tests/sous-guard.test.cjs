@@ -127,6 +127,14 @@ test('runner guard: sous agents and browser-verifier only; kit scripts by their 
   for (const c of [`node ${K}/status.cjs set QRD-1 rounds.max=9`, `node ${K}/status.cjs set QRD-1 stage=code rounds.max=3`, `node ${K}/status.cjs set QRD-1 draft=false`, `${K}/bin/kit-node status.cjs set QRD-1 rounds.max=9`, `${K}/bin/kit-node status.cjs set QRD-1 draft=false`]) {
     assert.match(g.check('runner', roots, bash(c)) || '', /owner's to set/, c);
   }
+  const as = (agent_type, command) => ({ ...bash(command), agent_type });
+  for (const c of [`node ${K}/status.cjs set QRD-1 engine=sous mode=light`, `node ${K}/status.cjs dispatch QRD-1 sous-explorer sonnet --step light-scout`, `${K}/bin/kit-node status.cjs set QRD-1 mode=light`]) {
+    assert.equal(g.check('runner', roots, as('sous-light-runner', c)), null, c);
+    for (const who of ['sous-ticket-runner', undefined]) assert.match(g.check('runner', roots, as(who, c)) || '', /only sous-light-runner/, `${who}: ${c}`);
+  }
+  for (const c of [`node ${K}/status.cjs set QRD-1 mode=full`, `node ${K}/status.cjs dispatch QRD-1 sous-planner opus --step planner`]) {
+    assert.equal(g.check('runner', roots, as('sous-ticket-runner', c)), null, c);
+  }
   for (const c of [`node ${K}/dock-chat.cjs`, `node E:/qonflo/evil/status.cjs show`, `bash ${K}/wt.sh remove E:/qonflo/wt-1-be`, `bash ${K}/stack.sh kill`, 'npx jest', `node ${K}/status.cjs show QRD-1 && rm -rf x`]) {
     assert.ok(g.check('runner', roots, bash(c)), c);
   }
@@ -312,7 +320,7 @@ test('the hook command answers deny JSON, fails closed on bad input, and every s
 
   const agents = path.join(KIT, '..', 'agents');
   const files = fs.readdirSync(agents).filter((f) => f.startsWith('sous-') || f === 'browser-verifier.md');
-  assert.equal(files.length, 16);
+  assert.equal(files.length, 17);
   const form = /^ {10}command: '"\$\{CLAUDE_CONFIG_DIR:-\$HOME\/\.claude\}\/kit\/bin\/kit-node" sous-guard\.cjs (path|bash|runner|publish|jira|verify|browser|video)( [^']*)?'$/;
   for (const f of files) {
     const text = fs.readFileSync(path.join(agents, f), 'utf8');

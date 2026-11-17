@@ -7,6 +7,9 @@
 //                       [stackedOn=<PARENT>] -> base each repo on the parent's open PR head (gh pr view); stackedOn= clears it
 //                       [board=<EPIC>]   -> the ticket's board moves into its epic's: <evidence>/blackboard/<EPIC>/tickets/KEY, with
 //                                           prompts/, materials/ and EPIC.md at the epic root; board= clears it
+//                       [mode=light|full] -> mode=full refuses commit, pr and done without a sous-planner dispatch, a FINAL review
+//                                            dispatch (sous-reviewer --step final-review) and a video handoff; mode=light needs none
+//   node status.cjs dispatch KEY <agent> <opus|sonnet|haiku> [--step <step>] -> one agent call and its model, recorded before the call
 //   node status.cjs ac KEY <n> <PASS|FAIL|TODO> "<text>" ["<evidence>"]
 //   node status.cjs brief KEY "<text>" | @<file>   -> the working brief a fresh session starts from
 //   node status.cjs decide KEY "<decision and why>" [--status GUESS|USULAN|DECIDED] [--by owner|sous-<agent>|arbiter|sous|agent] [--issue n]
@@ -74,6 +77,19 @@ const DECIDERS = ["owner", "arbiter", "sous", "agent"];
 const deciderOk = (by) => DECIDERS.includes(by) || /^sous-[a-z][a-z0-9-]*$/.test(by);
 const ISSUE_TYPES = ["BLOCKER", "QUESTION", "RISK", "DISPUTE"];
 const BOOLEANS = ["productionData", "draft"];
+const MODES = ["light", "full"];
+const DISPATCH_MODELS = ["opus", "sonnet", "haiku"];
+const LATE_STAGES = ["commit", "pr", "done"];
+// What a mode=full ticket still lacks before it may publish; a light or unset mode lacks nothing.
+const fullGateMissing = (s) => {
+	if (s.mode !== "full") return [];
+	const d = s.dispatches ?? [];
+	return [
+		!d.some((x) => x.agent === "sous-planner") && "a sous-planner dispatch",
+		!d.some((x) => x.agent === "sous-reviewer" && x.step === "final-review") && "a FINAL review dispatch (sous-reviewer --step final-review)",
+		!(s.handoffs ?? []).some((h) => h.who === "video") && "a video handoff",
+	].filter(Boolean);
+};
 const BOARD = path.join(ROOT, "blackboard");
 const EPIC_KEY = /^[A-Z][A-Z0-9]*-\d+$/;
 const LOCKS = path.join(ROOT, ".locks");
@@ -540,6 +556,12 @@ if (!cmd) {
 			delete s.engine;
 			continue;
 		}
+		if (k === "mode") {
+			if (v && !MODES.includes(v)) return refuse(`mode must be one of ${MODES.join(", ")}, or empty`);
+			if (v) s.mode = v;
+			else delete s.mode;
+			continue;
+		}
 		if (k === "qaMenu") {
 			if (v.trim()) s.qaMenu = line(v).trim().slice(0, 200);
 			else delete s.qaMenu;
@@ -551,6 +573,10 @@ if (!cmd) {
 			if (!reports.length) return refuse(`${key} has no handoff; record one with status.cjs handoff before done`);
 			const unproven = reports.filter((h) => !h.proven);
 			if (unproven.length) return refuse(`handoff without proof from ${unproven.map((h) => h.who).join(", ")}; verify it and record a new handoff`);
+		}
+		if (k === "stage" && LATE_STAGES.includes(v) && !LATE_STAGES.includes(s.stage)) {
+			const missing = fullGateMissing(s);
+			if (missing.length) return refuse(`${key} is mode=full and still needs ${missing.join(", ")} before stage=${v}`);
 		}
 		if (k === "stage") {
 			moveStage(s, v);
@@ -816,6 +842,17 @@ if (!cmd) {
 	(s.findings ??= []).push({ at: now(), severity, text });
 	save(key, s);
 	console.log(`${key} reviewer finding #${s.findings.length} (${severity})`);
+} else if (cmd === "dispatch") {
+	const s = load(key);
+	if (!s) return console.log(`no status for ${key}; run init first`);
+	const { flags: f, words } = takeFlags(rest, ["--step"]);
+	const [agent, model] = words;
+	if (!/^[a-z][a-z0-9-]*$/.test(agent ?? "")) return refuse("dispatch needs the agent name, e.g. sous-ticket-worker");
+	if (!DISPATCH_MODELS.includes(model)) return refuse(`model must be one of ${DISPATCH_MODELS.join(", ")}`);
+	const step = f["--step"]?.[0];
+	(s.dispatches ??= []).push({ at: now(), agent, model, ...(step ? { step } : {}), ...(s.mode ? { mode: s.mode } : {}) });
+	save(key, s);
+	console.log(`${key} dispatch #${s.dispatches.length}: ${agent} (${model})`);
 } else if (cmd === "lgtm") {
 	const s = load(key);
 	if (!s) return console.log(`no status for ${key}; run init first`);
@@ -960,5 +997,5 @@ if (!cmd) {
 		console.log(`| ${name} | ${list.length} | ${mean(tracked, (row) => row.c.fixRounds)} | ${mean(list, (row) => (row.s.findings ?? []).length)} | ${mean(timed, (row) => row.c.hours)} |`);
 	}
 } else {
-	console.log("usage: status.cjs [show KEY | init KEY title bePort fePort beDir feDir | set KEY k=v... | ac KEY n STATE text evidence | ac-set KEY @file [jiraUpdated] | stale [KEY jiraUpdated [@file]] | handoff KEY who k=v...|@file.json | fail KEY type evidence [what] | assume KEY text falsifier | assume KEY n confirmed|refuted evidence | replan KEY reason | finding KEY [--severity blocker|non-blocking|nit] text | finding KEY n resolve why | lgtm KEY text | verdict KEY approve|request-change [--ticket KEY] [--pr url]... [--ready-for-qa yes|no [--qa-reason text]...] | metrics | brief KEY text|@file | decide KEY text [--status GUESS|USULAN|DECIDED] [--by owner|sous-<agent>|arbiter|sous|agent] [--issue n] [--effect text] [--alt \"option::effect\"]... [--replaces n] [--question text] [--rejected \"option: why not\"]... | issue KEY TYPE text [--options \"A::effect|B::effect\"] | issue KEY n escalate sous|owner why | issue KEY n resolve decisionN | round KEY [why] | lock name KEY [--wait s] [--pid n] | unlock name KEY | render KEY | sync [KEY] | remote | handover KEY --to machine [--note text] | pull KEY [--force] | checkpoint KEY step text [--agent name] [--agent-id id] [--untestable line]... [--missing-data line]...]");
+	console.log("usage: status.cjs [show KEY | init KEY title bePort fePort beDir feDir | set KEY k=v... | ac KEY n STATE text evidence | ac-set KEY @file [jiraUpdated] | stale [KEY jiraUpdated [@file]] | handoff KEY who k=v...|@file.json | fail KEY type evidence [what] | assume KEY text falsifier | assume KEY n confirmed|refuted evidence | replan KEY reason | finding KEY [--severity blocker|non-blocking|nit] text | finding KEY n resolve why | lgtm KEY text | dispatch KEY agent opus|sonnet|haiku [--step step] | verdict KEY approve|request-change [--ticket KEY] [--pr url]... [--ready-for-qa yes|no [--qa-reason text]...] | metrics | brief KEY text|@file | decide KEY text [--status GUESS|USULAN|DECIDED] [--by owner|sous-<agent>|arbiter|sous|agent] [--issue n] [--effect text] [--alt \"option::effect\"]... [--replaces n] [--question text] [--rejected \"option: why not\"]... | issue KEY TYPE text [--options \"A::effect|B::effect\"] | issue KEY n escalate sous|owner why | issue KEY n resolve decisionN | round KEY [why] | lock name KEY [--wait s] [--pid n] | unlock name KEY | render KEY | sync [KEY] | remote | handover KEY --to machine [--note text] | pull KEY [--force] | checkpoint KEY step text [--agent name] [--agent-id id] [--untestable line]... [--missing-data line]...]");
 }
