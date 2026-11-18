@@ -355,6 +355,47 @@ test('board=<EPIC> moves a ticket board under the epic, renders tickets/<KEY> an
   }
 });
 
+test('mode=light publishes without planner, FINAL or video; mode=full still needs all three; dispatch records the model', async () => {
+  const { base, status, ledger } = scratch('sous-mode');
+  try {
+    await status('init', 'ZED-420', 'Invented', '-', '-', '-', '-');
+    assert.equal((await status('set', 'ZED-420', 'mode=tiny')).code, 2);
+    assert.equal((await status('dispatch', 'ZED-420', 'sous-ticket-worker', 'gpt')).code, 2);
+    await status('set', 'ZED-420', 'engine=sous', 'mode=light', 'stage=code');
+    let r = await status('dispatch', 'ZED-420', 'sous-ticket-worker', 'sonnet');
+    assert.match(r.stdout, /ZED-420 dispatch #1: sous-ticket-worker \(sonnet\)/);
+    assert.deepEqual(ledger('ZED-420').dispatches.map((d) => [d.agent, d.model, d.mode]), [['sous-ticket-worker', 'sonnet', 'light']]);
+    r = await status('set', 'ZED-420', 'stage=commit');
+    assert.equal(r.code, 0);
+    assert.equal(ledger('ZED-420').stage, 'commit');
+
+    await status('init', 'ZED-421', 'Invented', '-', '-', '-', '-');
+    await status('set', 'ZED-421', 'engine=sous', 'mode=full', 'stage=code');
+    r = await status('set', 'ZED-421', 'stage=commit');
+    assert.equal(r.code, 2);
+    assert.match(r.stdout, /still needs a sous-planner dispatch, a FINAL review dispatch .*, a video handoff before stage=commit/);
+    assert.equal(ledger('ZED-421').stage, 'code');
+    await status('dispatch', 'ZED-421', 'sous-planner', 'opus', '--step', 'planner');
+    await status('dispatch', 'ZED-421', 'sous-reviewer', 'opus', '--step', 'final-review');
+    r = await status('set', 'ZED-421', 'stage=pr');
+    assert.equal(r.code, 2);
+    assert.match(r.stdout, /still needs a video handoff before stage=pr/);
+    await status('handoff', 'ZED-421', 'video', 'status=blocked', 'summary=D-1 not visible', 'unverified=none');
+    r = await status('set', 'ZED-421', 'stage=commit');
+    assert.equal(r.code, 0);
+    assert.equal(ledger('ZED-421').dispatches[1].step, 'final-review');
+
+    await status('init', 'ZED-422', 'Invented', '-', '-', '-', '-');
+    await status('set', 'ZED-422', 'engine=sous', 'stage=code');
+    assert.equal((await status('set', 'ZED-422', 'stage=commit')).code, 0);
+    await status('set', 'ZED-422', 'mode=light');
+    await status('set', 'ZED-422', 'mode=');
+    assert.equal(ledger('ZED-422').mode, undefined);
+  } finally {
+    rmrf(base);
+  }
+});
+
 test('set validates kind, engine, booleans; CARD keys are normalised; sync and verdict carry what DOCK needs', async () => {
   const { base, status, ledger } = scratch('sous-set');
   try {

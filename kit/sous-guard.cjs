@@ -6,7 +6,8 @@
 //                                          read-only git inside a worktree, read-only gh
 //   sous-guard.cjs runner <root>...        Agent/Task: only sous-* agents and browser-verifier, plus a custom agent listed in kit/agents-allow.json
 //                                          whose file has a fail-closed hooks block. Bash: what `bash` allows, plus the kit's
-//                                          status, prep, worktree, stack and demo scripts, and deploy-gate.cjs (read-only)
+//                                          status, prep, worktree, stack and demo scripts, and deploy-gate.cjs (read-only); status.cjs
+//                                          set mode=light and a light-<step> dispatch only for agent_type sous-light-runner
 //   sous-guard.cjs verify <root>...        Bash for sous-verifier: [cd <root> &&] one test or type-check command (vitest, jest, tsc, eslint,
 //                                          playwright, npm|pnpm|yarn test/run, node --test), read-only file commands and git; no installs,
 //                                          dev servers, inline node code or network tools
@@ -197,6 +198,7 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 		return "gh: only pr list/view/diff/checks/status, run list/view and repo view";
 	}
 
+	let agent = "";
 	function checkKit(w) {
 		const [prog, file, sub] = w;
 		const base = file ? fwd(file).split("/").pop() : "";
@@ -204,6 +206,9 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 		const kitNode = /(^|\/)kit-node$/.test(fwd(prog)) && norm(prog) === `${kit}/bin/kit-node`;
 		if (prog === "node" || kitNode) {
 			if ((kitNode ? file : base) === "status.cjs" && sub === "set" && w.slice(4).some((a) => /^rounds\./.test(a) || /^draft=(?!true$)/.test(a))) return "rounds.max and draft=false are the owner's to set, not an agent's";
+			const args = w.slice(3);
+			const light = (sub === "set" && args.some((a) => /^mode=light$/.test(a))) || (sub === "dispatch" && args.some((a, i) => a === "--step" && /^light-/.test(args[i + 1] ?? "")));
+			if ((kitNode ? file : base) === "status.cjs" && light && agent !== "sous-light-runner") return `only sous-light-runner sets mode=light or records a light-<step> dispatch, not ${agent || "an unnamed agent"}`;
 			if (kitNode ? KIT_NODE.has(file) : own && KIT_NODE.has(base)) return null;
 			return "node only runs the kit's status.cjs, demo-upload.cjs, paths.cjs, doctor.cjs, login-state.cjs and deploy-gate.cjs";
 		}
@@ -593,6 +598,7 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 	function check(mode, args, payload) {
 		const tool = payload.tool_name || "";
 		const ti = payload.tool_input || {};
+		agent = String(payload.agent_type || "");
 		const read = args[0] === "--read";
 		const roots = read ? args.slice(1) : args;
 		if (mode === "path") return checkPath(tool, ti, roots, read || /^(Read|Grep|Glob)$/.test(tool));
