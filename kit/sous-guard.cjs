@@ -463,6 +463,14 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 				return null;
 			}
 			if (sub === "rm") return checkGitRm(w);
+			if (sub === "fetch") return args.length === 1 && args[0] === "origin" ? null : "fetch is git -C <worktree> fetch origin";
+			if (sub === "merge") {
+				if (args.length === 1 && args[0] === "--abort") return null;
+				const bases = (paths.bases || ["develop"]).map((b) => `origin/${b}`);
+				const target = args.filter((a) => !["--no-commit", "--no-ff"].includes(a));
+				if (!args.includes("--no-commit") || target.length !== 1 || !bases.includes(target[0])) return `merge is git -C <worktree> merge --no-commit [--no-ff] ${bases.join("|")}, or merge --abort`;
+				return null;
+			}
 			if (sub === "commit") {
 				for (let i = 0; i < args.length; i += 2) if (args[i] !== "-m" || args[i + 1] === undefined) return "git commit takes -m <message> only";
 				if (!args.length) return "git commit needs -m";

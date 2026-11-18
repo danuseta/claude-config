@@ -168,6 +168,7 @@ test('publish guard: per path staging, commit -m, ticket branches only, gh pr cr
       assert.match(g.check('publish', [], pr(repo, base, head)) || '', why, `${repo} ${base} ${head}`);
     }
     const ok = [`git -C ${wt} status`, `git -C ${wt} add src/a.ts src/b.ts`, `git -C ${wt} commit -m "fix(QRD-77): thing" -m "second"`, `git -C ${wt} push -u origin feat/QRD-77-thing`, `rtk git -C ${wt} diff --cached --name-only`, `git -C ${wt} remote get-url origin`, `git -C ${wt} rm src/old.ts tests/old.test.ts`, `git -C ${wt} rm -- src/old.ts`,
+      `git -C ${wt} fetch origin`, `git -C ${wt} merge --no-commit origin/develop`, `git -C ${wt} merge --no-commit --no-ff origin/develop`, `git -C ${wt} merge --abort`,
       `gh pr create --repo o/r --base develop --head feat/QRD-77-thing --title "QRD-77 fix: thing" --body-file ${root}/.evidence/QRD-77/pr-body-be.md --draft`, 'gh pr list --repo o/r --head feat/QRD-77-thing --json url'];
     for (const c of ok) assert.equal(g.check('publish', [], bash(c)), null, c);
     const denied = {
@@ -177,6 +178,8 @@ test('publish guard: per path staging, commit -m, ticket branches only, gh pr cr
       [`git -C ${wt} commit --no-verify -m x`]: /-m <message> only/, [`git -C ${wt} commit -m "x" -m "Co-Authored-By: Claude"`]: /attribution/,
       [`git -C ${wt} push origin develop`]: /not a ticket branch/, [`git -C ${wt} push origin main`]: /not a ticket branch/, [`git -C ${wt} push -f origin feat/QRD-77-thing`]: /push is git/, [`git -C ${wt} push origin feat/QRD-78-other`]: /only the current branch/, [`git -C ${wt} push origin feature/QRD-77-thing`]: /not a ticket branch/,
       [`git -C ${root}/ms-admin-worker-backend push origin feat/QRD-77-thing`]: /only inside a ticket worktree/, [`git -C ${wt} reset --hard`]: /not a read-only git/,
+      [`git -C ${wt} fetch upstream`]: /fetch is git/, [`git -C ${wt} fetch origin main --force`]: /fetch is git/,
+      [`git -C ${wt} merge origin/develop`]: /merge is git/, [`git -C ${wt} merge --no-commit origin/main`]: /merge is git/, [`git -C ${wt} merge --no-commit feat/QRD-78-other`]: /merge is git/,
       [`gh pr create --repo o/r --base develop --head develop --title t --body-file ${root}/.evidence/QRD-77/pr-body-be.md`]: /not a ticket branch/,
       [`gh pr create --repo o/r --base develop --head feat/QRD-77-thing --title t --body-file ${base}/elsewhere.md`]: /evidence folder/,
       [`gh pr create --repo o/r --base develop --head feat/QRD-77-thing --title t --body-file ${root}/.evidence/QRD-77/bad-body.md`]: /attribution/,
