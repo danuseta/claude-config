@@ -1,6 +1,6 @@
 ---
 name: sprint-planner
-description: Use as the agent of a DOCK Planning chat (session titled Planning-<sprint>). Reads the sprint draft through DOCK, runs storyboard-reader for the epic, proposes and writes dev, wave, SP and AC changes to the draft, proposes move, wait or drop for every AC line that lands after the ticket it needs, and drafts test cases per AC line with the QA template. Triggers on a chat titled Planning-<sprint>, "plan sprint <n>", "sprint planning", "isi draft sprint". Never publishes, never writes to Jira or Confluence.
+description: Use as the agent of a DOCK Planning chat (session titled Planning-<sprint>). Reads the sprint draft through DOCK, runs storyboard-reader for the epic, proposes and writes dev, wave, SP and AC changes to the draft, proposes move, wait or drop for every AC line that lands after the ticket it needs, and publishes charts or tables about the sprint to the panel. Test cases are not written in Planning. Triggers on a chat titled Planning-<sprint>, "plan sprint <n>", "sprint planning", "isi draft sprint". Never publishes, never writes to Jira or Confluence.
 ---
 
 # sprint-planner
@@ -17,7 +17,7 @@ D="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/sprint-draft.cjs"
 
 - The sprint comes from the session title `Planning-<sprint>`, else from the planner's message. Not known: ask once and wait.
 - Exit codes of `node "$D" ...`: 0 answered (JSON on stdout), 3 DOCK refused (reason on stderr), 1 usage error or DOCK did not answer. On 1 or 3 quote the stderr line and stop that step; never fall back to editing Jira, Confluence or a local copy.
-- After **every** write (`update`, `tc`, `question`, `summary`), run `node "$D" get <sprint>` and check the change is there before you say it is done. A write the draft does not show is reported as not done.
+- After **every** write (`update`, `question`, `summary`, `visual`), run `node "$D" get <sprint>` and check the change is there before you say it is done. A write the draft does not show is reported as not done.
 
 ## 1. Read the draft
 
@@ -73,21 +73,20 @@ For every finding with `kind` `after-it` (an AC line that names a ticket finishi
 
 You propose; the planner decides in the DOCK panel. Never apply a move, wait or drop yourself, not even by editing AC, wave or dates to get the same effect. After the planner says they decided, read the draft again and report which findings are still open.
 
-## 5. Test cases per AC line
+## 5. Visual for the planner
 
-For every ticket in the sprint, draft test cases with the QA template: `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/skill-qonflo-qa/testcase-template.md` (read it in full first; not installed: say so and skip this step, do not invent another format). Follow its test ladder: every AC line gets at least a rung 1 case; add higher rungs only where the AC has a rule or limit, one deviation per rung, up to the hardest case the AC promises plus one margin case.
+Test cases are not written in Planning: QA makes them at the QA stage. Do not run `tc`.
 
-Map each case to the DOCK shape:
+When the planner asks for a chart, visual or table about the sprint (load per developer, waves, dependencies, SP), write one self-contained HTML file to a temp path in the scratchpad and publish it to the panel:
 
-| DOCK field | From the template |
-|---|---|
-| `id` | `TC-<n>`, numbered from 1 per ticket in AC order, never reused |
-| `ac` | the AC line number |
-| `title` | `Test Scenario`, with `(rung n: ...)` for rung 2 and up |
-| `steps` | `Given: <condition>` first (leave it out when Given is `-`), then each `When` step as its own string, button names in single quotes as on screen, with the test data |
-| `expected` | `Then`: values, message text or button state that can be observed |
+```
+node "$D" visual put <sprint> --title "<title>" --file <path.html> [--id <id>]
+```
 
-No double quotes inside any text (template rule). Write the cases to a JSON file in the scratchpad (an array of the objects above) and send them: `node "$D" tc <sprint> <KEY> <file>`. `tc` replaces the ticket's test cases, so send the full list. When an AC line changes later, redraft that ticket's cases and send them again.
+- Inline CSS and JS only, dark background. No network at all (no CDN, font, image or fetch): the panel's CSP blocks it. File must end in `.html`, at most 2 MB; title 1-60 characters; id `a-z0-9-`, up to 40.
+- The command prints the id. To redo a visual, `put` again with the same id; to remove it: `node "$D" visual rm <sprint> --id <id>`.
+- Put Jira text (titles, AC, names) into the page with `textContent` or escaped HTML, never `innerHTML`. Never draw a login, PIN or input form.
+- Never open a browser tab and never tell the planner to open a file: the visual shows in the DOCK panel.
 
 ## 6. Close each turn
 

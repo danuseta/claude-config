@@ -7,6 +7,8 @@
 //   node sprint-draft.cjs question <sprint> "<text>" [KEY]                           an open question for the planner
 //   node sprint-draft.cjs summary <sprint> <KEY> <json-file>                         the ticket summary (Intinya): { acHash, made, checked, notHere,
 //                                                                                   waitsOn: [], before, after, line, testData, ui, acId: [], titleId }
+//   node sprint-draft.cjs visual put <sprint> --title "<title>" --file <page.html> [--id <id>]   a self-contained HTML page in the Planning panel
+//   node sprint-draft.cjs visual rm <sprint> --id <id>                              remove it; put with the same id replaces it
 //   node sprint-draft.cjs storyboard <EPIC>                                          the newest storyboard version: { version, path, frames, changed }
 // Prints DOCK's result as JSON. Exit 0 answered, 3 DOCK refused (its error on stderr), 1 usage error or DOCK did not answer.
 const fs = require("fs");
@@ -14,12 +16,16 @@ const dock = require("./dock-push.cjs");
 
 const KEY = /^[A-Z][A-Z0-9]+-\d+$/;
 const TC_ID = /^TC-\d+$/;
+const VISUAL_ID = /^[a-z0-9-]{1,40}$/;
+const VISUAL_MAX_BYTES = 2 * 1024 * 1024;
 const USAGE = [
 	"usage: node sprint-draft.cjs get <sprint>",
 	"       node sprint-draft.cjs update <sprint> <KEY> [--dev <name>] [--wave <n>] [--sp <n>] [--ac-file <file>]",
 	"       node sprint-draft.cjs tc <sprint> <KEY> <json-file>",
 	"       node sprint-draft.cjs question <sprint> \"<text>\" [KEY]",
 	"       node sprint-draft.cjs summary <sprint> <KEY> <json-file>",
+	"       node sprint-draft.cjs visual put <sprint> --title \"<title>\" --file <page.html> [--id <id>]",
+	"       node sprint-draft.cjs visual rm <sprint> --id <id>",
 	"       node sprint-draft.cjs storyboard <EPIC>",
 ].join("\n");
 
@@ -65,9 +71,40 @@ function summaryProblem(s) {
 	return null;
 }
 
+function visualRequest(rest, readFile) {
+	const [action, sprintRaw, ...args] = rest;
+	const sprint = String(sprintRaw || "").trim();
+	if (!["put", "rm"].includes(action)) return { error: action ? `unknown visual action ${action}` : "visual needs put or rm" };
+	if (!sprint) return { error: `visual ${action} needs the sprint` };
+	const opt = {};
+	for (let i = 0; i < args.length; i++) {
+		const flag = args[i], value = args[i + 1];
+		if (!["--title", "--file", "--id"].includes(flag)) return { error: `unknown option ${flag}` };
+		if (value === undefined || value === "") return { error: `${flag} needs a value` };
+		opt[flag.slice(2)] = value;
+		i++;
+	}
+	if (opt.id !== undefined && !VISUAL_ID.test(opt.id)) return { error: "--id must be 1-40 characters of a-z, 0-9 and -" };
+	if (action === "rm") {
+		if (opt.id === undefined) return { error: "visual rm needs --id" };
+		if (opt.title !== undefined || opt.file !== undefined) return { error: "visual rm takes only --id" };
+		return { route: "/sprint-draft/visual", body: { sprint, action, id: opt.id }, timeoutMs: 60000 };
+	}
+	const title = String(opt.title || "").trim();
+	if (!title || title.length > 60) return { error: "--title must be 1-60 characters" };
+	if (!opt.file) return { error: "visual put needs --file <page.html>" };
+	if (!/\.html$/i.test(opt.file)) return { error: `${opt.file} must be an .html file` };
+	let html;
+	try { html = readText(opt.file, readFile); } catch (e) { return { error: `cannot read ${opt.file}: ${e.message}` }; }
+	if (!html.trim()) return { error: `${opt.file} is empty` };
+	if (Buffer.byteLength(html) > VISUAL_MAX_BYTES) return { error: `${opt.file} is over 2 MB` };
+	return { route: "/sprint-draft/visual", body: { sprint, action, ...(opt.id !== undefined ? { id: opt.id } : {}), title, html }, timeoutMs: 60000 };
+}
+
 // argv after the script name -> { route, body, timeoutMs } or { error }.
 function request(argv, readFile = (f) => fs.readFileSync(f, "utf8")) {
 	const [cmd, ...rest] = argv;
+	if (cmd === "visual") return visualRequest(rest, readFile);
 	const sprint = String(rest[0] || "").trim();
 	if (cmd === "storyboard") {
 		const epic = keyOf(rest[0]);
@@ -149,6 +186,7 @@ async function run(argv, deps = {}) {
 	}
 	const r = await call(req, deps.send || dock.send);
 	if (r.code) err(`sprint-draft: ${r.why}`);
+	else if (argv[0] === "visual" && argv[1] === "put" && r.result?.id) out(`${r.result.id}\n${JSON.stringify(r.result, null, 2)}`);
 	else out(JSON.stringify(r.result, null, 2));
 	return r.code;
 }
