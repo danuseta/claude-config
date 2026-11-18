@@ -104,3 +104,40 @@ test('DOCK refusing is exit 3; DOCK down or not configured is exit 1', async () 
   assert.equal(await run(['get', '27'], { send: async () => ({ skipped: true }), ...io }), 1);
   assert.match(io.lines.err[0], /not configured/);
 });
+
+test('visual put and rm go to sprint-draft/visual with the contract body', async () => {
+  const { seen, send } = recorder({ status: 200, result: { id: 'load-chart' } });
+  const io = quiet();
+  const readFile = files({ 'p.html': '<html><body>hi</body></html>' });
+  assert.equal(await run(['visual', 'put', '27', '--title', 'Load per dev', '--file', 'p.html', '--id', 'load-chart'], { send, readFile, ...io }), 0);
+  assert.equal(await run(['visual', 'put', '27', '--title', 'No id', '--file', 'p.html'], { send, readFile, ...io }), 0);
+  assert.equal(await run(['visual', 'rm', '27', '--id', 'load-chart'], { send, readFile, ...io }), 0);
+  assert.deepEqual(seen.map((s) => [s.route, s.body]), [
+    ['/sprint-draft/visual', { sprint: '27', action: 'put', id: 'load-chart', title: 'Load per dev', html: '<html><body>hi</body></html>' }],
+    ['/sprint-draft/visual', { sprint: '27', action: 'put', title: 'No id', html: '<html><body>hi</body></html>' }],
+    ['/sprint-draft/visual', { sprint: '27', action: 'rm', id: 'load-chart' }],
+  ]);
+  assert.equal(io.lines.out[0].split(/\r?\n/)[0], 'load-chart', 'put prints the returned id first');
+});
+
+test('bad visual input is refused locally', () => {
+  const big = 'x'.repeat(2 * 1024 * 1024 + 1);
+  const readFile = files({ 'p.html': '<p>ok</p>', 'p.txt': '<p>ok</p>', 'big.html': big });
+  const cases = {
+    'visual': /needs put or rm/,
+    'visual drop 27': /unknown visual action drop/,
+    'visual put': /needs the sprint/,
+    'visual put 27 --file p.html': /--title must be 1-60/,
+    'visual put 27 --title x': /needs --file/,
+    'visual put 27 --title x --file p.txt': /must be an \.html file/,
+    'visual put 27 --title x --file missing.html': /cannot read missing\.html/,
+    'visual put 27 --title x --file big.html': /over 2 MB/,
+    'visual put 27 --title x --file p.html --id Bad_Id': /--id must be/,
+    'visual put 27 --title x --file p.html --id aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa': /--id must be/,
+    'visual rm 27': /needs --id/,
+    'visual rm 27 --id a --title t': /takes only --id/,
+    'visual put 27 --bogus 1': /unknown option --bogus/,
+  };
+  for (const [line, want] of Object.entries(cases)) assert.match(request(line.split(' '), readFile).error, want, line);
+  assert.match(request(['visual', 'put', '27', '--title', 'x'.repeat(61), '--file', 'p.html'], readFile).error, /--title must be 1-60/);
+});
