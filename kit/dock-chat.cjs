@@ -30,6 +30,7 @@ const procLib = require("./dock-chat-proc.cjs");
 const preflight = require("./dock-chat-preflight.cjs");
 const outbox = require("./dock-chat-outbox.cjs");
 const agentsLib = require("./agents.cjs");
+const gmLib = require("./gm.cjs");
 const PATHS = require("./paths.cjs").resolvePaths();
 
 const STATE_DIR = process.env.DOCK_KIT_STATE_DIR || __dirname;
@@ -63,6 +64,18 @@ const ACTIVITY_PAUSE_MS = 60 * 1000;
 const HELP_TIMEOUT_MS = 5000;
 // Thinking text never reaches the stream, so the skill choice is made visible by having Claude write it in the reply DOCK shows.
 const SKILL_LINE_PROMPT = "This turn runs from DOCK chat, where the person follows your steps on a phone and cannot see your thinking. Before your first tool call of each task, write one plain line in your reply: Skills: <2-4 keywords from the task> / candidates: <matching skills from the available-skills list, or none> / using: <the skill you invoke, or none>. Then work as usual. A DOCK session works on one ticket only: when asked about another ticket, say it belongs in its own DOCK session instead of starting it here. Work on this session's ticket, including a fix or change the owner asks for in chat, runs through the sous skill: invoke it and let its runner do the work instead of editing the code yourself. When anything in the turn changes the ticket's status (a re-check, a review verdict, an owner answer), update its ledger with status.cjs in the same turn and say what changed; never leave a result the ledger contradicts. To send a file to the owner, write a line DOCK_ATTACH: <absolute path> in your reply (a file inside the working folder, up to 10 MB); screenshots from your tools are shown automatically. When the owner gives a Discord thread (a discord.com/channels link or a thread id), read it before answering: node ~/.claude/kit/discord-files.cjs <link or id> <working folder>/discord-<thread id> prints every message and saves every file; read the saved files (a PDF with the Read tool). DOCK holds the bot token, so an empty DISCORD_BOT_TOKEN does not mean there is no bot; only when the script itself fails, quote its error and ask for the file.";
+// A Guild Master session (mode gm): sonnet, Bash only, and guard.cjs lets that Bash run gm.cjs and nothing else. The guard hook also rides
+// on the turn's own --settings with matcher "*", so it holds even where the user settings lack it.
+const GM_SCRIPT = path.join(__dirname, "gm.cjs").replace(/\\/g, "/");
+const gmArgs = (script = GM_SCRIPT, node = process.execPath.replace(/\\/g, "/")) => [
+	"--model", "sonnet", "--tools", "Bash", "--strict-mcp-config",
+	"--settings", JSON.stringify({ hooks: { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: `"${node}" "${path.posix.join(path.posix.dirname(script), "guard.cjs")}" || exit 2`, timeout: 5 }] }] } }),
+	"--allowedTools", `Bash(node ${script}:*)`,
+	"--disallowedTools", "Write", "Edit", "NotebookEdit", "WebFetch", "WebSearch", "Agent", "Task", "PowerShell",
+];
+// The init event of a gm turn must show Bash as the only tool and no MCP server; anything else stops the turn.
+const gmInitOk = (o) => Array.isArray(o.tools) && o.tools.length === 1 && o.tools[0] === "Bash" && (!Array.isArray(o.mcp_servers) || o.mcp_servers.length === 0);
+const gmPrompt = (script) => `This is a Guild Master session in DOCK. You manage how DOCK works: agent models and tools, and DOCK settings. You never do the work yourself. Your only tool is Bash running node ${script} <op>, written exactly like that: plain words, no quotes, no backslashes; every other command is refused. Ops: agents | agent <slug> | propose-agent <slug> [--model haiku|sonnet|opus|inherit] [--tools a,b] | settings | propose-settings <key>=<value>... | propose-rollback <log id> | log | backups | pending. Rules: (1) Every change is a proposal. Run a propose op, show the owner the diff it prints and ask "Tulis?". (2) You never write. DOCK writes the pending change only after the owner answers ya in this chat, backs up the old version and logs it; it tells you the result in a [DOCK] line, which you report with the log number and the backup. Any other answer drops the proposal and nothing is written. (3) Secrets are write-only: you see set / not set, never a value; changing one is done by the owner in Settings. (4) You never write code, run tests, open worktrees, push, merge, approve, move Jira, post to Discord, dispatch agents or start sous: say that is the worker's job and the owner starts it from DOCK. (5) You never read raw ticket, PR or Discord text; you work from the summaries DOCK writes. Write in the owner's language.`;
 
 const log = (msg) => console.log(`${new Date().toISOString()} ${String(msg).replace(/[\u0000-\u001f\u007f]+/g, " ")}`);
 const safeId = (v) => String(v).replace(/[^A-Za-z0-9._-]/g, "?").slice(0, 64);
@@ -176,6 +189,9 @@ function childEnv(opts, base = process.env, platform = process.platform) {
 	}
 	if (opts.judge) env.DOCK_JUDGE = "1";
 	else delete env.DOCK_JUDGE;
+	if (opts.gm) { env.DOCK_GM = "1"; env.DOCK_GM_SESSION = opts.gm; }
+	else { delete env.DOCK_GM; delete env.DOCK_GM_SESSION; }
+	delete env.DOCK_GM_CONFIRM;
 	return env;
 }
 
@@ -600,6 +616,8 @@ function turnCore(msg, cfg, opts) {
 		schedule();
 	};
 	const stripAttach = (text) => {
+		// A Guild Master turn sends no files: a DOCK_ATTACH line stays plain text and nothing is read from disk.
+		if (opts.gm) return text;
 		const found = [];
 		const rest = text.replace(ATTACH_LINE, (_, p) => { found.push(p); return ""; });
 		if (!found.length) return text;
@@ -623,7 +641,16 @@ function turnCore(msg, cfg, opts) {
 	};
 	const onEvent = (o) => {
 		trackSubagents(o);
-		if (o.type === "system" && o.subtype === "init") { learn(o.session_id); if (typeof o.model === "string" && o.model) state.model = o.model; }
+		if (o.type === "system" && o.subtype === "init") {
+			learn(o.session_id);
+			if (typeof o.model === "string" && o.model) state.model = o.model;
+			if (opts.gm && !gmInitOk(o)) {
+				state.gmRefused = true;
+				log(`gm turn stopped: claude started with tools ${JSON.stringify(o.tools).slice(0, 200)} and MCP ${JSON.stringify(o.mcp_servers || []).slice(0, 200)}`);
+				state.pending.push({ role: "assistant", text: out("Guild Master stopped: Claude started with more than the Bash tool, so this turn was ended before it did anything."), at: new Date().toISOString() });
+				if (child) killTree(child);
+			}
+		}
 		else if (o.type === "user" && o.message && Array.isArray(o.message.content)) collectImages(o.message.content);
 		else if (o.type === "rate_limit_event") {
 			const limits = limitsOf(o);
@@ -659,7 +686,11 @@ function turnCore(msg, cfg, opts) {
 	};
 }
 
-const guardCheck = (cwd) => (command) => {
+const guardCheck = (cwd, gm = false) => (command) => {
+	if (gm) {
+		if (!bridgeMemo.gmGuard) bridgeMemo.gmGuard = guardLib.createGuard({ env: { ...process.env, DOCK_CHAT_TURN: "1", DOCK_GM: "1" } });
+		return bridgeMemo.gmGuard.check(command, cwd);
+	}
 	if (!bridgeMemo.guard) bridgeMemo.guard = guardLib.createGuard({ env: { ...process.env, DOCK_CHAT_TURN: "1" } });
 	return bridgeMemo.guard.check(command, cwd);
 };
@@ -708,7 +739,7 @@ function buildCaps(opts, flags) {
 		if (flags.replayUser) features.push("steer");
 	}
 	const modes = features.length ? [...interact.MODES] : [];
-	features.push("agents");
+	features.push("agents", "gm");
 	return { v: 2, kit: KIT_ID, claude: bridgeMemo.claudeVersion, features, modes, catalogHash: cat ? cat.hash : null };
 }
 
@@ -732,6 +763,7 @@ async function precheckWait(msg, caps, gapMs) {
 
 // A turn without rtk or caveman is refused: the answer in DOCK says what is missing on this machine. DOCK_CHAT_PREFLIGHT=off is for the tests.
 async function runTurn(msg, cfg, opts) {
+	if (msg.mode === "gm") return runGmTurn(msg, cfg, opts);
 	const acct = turnAccount(msg, opts);
 	if (acct.error) {
 		const core = turnCore(msg, cfg, opts);
@@ -746,6 +778,48 @@ async function runTurn(msg, cfg, opts) {
 		return await runTurnWith(msg, { ...cfg, extra: [...(cfg.extra || []), acct.token] }, { ...opts, accountToken: acct.token, settingsFile: settings.file });
 	} finally {
 		settings.remove();
+	}
+}
+
+// DOCK settings for gm.cjs, through DOCK's own updateSettings path; the bridge holds the token, the claude process does not.
+const gmSettingsApi = {
+	async get() {
+		const r = await call("/chat/gm/settings", {}, 10000);
+		if (r.status !== 200 || !r.result) throw new Error(`DOCK answered ${r.status}${r.error ? ` ${r.error}` : ""}`);
+		return r.result;
+	},
+	// Every write needs DOCK's one-use nonce: a settings write consumes it here, an agent write or rollback through confirm().
+	async put(values, confirm) {
+		const r = await call("/chat/gm/settings", { values, ...confirm }, 10000);
+		if (r.status !== 200 || !r.result || r.result.ok !== true) throw new Error((r.result && r.result.error) || r.error || `DOCK answered ${r.status}`);
+		return r.result;
+	},
+	async confirm(confirm) {
+		const r = await call("/chat/gm/confirm", { ...confirm }, 10000);
+		if (r.status !== 200 || !r.result || r.result.ok !== true) throw new Error(r.error || `DOCK did not confirm (${r.status})`);
+		return r.result;
+	},
+};
+
+// A gm turn: the owner's "ya" (DOCK sets gmConfirm with its nonce) writes the pending change before claude starts; any other message
+// drops it. After the turn the bridge posts the pending change, so DOCK shows that exact diff and binds the next "ya" to its sha256.
+async function runGmTurn(msg, cfg, opts, settingsApi = gmSettingsApi) {
+	const gm = gmLib.createGm({ stateDir: STATE_DIR, configDir: opts.configDir || PATHS.configDir });
+	let note = null;
+	try {
+		gm.saveSettings(msg.gmSettings);
+		if (msg.gmConfirm) {
+			const r = await gm.apply({ sessionId: msg.sessionId, gmConfirm: msg.gmConfirm, key: msg.gmKey, settings: settingsApi });
+			note = r.ok ? `DOCK wrote the pending change: manager log #${r.entry.id}, backup ${r.entry.backup}.` : `DOCK wrote nothing: ${r.error}.`;
+		} else gm.discard(msg.sessionId);
+	} catch (e) { note = `DOCK wrote nothing: ${e.message}.`; }
+	const text = note ? `${msg.text}\n\n[DOCK] ${note}` : msg.text;
+	try {
+		return await runTurnWith({ ...msg, text, options: null, gmKey: undefined }, cfg, { ...opts, gm: msg.sessionId, appendSystemPrompt: gmPrompt(GM_SCRIPT), extraArgs: gmArgs() });
+	} finally {
+		let raw = null;
+		try { raw = gm.pendingRaw(msg.sessionId); } catch {}
+		if (raw) await call("/chat/gm/proposal", { sessionId: msg.sessionId, replyTo: msg.id, pending: raw }, 10000).then((r) => { if (r.status !== 200) log(`gm proposal not shown: DOCK answered ${r.status}`); }, (e) => log(`gm proposal not shown: ${e.message}`));
 	}
 }
 
@@ -793,7 +867,7 @@ async function runInteractive(msg, cfg, opts, claude, flags) {
 			stateDir: STATE_DIR,
 			caps: () => bridgeMemo.caps || buildCaps(opts, flags),
 			catalog: () => bridgeMemo.catalog,
-			guardCheck: guardCheck(opts.cwd),
+			guardCheck: guardCheck(opts.cwd, Boolean(opts.gm)),
 			markOld: () => { if (Date.now() >= bridgeMemo.legacyUntil) log("DOCK has no /chat/wait route (older server); one-shot turns for 10 minutes"); bridgeMemo.legacyUntil = Date.now() + OLD_SERVER_MS; },
 			noteInit: (o) => {
 				const advertised = Array.isArray(o.capabilities) ? o.capabilities : [];
@@ -929,6 +1003,17 @@ async function claimOne(wait, caps) {
 	return { ...r, message: r.result ? r.result.message : r.message, parallelTurns: r.result ? r.result.parallelTurns : undefined, wantCatalog: Boolean(r.result && r.result.wantCatalog), wantDoctor: Boolean(r.result && r.result.wantDoctor), agentJobs: r.result && Array.isArray(r.result.agentJobs) ? r.result.agentJobs.slice(0, 8) : [] };
 }
 
+// The manager log and its one-click rollback, for DOCK's Guild Master panel.
+async function gmJob(job, opts, settingsApi = gmSettingsApi) {
+	const gm = gmLib.createGm({ stateDir: STATE_DIR, configDir: opts.configDir || PATHS.configDir });
+	if (job.op === "gm-log") return gm.view().slice(0, 100);
+	if (job.op === "gm-rollback") {
+		const input = job.input && typeof job.input === "object" ? job.input : {};
+		return gm.rollback({ id: input.id, by: "owner (manager log)", settings: settingsApi, key: input.key, confirm: { sessionId: null, nonce: input.nonce, sha256: `rollback:${input.id}` } });
+	}
+	throw new Error(`Unknown gm op ${String(job.op).slice(0, 40)}`);
+}
+
 // DOCK's agent library jobs (kit/agents.cjs), in order and outside the turn pool. Each job answers { id, result } or { id, error }.
 let agentJobsRun = Promise.resolve();
 function runAgentJobs(jobs, opts) {
@@ -936,7 +1021,7 @@ function runAgentJobs(jobs, opts) {
 		for (const job of jobs) {
 			if (!job || typeof job.id !== "string") continue;
 			let body;
-			try { body = { id: job.id, result: agentsLib.createAgents({ configDir: opts.configDir || PATHS.configDir }).run(job.op, job.input) }; }
+			try { body = { id: job.id, result: String(job.op).startsWith("gm-") ? await gmJob(job, opts) : agentsLib.createAgents({ configDir: opts.configDir || PATHS.configDir }).run(job.op, job.input) }; }
 			catch (e) { body = { id: job.id, error: String((e && e.message) || e).slice(0, 500) }; }
 			try {
 				const r = await call("/chat/agents/result", body, 15000);
@@ -1034,7 +1119,7 @@ async function main(cmd, args) {
 	}
 }
 
-module.exports = { resolveClaude, killTree, childEnv, turnAccount, accountSettings, numstatOf, touchedPath, changedFiles, limitsOf, settings, createTurnPool, keepAwake, track, snapshotTree, reap, killAllSync };
+module.exports = { resolveClaude, killTree, childEnv, turnAccount, accountSettings, numstatOf, touchedPath, changedFiles, limitsOf, settings, createTurnPool, keepAwake, track, snapshotTree, reap, killAllSync, gmArgs, gmInitOk };
 
 if (require.main === module) {
 	const [cmd, ...args] = process.argv.slice(2);
