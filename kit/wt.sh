@@ -7,6 +7,7 @@
 #   wt.sh check <dir>                         what node_modules is: junction, own, or none
 # A pnpm worktree gets its own node_modules (hardlinks from the store, so no disk is spent). An npm worktree keeps a junction
 # to the main repo's node_modules, and `git worktree remove` deletes THROUGH a junction, which is why remove refuses.
+# When the worktree's package-lock.json pins a top-level package the main repo's node_modules lacks, add runs npm ci instead.
 set -eu
 ROOT="${QONFLO_ROOT:-E:/qonflo}"
 G="git -c safe.directory=*"
@@ -26,6 +27,19 @@ modules() {
 # The main repo a worktree belongs to.
 main_of() { dirname "$(cd "$1" && $G rev-parse --path-format=absolute --git-common-dir)"; }
 bin_state() { [ -d "$1/node_modules/.bin" ] && echo present || echo absent; }
+needs_own() {
+	node -e "
+const fs=require('fs'),p=require('path');const [dir,repo]=process.argv.slice(1);
+let lock;try{lock=JSON.parse(fs.readFileSync(p.join(dir,'package-lock.json'),'utf8')).packages||{}}catch{process.exit(1)}
+for(const [k,v] of Object.entries(lock)){
+if(!k.startsWith('node_modules/')||k.includes('/node_modules/',13)||v.optional||!v.version)continue;
+let have=null;try{have=JSON.parse(fs.readFileSync(p.join(repo,k,'package.json'),'utf8')).version}catch{}
+if(have!==v.version){console.log(k.slice(13)+' '+(have||'missing')+' -> '+v.version);process.exit(0)}}
+process.exit(1)" "$1" "$2"
+}
+npm_own() {
+	(cd "$1" && npm ci --no-audit --no-fund --loglevel=error) || { echo "FAILED: npm ci in $1"; exit 1; }
+}
 # Everything below own/unlink/remove deletes something, so it only ever runs on a linked worktree, never on a main repo.
 need_linked() {
 	local git_dir common
@@ -83,7 +97,11 @@ if [ "$(uname -s)" = Linux ]; then
 					else $G worktree add -q -b "$BRANCH" "$DIR" "$BASE"; fi)
 				echo "created $DIR on $BRANCH"
 			fi
-			if [ "$(modules "$DIR")" = none ]; then
+			if [ ! -f "$DIR/pnpm-lock.yaml" ] && [ "$(modules "$DIR")" != own ] && WHY=$(needs_own "$DIR" "$REPO"); then
+				echo "own npm install: the main repo's node_modules differs ($WHY)"
+				unlink_modules "$DIR"
+				npm_own "$DIR"
+			elif [ "$(modules "$DIR")" = none ]; then
 				if [ -f "$DIR/pnpm-lock.yaml" ]; then install_own "$DIR"; else ln -s "$REPO/node_modules" "$DIR/node_modules"; fi
 			fi
 			for f in .env .env.development .env.test; do [ -f "$REPO/$f" ] && [ ! -f "$DIR/$f" ] && cp "$REPO/$f" "$DIR/$f"; done
@@ -119,7 +137,11 @@ case "$cmd" in
 				else $G worktree add -q -b "$BRANCH" "$DIR" "$BASE"; fi)
 			echo "created $DIR on $BRANCH"
 		fi
-		if [ "$(modules "$DIR")" = none ]; then
+		if [ ! -f "$DIR/pnpm-lock.yaml" ] && [ "$(modules "$DIR")" != own ] && WHY=$(needs_own "$DIR" "$REPO"); then
+			echo "own npm install: the main repo's node_modules differs ($WHY)"
+			unlink_modules "$DIR"
+			npm_own "$DIR"
+		elif [ "$(modules "$DIR")" = none ]; then
 			if [ -f "$DIR/pnpm-lock.yaml" ]; then install_own "$DIR"; else
 				powershell -NoProfile -Command "New-Item -ItemType Junction -Path '$DIR/node_modules' -Target '$REPO/node_modules' | Out-Null"
 			fi
