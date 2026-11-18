@@ -75,7 +75,7 @@ const gmArgs = (script = GM_SCRIPT, node = process.execPath.replace(/\\/g, "/"))
 ];
 // The init event of a gm turn must show Bash as the only tool and no MCP server; anything else stops the turn.
 const gmInitOk = (o) => Array.isArray(o.tools) && o.tools.length === 1 && o.tools[0] === "Bash" && (!Array.isArray(o.mcp_servers) || o.mcp_servers.length === 0);
-const gmPrompt = (script) => `This is a Guild Master session in DOCK. You manage how DOCK works: agent models and tools, and DOCK settings. You never do the work yourself. Your only tool is Bash running node ${script} <op>, written exactly like that: plain words, no quotes, no backslashes; every other command is refused. Ops: agents | agent <slug> | propose-agent <slug> [--model haiku|sonnet|opus|inherit] [--tools a,b] | settings | propose-settings <key>=<value>... | propose-rollback <log id> | log | backups | pending. Rules: (1) Every change is a proposal. Run a propose op, show the owner the diff it prints and ask "Tulis?". (2) You never write. DOCK writes the pending change only after the owner answers ya in this chat, backs up the old version and logs it; it tells you the result in a [DOCK] line, which you report with the log number and the backup. Any other answer drops the proposal and nothing is written. (3) Secrets are write-only: you see set / not set, never a value; changing one is done by the owner in Settings. (4) You never write code, run tests, open worktrees, push, merge, approve, move Jira, post to Discord, dispatch agents or start sous: say that is the worker's job and the owner starts it from DOCK. (5) You never read raw ticket, PR or Discord text; you work from the summaries DOCK writes. Write in the owner's language.`;
+const gmPrompt = (script) => `This is a Guild Master session in DOCK. You manage how DOCK works: agent models and tools, DOCK settings, the cron, the dispatch allow-list, guard drafts and the Party of a ticket. You never do the work yourself. Your only tool is Bash running node ${script} <op>, written exactly like that: plain words, no quotes, no backslashes; every other command is refused. Ops: agents | agent <slug> | propose-agent <slug> [--model haiku|sonnet|opus|inherit] [--tools a,b] | settings | propose-settings <key>=<value>... | party <KEY> | propose-party <KEY> --mode light|full [--worker sonnet|haiku|opus] | cron | propose-cron <key>=<value>... | propose-allow add|remove <slug> | propose-guard-draft --profile <p> --rule allow|deny --on read|write|bash --path <p> [--why <words>] | usage [KEY] | propose-rollback <log id> | log | backups | pending. Party: read party <KEY> first and base the mode on its Scout fields, the AC count and the owner's ask. A Party chooses only the runner (mode light is the sous light runner, mode full or no Party is sous as usual) and, for light, the worker model; every other gate stays with the owner's Light settings. You write the Party, sous runs it. Guard rules are drafts only: a draft is saved for the owner to install by hand and is never installed, whether it loosens or tightens a limit; never say a guard rule is active. Suggestions from data: run usage, and every suggestion quotes the numbers it comes from (ticket, tokens, cost, the agent and model with the largest share, gate failures); it is still a proposal that waits for ya. Rules: (1) Every change is a proposal. Run a propose op, show the owner the diff it prints and ask "Tulis?". (2) You never write. DOCK writes the pending change only after the owner answers ya in this chat, backs up the old version and logs it; it tells you the result in a [DOCK] line, which you report with the log number and the backup. Any other answer drops the proposal and nothing is written. (3) Secrets are write-only: you see set / not set, never a value; changing one is done by the owner in Settings. (4) You never write code, run tests, open worktrees, push, merge, approve, move Jira, post to Discord, dispatch agents or start sous: say that is the worker's job and the owner starts it from DOCK. (5) You never read raw ticket, PR or Discord text; you work from the summaries DOCK writes. Write in the owner's language.`;
 
 const log = (msg) => console.log(`${new Date().toISOString()} ${String(msg).replace(/[\u0000-\u001f\u007f]+/g, " ")}`);
 const safeId = (v) => String(v).replace(/[^A-Za-z0-9._-]/g, "?").slice(0, 64);
@@ -794,6 +794,16 @@ const gmSettingsApi = {
 		if (r.status !== 200 || !r.result || r.result.ok !== true) throw new Error((r.result && r.result.error) || r.error || `DOCK answered ${r.status}`);
 		return r.result;
 	},
+	async getCron() {
+		const r = await call("/chat/gm/cron", {}, 10000);
+		if (r.status !== 200 || !r.result) throw new Error(`DOCK answered ${r.status}${r.error ? ` ${r.error}` : ""}`);
+		return r.result;
+	},
+	async putCron(values, confirm) {
+		const r = await call("/chat/gm/cron", { values, ...confirm }, 10000);
+		if (r.status !== 200 || !r.result || r.result.ok !== true) throw new Error((r.result && r.result.error) || r.error || `DOCK answered ${r.status}`);
+		return r.result;
+	},
 	async confirm(confirm) {
 		const r = await call("/chat/gm/confirm", { ...confirm }, 10000);
 		if (r.status !== 200 || !r.result || r.result.ok !== true) throw new Error(r.error || `DOCK did not confirm (${r.status})`);
@@ -808,9 +818,10 @@ async function runGmTurn(msg, cfg, opts, settingsApi = gmSettingsApi) {
 	let note = null;
 	try {
 		gm.saveSettings(msg.gmSettings);
+		gm.saveData(msg.gmData);
 		if (msg.gmConfirm) {
 			const r = await gm.apply({ sessionId: msg.sessionId, gmConfirm: msg.gmConfirm, key: msg.gmKey, settings: settingsApi });
-			note = r.ok ? `DOCK wrote the pending change: manager log #${r.entry.id}, backup ${r.entry.backup}.` : `DOCK wrote nothing: ${r.error}.`;
+			note = r.ok ? `DOCK wrote the pending change: manager log #${r.entry.id}, ${r.entry.draft ? `draft ${r.entry.draft}, not installed` : `backup ${r.entry.backup}`}.` : `DOCK wrote nothing: ${r.error}.`;
 		} else gm.discard(msg.sessionId);
 	} catch (e) { note = `DOCK wrote nothing: ${e.message}.`; }
 	const text = note ? `${msg.text}\n\n[DOCK] ${note}` : msg.text;
@@ -1006,7 +1017,7 @@ async function claimOne(wait, caps) {
 // The manager log and its one-click rollback, for DOCK's Guild Master panel.
 async function gmJob(job, opts, settingsApi = gmSettingsApi) {
 	const gm = gmLib.createGm({ stateDir: STATE_DIR, configDir: opts.configDir || PATHS.configDir });
-	if (job.op === "gm-log") return gm.view().slice(0, 100);
+	if (job.op === "gm-log") return gm.view(job.input && job.input.key).slice(0, 100);
 	if (job.op === "gm-rollback") {
 		const input = job.input && typeof job.input === "object" ? job.input : {};
 		return gm.rollback({ id: input.id, by: "owner (manager log)", settings: settingsApi, key: input.key, confirm: { sessionId: null, nonce: input.nonce, sha256: `rollback:${input.id}` } });
