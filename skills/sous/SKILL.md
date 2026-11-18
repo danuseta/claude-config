@@ -56,6 +56,8 @@ Read the first prompt of the session:
 
 **Light run.** The full runner stays the default; `sous-light-runner` (sonnet) runs only when the prompt has `Mode: light` and one of: fixing review or owner findings on an existing PR, a ticket whose Contract says Party `mode: light`, or a retro apply that changes a little code on a ticket. Dispatch it as in step 4 with: key, `K`, `ROOT`, `EVIDENCE`, `configDir`, the source (`findings`, `party` or `retro`), the findings quoted as written, and the `Light settings:` line from the prompt as given. Step 6's line goes before it (`Runner jalan (light): scout -> worker -> verify -> blast check -> push ke PR #<n>`). Its gate starts with a scout and falls back on its own: `RESULT: HANDOVER` means the gate failed, the ledger is back at `mode=full`, and you dispatch `sous-ticket-runner` as a continuation from that task.
 
+**Party.** A Party chooses only the runner and, for light, the worker model; it is read only through `node K/party-check.cjs <KEY>`, never from `contract.md` itself, and it counts only for a ledger with no `mode` yet. Before step 4, when `BOARD/ac.txt` and the intake's `Contract:` line in `BOARD/materials/contract.md` exist: `PARTY mode=light worker=<m> log=<n>` is a light run with source `party` (the prompt needs no `Mode: light` line; pass that line as written); `NO-PARTY: ...` or `PARTY mode=full ...` is the full runner, as today. Without them (a fresh ticket) dispatch `sous-ticket-runner`: it runs the intake first, checks the Party itself and returns `RESULT: LIGHT` when it is light; then dispatch `sous-light-runner` the same way.
+
 ## 4. Continuing from the blackboard
 DOCK opens a NEW session for every owner action; it never resumes an old one. The first prompt is:
 ```

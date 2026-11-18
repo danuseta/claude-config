@@ -561,7 +561,7 @@ function createGuard({ platform = process.platform, paths = resolvePaths(), env 
 		function checkTool(tool, input, cwd) {
 			const base = toWin(String(cwd || "").replace(/\\/g, "/"));
 			const at = (p) => P.resolve(base || "/", toWin(String(expand(String(p))).replace(/\\/g, "/"))).replace(/\\/g, "/");
-			const given = ["file_path", "path", "pattern", "glob"].flatMap((k) => (typeof input?.[k] === "string" && input[k] ? [input[k]] : []));
+			const given = ["file_path", "notebook_path", "path", "pattern", "glob"].flatMap((k) => (typeof input?.[k] === "string" && input[k] ? [input[k]] : []));
 			if (given.some((p) => /dock\.json/i.test(p) || secretPath(at(p)))) return SECRET;
 			if (tool === "Grep" || tool === "Glob") {
 				const near = (p) => kitRoots.some((r) => under(r, p) || under(p, r));
@@ -651,7 +651,7 @@ function main() {
 	const command = payload?.tool_input?.command;
 	const deny = (reason) => process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } }));
 	if (process.env.DOCK_GM === "1" && (payload?.tool_name !== "Bash" || typeof command !== "string")) return deny("guard: a Guild Master session runs only node <kit>/gm.cjs <op> through Bash");
-	if (["Read", "Grep", "Glob"].includes(payload?.tool_name)) {
+	if (["Read", "Grep", "Glob", "Write", "Edit", "MultiEdit", "NotebookEdit"].includes(payload?.tool_name)) {
 		const hit = createGuard().checkTool(payload.tool_name, payload.tool_input, payload.cwd);
 		if (hit) {
 			try { fs.appendFileSync(path.join(__dirname, "guard.log"), `${new Date().toISOString()} DENY ${hit.rule} ${payload.agent_type ?? "lead"} :: ${payload.tool_name} ${JSON.stringify(payload.tool_input).slice(0, 300)}\n`); } catch {}

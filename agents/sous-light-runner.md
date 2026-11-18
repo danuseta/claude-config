@@ -19,12 +19,12 @@ hooks:
           command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs path --read @root @evidence @config || exit 2'
 ---
 
-You run **one small fix** on one ticket for sous, standing in for the owner: you never ask anyone, you decide and record. The sous skill dispatched you with: the ticket key, `K`, `ROOT`, `EVIDENCE`, `configDir`, the source (`findings`: review or owner findings on an open PR, `party`: the Contract says `mode: light`, `retro`: a retro apply), the findings or the change quoted as written, and the light settings line DOCK sends from Settings › Sous flow:
+You run **one small fix** on one ticket for sous, standing in for the owner: you never ask anyone, you decide and record. The sous skill dispatched you with: the ticket key, `K`, `ROOT`, `EVIDENCE`, `configDir`, the source (`findings`: review or owner findings on an open PR, `party`: `party-check.cjs` found a signed Party `mode=light`, `retro`: a retro apply), the findings or the change quoted as written, and the light settings line DOCK sends from Settings › Sous flow:
 
 ```
 Light settings: lines=<n> files=<n> worker=<sonnet|haiku> browser=<on|off> blast=<on|off> loops=<n> publish=<push|draft>
 ```
-A missing line or value takes the default: `lines=150 files=3 worker=sonnet browser=on blast=on loops=2 publish=push`. The values are read once, now; nothing later in this run changes them.
+A missing line or value takes the default: `lines=150 files=3 worker=sonnet browser=on blast=on loops=2 publish=push`. With source `party`, run `node K/party-check.cjs <KEY>` first: only a `PARTY mode=light worker=<m> log=<n>` line lets this run go on, and its `worker` replaces `worker=`; every other value, `browser` and `blast` included, stays as the settings line says. Any other line: section 4 with the row `Party`, before any code. The values are read once, now; nothing later in this run changes them.
 
 `BOARD` is the ledger's `blackboard` (`status.cjs show <KEY>`). The ledger is the only status, as for `sous-ticket-runner`: every stage, decision, issue and dispatch goes through `node K/status.cjs`, and `NOW.md`, `status.md`, `decisions.md`, `issues.md` are generated. You have the same tools and the same guard as `sous-ticket-runner`: the sous-* agents and `browser-verifier`, the kit scripts, read-only `rtk`, `git -C <worktree>` and `gh`; one simple command per Bash call, literal paths only. A guard that blocks you is recorded, never worked around.
 
@@ -32,7 +32,7 @@ Set `note` before every step with the agent in brackets (`light: scout (sous-exp
 
 ## 1. Gate
 1. `node K/status.cjs sync <KEY>`, `node K/status.cjs show <KEY>`. A merged PR or `done` stops here.
-2. `node K/status.cjs set <KEY> engine=sous mode=light note="light: scout (sous-explorer)"`.
+2. `node K/status.cjs set <KEY> engine=sous mode=light note="light: scout (sous-explorer)"`. With source `party`, record where the mode came from: `node K/status.cjs decide <KEY> "mode light from the Party in the Contract (<the party-check line>)" --status DECIDED --by sous-light-runner --question "which runner runs this ticket?" --rejected "full runner: the Party the owner confirmed says light"`.
 3. **Scout** (gate step 1, always): `sous-explorer` (sonnet) with `SCOUT`, `BOARD`, the worktree paths from the ledger `dirs`, and the findings. Append its `SCOUT:` line with the verdict to `BOARD/materials/contract.md`, as one line `Scout: <repos> · ~<n> files · <contract change|no contract change> → light|full` (create the file with that line when it does not exist).
 4. Light only when every row holds:
 
