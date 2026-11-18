@@ -26,6 +26,8 @@
 //   node status.cjs lock <name> KEY [--wait <s>] [--pid <n>] | unlock <name> KEY -> one heavy step per machine (stale: dead pid or 30 min)
 //   node status.cjs render KEY                       -> status.md, decisions.md, issues.md, NOW.md under <evidence>/blackboard/KEY (generated);
 //                                                     with board=<EPIC> under <EPIC>/tickets/KEY, plus <EPIC>/EPIC.md
+//   node status.cjs check [KEY]                      -> ledger files changed since the last history commit (<evidence>/.git, local, one commit
+//                                                     per command); each is recorded on its ticket as an env failure and the exit code is 1
 //   node status.cjs sync [KEY] [--hook]            -> pull PR state from GitHub: fills pr.be / pr.fe, retargets a stacked PR once its parent merged, moves commit -> pr when a PR
 //                                                     exists and pr -> done when every PR is merged. Two gh calls whatever the ticket count.
 //   node status.cjs ac-set KEY @<file> [jiraUpdated] -> AC rows from Jira, one capability per line; stamps the source and locks the row count
@@ -96,13 +98,119 @@ const LOCKS = path.join(ROOT, ".locks");
 const LOCK_STALE_MS = 30 * 60 * 1000;
 const file = (key) => path.join(ROOT, key, "status.json");
 const load = (key) => (fs.existsSync(file(key)) ? JSON.parse(fs.readFileSync(file(key), "utf8")) : null);
+// Every ledger file is written under a lock file (O_EXCL, a random token inside) to a unique temp file that is then renamed over it.
+// A command that reads and writes a ticket holds that ticket's lock from its first read to its exit, so a parallel writer waits.
+const LEDGER_WAIT_MS = 15000;
+const LEDGER_STALE_MS = 60000;
+const HOST = require("os").hostname();
+const held = new Map();
+let wrote = false;
+const ledgerLock = (name) => path.join(LOCKS, `${name}.lock`);
+const hold = (name, soft = false) => {
+	if (held.has(name)) return false;
+	fs.mkdirSync(LOCKS, { recursive: true });
+	const lock = ledgerLock(name);
+	const token = require("crypto").randomBytes(12).toString("hex");
+	const deadline = Date.now() + LEDGER_WAIT_MS;
+	for (;;) {
+		try {
+			const fd = fs.openSync(lock, "wx");
+			fs.writeSync(fd, JSON.stringify({ token, pid: process.pid, host: HOST, at: now() }));
+			fs.closeSync(fd);
+			held.set(name, token);
+			return true;
+		} catch (e) {
+			if (e.code !== "EEXIST") throw e;
+		}
+		let raw = null, ageMs = 0;
+		try { raw = fs.readFileSync(lock, "utf8"); ageMs = Date.now() - fs.statSync(lock).mtimeMs; } catch { continue; }
+		let h = null;
+		try { h = JSON.parse(raw); } catch {}
+		const stale = h ? ageMs > LEDGER_STALE_MS || (h.host === HOST && h.pid && !alive(Number(h.pid))) : ageMs > 5000;
+		if (stale) {
+			// Move the stale lock aside first: only one taker wins the rename, and a fresh lock caught by mistake is put back.
+			const aside = `${lock}.${token}.stale`;
+			try {
+				fs.renameSync(lock, aside);
+				if (fs.readFileSync(aside, "utf8") !== raw) try { fs.linkSync(aside, lock); } catch {}
+				fs.rmSync(aside, { force: true });
+			} catch {}
+			continue;
+		}
+		if (Date.now() > deadline) {
+			if (soft) return false;
+			console.log(`REFUSED: ${name} is locked by pid ${h?.pid ?? "?"} on ${h?.host ?? "?"} since ${stamp(h?.at)}; try again`);
+			process.exit(2);
+		}
+		sleep(20 + Math.floor(Math.random() * 30));
+	}
+};
+const release = (name) => {
+	const token = held.get(name);
+	if (!token) return;
+	held.delete(name);
+	try { if (JSON.parse(fs.readFileSync(ledgerLock(name), "utf8")).token === token) fs.rmSync(ledgerLock(name), { force: true }); } catch {}
+};
+const writeLedger = (target, data, name) => {
+	const mine = hold(name);
+	try {
+		fs.mkdirSync(path.dirname(target), { recursive: true });
+		const tmp = `${target}.${process.pid}.${require("crypto").randomBytes(6).toString("hex")}.tmp`;
+		fs.writeFileSync(tmp, data);
+		for (let i = 0; ; i++) {
+			try {
+				fs.renameSync(tmp, target);
+				break;
+			} catch (e) {
+				if (i >= 50 || !["EPERM", "EACCES", "EBUSY"].includes(e.code)) {
+					fs.rmSync(tmp, { force: true });
+					throw e;
+				}
+				sleep(20);
+			}
+		}
+		wrote = true;
+	} finally {
+		if (mine) release(name);
+	}
+};
+// Board history: a local git repo in the evidence folder (never pushed), one commit per status.cjs command that wrote a ledger file.
+// --git-dir and --work-tree are explicit, so a repo the evidence folder sits in (and its ignore rules) is never touched.
+const HISTORY = path.join(ROOT, ".git");
+const HISTORY_PATHS = ["*/status*.json", ...["status", "decisions", "issues", "NOW", "EPIC"].map((f) => `blackboard/**/${f}.md`)].map((p) => `:(glob)${p}`);
+const histGit = (args, input) => require("child_process").execFileSync("git", [
+	"--git-dir", HISTORY, "--work-tree", ROOT, "-c", `core.hooksPath=${path.join(HISTORY, "no-hooks")}`, "-c", "commit.gpgsign=false", "-c", "core.autocrlf=false",
+	"-c", "core.fsmonitor=false", "-c", "safe.directory=*", "-c", "user.name=status.cjs", "-c", "user.email=status.cjs@localhost", ...args,
+], { encoding: "utf8", timeout: 20000, input, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "ignore"], windowsHide: true });
+const commitHistory = () => {
+	if (!wrote || !hold("ledger-history", true)) return;
+	try {
+		if (!fs.existsSync(HISTORY)) require("child_process").execFileSync("git", ["init", "-q", ROOT], { timeout: 20000, stdio: "ignore", windowsHide: true });
+		const changed = historyChanges() ?? [];
+		if (changed.length) histGit(["add", "-A", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"], changed.map((c) => `:(literal)${c.file}\0`).join(""));
+		histGit(["commit", "-q", "--allow-empty", "--no-verify", "-m", `status.cjs ${process.argv.slice(2).join(" ")}`]);
+	} catch {} finally {
+		release("ledger-history");
+	}
+};
+// Ledger files that differ from the last history commit, as [{ code, file }]; null when there is no history to compare with.
+const historyChanges = () => {
+	if (!fs.existsSync(HISTORY)) return null;
+	try {
+		const out = histGit(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames", "--", ...HISTORY_PATHS]);
+		return out.split("\0").filter(Boolean).map((e) => ({ code: e.slice(0, 2).trim(), file: e.slice(3) }));
+	} catch { return null; }
+};
+process.on("exit", () => {
+	commitHistory();
+	for (const name of [...held.keys()]) release(name);
+});
 const save = (key, s, allowHanded = false) => {
 	const prev = allowHanded ? null : load(key);
 	if (prev?.handedTo) return refuse(`${key} was handed over to ${prev.handedTo}; it is changed there. \`status.cjs pull ${key}\` takes it back`);
-	fs.mkdirSync(path.dirname(file(key)), { recursive: true });
 	s.updatedAt = new Date().toISOString();
 	if (s.engine === "sous") stampBoard(key, s);
-	fs.writeFileSync(file(key), JSON.stringify(s, null, 2));
+	writeLedger(file(key), JSON.stringify(s, null, 2), `ledger-${key}`);
 	if (s.engine === "sous") try { renderBoard(key, s); } catch {}
 	// Mirror the ledger to DOCK when it is configured; a no-op otherwise.
 	if (SCRATCH) return;
@@ -237,7 +345,7 @@ const renderEpic = (epic, root) => {
 	});
 	const head = `<!-- generated, do not edit: \`status.cjs render <KEY>\` of any ticket on this board rebuilds this file from the ledgers -->\n`;
 	const intro = "Shared here: `materials/` and `prompts/S<n>.md` (numbered across the epic; each prompt names its ticket on its first line). Per ticket: `tickets/<KEY>/`.";
-	fs.writeFileSync(path.join(root, "EPIC.md"), `${head}# EPIC - ${epic}\n\n${intro}\n\n| Ticket | Title | Sessions | Stage | Waiting on the owner | Board |\n|---|---|---|---|---|---|\n${rows.join("\n")}\n`);
+	writeLedger(path.join(root, "EPIC.md"), `${head}# EPIC - ${epic}\n\n${intro}\n\n| Ticket | Title | Sessions | Stage | Waiting on the owner | Board |\n|---|---|---|---|---|---|\n${rows.join("\n")}\n`, `epic-${epic}`);
 };
 // The blackboard files a session reads, rebuilt whole from the ledger; nobody edits them.
 const renderBoard = (key, s) => {
@@ -247,9 +355,10 @@ const renderBoard = (key, s) => {
 	const decisions = decisionsOf(s);
 	const issues = s.issues ?? [];
 	const open = issues.filter((x) => x.status === "open");
+	const superseded = decisions.filter((d) => d.status === "SUPERSEDED");
 	const events = [
 		...(s.history ?? []).map((h) => [h.at, "STAGE", `${h.from ?? "-"} -> ${h.to}`]),
-		...decisions.map((d) => [d.at, "DECISION", `D-${d.n} ${d.cancelledAt ? d.was ?? "DECIDED" : d.status} by ${d.by}: ${d.text}`]),
+		...decisions.filter((d) => d.status !== "SUPERSEDED").map((d) => [d.at, "DECISION", `D-${d.n} ${d.cancelledAt ? d.was ?? "DECIDED" : d.status} by ${d.by}: ${d.text}`]),
 		...decisions.filter((d) => d.cancelledAt).map((d) => [d.cancelledAt, "DECISION", `D-${d.n} CANCELLED: ${d.cancelNote}`]),
 		...issues.flatMap((x) => [
 			[x.at, "ISSUE-OPEN", `I-${x.n} ${x.type}: ${x.text}`],
@@ -262,7 +371,35 @@ const renderBoard = (key, s) => {
 		...(s.findings ?? []).map((f) => [f.at, "FINDING", `${f.severity}: ${f.text}`]),
 		...(s.findings ?? []).flatMap((f, i) => (f.resolved ? [[f.resolved.at, "FINDING-RESOLVED", `#${i + 1}: ${f.resolved.why}`]] : [])),
 	].filter((e) => e[0]).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
-	fs.writeFileSync(path.join(dir, "status.md"), `${head}# Status log - ${key}\n\nFormat: \`YYYY-MM-DD HH:MM · ${key} · MARKER · what\`\n\n${events.map(([at, m, t]) => `${stamp(at)} · ${key} · ${m} · ${line(t)}`).join("\n")}\n`);
+	// status.md: what holds now, then the log one section per UTC day with short lines, superseded decisions folded at the end.
+	const short = (t) => { const v = line(t); return v.length > 160 ? `${v.slice(0, 159)}…` : v; };
+	const days = [];
+	for (const [at, m, t] of events) {
+		const day = String(at).slice(0, 10);
+		if (days.at(-1)?.day !== day) days.push({ day, rows: [] });
+		days.at(-1).rows.push(`- ${String(at).slice(11, 16)} · ${m} · ${short(t)}`);
+	}
+	const weekday = (day) => (Number.isNaN(Date.parse(day)) ? "" : ` ${new Date(`${day}T00:00:00Z`).toUTCString().slice(0, 3)}`);
+	const findingsOpen = (s.findings ?? []).map((f, i) => ({ ...f, n: i + 1 })).filter((f) => !f.resolved);
+	const inForce = decisions.filter((d) => IN_FORCE.includes(d.status));
+	const log = [
+		`${head}# Status - ${key}${s.title ? ` · ${line(s.title)}` : ""}`, "",
+		`Stage: ${s.stage ?? "-"} · PR ${[s.pr?.be, s.pr?.fe].filter(Boolean).join(" ") || "-"} · updated ${stamp(s.updatedAt)}`, "",
+		"## Now", "",
+		`- Stage: ${s.stage ?? "-"}`,
+		`- Waiting on: ${short(s.waiting || "-")}`,
+		`- Open issues: ${open.length} · open findings: ${findingsOpen.length} · decisions in force: ${inForce.length} (${superseded.length} superseded)`,
+		...open.map((x) => `  - I-${x.n} ${x.type} (level ${x.level}): ${short(x.text)}`),
+		...findingsOpen.map((f) => `  - finding #${f.n} ${f.severity}: ${short(f.text)}`),
+		...inForce.map((d) => `  - D-${d.n} ${d.status} by ${d.by}: ${short(d.text)}`), "",
+		"Log lines: `HH:MM · MARKER · what`, one section per UTC day; long text is cut, the full text is in `decisions.md`, `issues.md` and the ledger.", "",
+		...days.flatMap(({ day, rows }) => [`## ${day}${weekday(day)}`, "", ...rows, ""]),
+		...(superseded.length ? [
+			`## Superseded decisions (${superseded.length})`, "", `<details><summary>${superseded.length} superseded, full text in decisions.md</summary>`, "",
+			...superseded.map((d) => `- ${stamp(d.at)} · D-${d.n}${d.supersededBy ? ` -> D-${d.supersededBy}` : ""} by ${d.by}: ${short(d.text)}`), "", "</details>", "",
+		] : []),
+	];
+	writeLedger(path.join(dir, "status.md"), log.join("\n"), `ledger-${key}`);
 	const dBlock = (d) => [
 		`## D-${d.n}`,
 		`- **Status:** ${d.status} · **By:** ${d.by} · **At:** ${stamp(d.at)}${d.issue ? ` · **Issue:** I-${d.issue}` : ""}`,
@@ -275,7 +412,7 @@ const renderBoard = (key, s) => {
 		...(d.supersededBy ? [`- **Superseded by:** D-${d.supersededBy} ${stamp(d.supersededAt)}`] : []),
 		...(d.cancelledAt ? [`- **Cancelled:** ${stamp(d.cancelledAt)}: ${line(d.cancelNote)}`] : []),
 	].join("\n");
-	fs.writeFileSync(path.join(dir, "decisions.md"), `${head}# Decisions - ${key}\n\nPrecedence: owner DECIDED > GUESS > contract > Jira AC > USULAN. CANCELLED and SUPERSEDED entries do not apply.\n\n${decisions.map(dBlock).join("\n\n")}\n`);
+	writeLedger(path.join(dir, "decisions.md"), `${head}# Decisions - ${key}\n\nPrecedence: owner DECIDED > GUESS > contract > Jira AC > USULAN. CANCELLED and SUPERSEDED entries do not apply.\n\n${decisions.map(dBlock).join("\n\n")}\n`, `ledger-${key}`);
 	const iBlock = (x) => [
 		`### I-${x.n} - ${x.type} · level ${x.level}`,
 		`- **Raised:** ${stamp(x.at)}`,
@@ -284,7 +421,7 @@ const renderBoard = (key, s) => {
 		...(x.escalations ?? []).map((e) => `- **Escalated:** to ${e.to} ${stamp(e.at)}: ${line(e.why)}`),
 	].join("\n");
 	const closed = issues.filter((x) => x.status !== "open").map((x) => `- I-${x.n} ${x.type}: ${line(x.text)} (resolved by D-${x.resolvedBy}, ${stamp(x.resolvedAt)})`);
-	fs.writeFileSync(path.join(dir, "issues.md"), `${head}# Issues - ${key}\n\n## Open\n\n${open.map(iBlock).join("\n\n") || "none"}\n\n## Resolved\n\n${closed.join("\n") || "none"}\n`);
+	writeLedger(path.join(dir, "issues.md"), `${head}# Issues - ${key}\n\n## Open\n\n${open.map(iBlock).join("\n\n") || "none"}\n\n## Resolved\n\n${closed.join("\n") || "none"}\n`, `ledger-${key}`);
 	const rows = [
 		["Stage", s.stage], ["Kind", s.kind ?? "ticket"], ["Engine", s.engine ?? "-"], ["Waiting on the owner", s.waiting || "-"],
 		["Review rounds", s.rounds ? `${s.rounds.used ?? 0}/${s.rounds.max ?? 2}` : "-"], ["Draft PR", s.draft ? "yes" : "no"],
@@ -300,7 +437,7 @@ const renderBoard = (key, s) => {
 		"## Decisions in force", "", ...(decisions.filter((d) => IN_FORCE.includes(d.status)).map((d) => `- D-${d.n} ${d.status}: ${line(d.text)}`)), "",
 		"## Pointers", "", "| Need | Open |", "|---|---|", `| Work prompt and terrain | \`${root ? `${fwd(root)}/` : ""}prompts/S<n>.md\` |`, ...(root ? [`| Sibling tickets, shared materials | \`${fwd(root)}/EPIC.md\`, \`${fwd(root)}/materials/\` |`] : []), "| Every event | `status.md` |", "| Why a rule holds | `decisions.md` |", "| Open questions | `issues.md` |", "",
 	];
-	fs.writeFileSync(path.join(dir, "NOW.md"), now_.join("\n"));
+	writeLedger(path.join(dir, "NOW.md"), now_.join("\n"), `ledger-${key}`);
 	if (root) renderEpic(s.board, root);
 	return dir;
 };
@@ -393,6 +530,7 @@ const sync = (only, quiet) => {
 	const keys = only ? [only] : fs.existsSync(ROOT) ? fs.readdirSync(ROOT).filter((k) => fs.existsSync(file(k))) : [];
 	let changed = 0;
 	for (const k of keys) {
+		hold(`ledger-${k}`);
 		const s = load(k);
 		if (!s || s.kind === "review" || s.kind === "card" || s.stage === "done" || s.stage === "blocked" || s.handedTo) continue;
 		const before = JSON.stringify(s);
@@ -452,7 +590,9 @@ const archiveResets = (resets) => {
 		const local = load(reset.key);
 		if (!local || Date.parse(local.createdAt ?? "") >= Date.parse(reset.resetAt)) continue;
 		const to = path.join(ROOT, `${reset.key}.reset-${now().replace(/[-:.]/g, "")}`);
-		fs.renameSync(path.dirname(file(reset.key)), to);
+		const mine = hold(`ledger-${reset.key}`);
+		try { fs.renameSync(path.dirname(file(reset.key)), to); } finally { if (mine) release(`ledger-${reset.key}`); }
+		wrote = true;
 		console.log(`${reset.key} went back to To Do in Jira; its old ledger is in ${to}`);
 	}
 };
@@ -470,6 +610,8 @@ const [cmd, rawKey, ...rest] = process.argv.slice(2);
 // A free-form card is CARD-<slug>: the prefix upper case, the slug lower case, as DOCK stores it.
 const key = /^card-/i.test(rawKey ?? "") ? `CARD-${rawKey.slice(5).toLowerCase()}` : rawKey;
 const optValue = (name) => { const i = rest.indexOf(name); return i >= 0 ? rest[i + 1] ?? "" : ""; };
+const WRITERS = ["init", "set", "ac", "brief", "decide", "ac-set", "stale", "handoff", "fail", "assume", "replan", "finding", "dispatch", "lgtm", "verdict", "issue", "round", "render", "handover", "pull", "check"];
+if (WRITERS.includes(cmd) && key && !key.startsWith("--")) hold(`ledger-${key}`);
 // The Indonesian lines for DOCK's Decisions view: textId, and optionsId only when it has one entry per option (else dropped with a note).
 const indonesian = (f, count) => {
 	const textId = (f["--id"]?.[0] ?? "").trim();
@@ -659,9 +801,9 @@ if (!cmd) {
 		const local = load(key);
 		if (local && Date.parse(local.updatedAt) > Date.parse(remote.ledgerUpdatedAt)) {
 			const dir = path.dirname(file(key));
-			fs.writeFileSync(path.join(dir, "status.remote.json"), JSON.stringify(remote.ledger, null, 2));
+			writeLedger(path.join(dir, "status.remote.json"), JSON.stringify(remote.ledger, null, 2), `ledger-${key}`);
 			if (!rest.includes("--force")) return refuse(`local ledger is newer than DOCK's copy; DOCK's copy is in ${path.join(dir, "status.remote.json")}. Use pull ${key} --force to keep the local one as status.local-<UTC>.json and replace it`);
-			fs.copyFileSync(file(key), path.join(dir, `status.local-${now().replace(/[-:.]/g, "")}.json`));
+			writeLedger(path.join(dir, `status.local-${now().replace(/[-:.]/g, "")}.json`), fs.readFileSync(file(key)), `ledger-${key}`);
 		}
 		const accepted = await dock().ledger("accept", { key });
 		if (accepted.status !== 200) return refuse(dockError("the pull", accepted));
@@ -671,8 +813,7 @@ if (!cmd) {
 		const text = `handed over from ${from}; evidence before this point lives on ${from}`;
 		next.decisions = [...(next.decisions ?? [])];
 		if (next.decisions.at(-1)?.text !== text) next.decisions.push({ at: now(), text });
-		fs.mkdirSync(path.dirname(file(key)), { recursive: true });
-		fs.writeFileSync(file(key), JSON.stringify(next, null, 2));
+		writeLedger(file(key), JSON.stringify(next, null, 2), `ledger-${key}`);
 		const b = remote.handover?.branches ?? {};
 		console.log(`${key} is now on this machine. Continue: prep-ticket.sh ${key} <slug> ${b.be ? "origin/" + b.be : "-"} ${b.fe ? "origin/" + b.fe : "-"} "${next.title ?? key}"`);
 	})().catch((e) => refuse(`could not reach DOCK: ${e.message}`));
@@ -975,6 +1116,30 @@ if (!cmd) {
 	save(key, s);
 	renderBoard(key, s);
 	console.log(`${key}: rendered ${s.blackboard}`);
+} else if (cmd === "check") {
+	const changes = historyChanges();
+	if (!changes) return console.log("check: no ledger history yet; the first status.cjs write starts it (needs git)");
+	const keyOf = (f) => {
+		const p = f.split("/");
+		if (p[0] !== "blackboard") return p.length === 2 ? p[0] : null;
+		return p[2] === "tickets" ? p[3] : p.length === 3 && p[2] !== "EPIC.md" ? p[1] : null;
+	};
+	const found = changes.filter((c) => !key || keyOf(c.file) === key);
+	if (!found.length) return console.log(`check: no ledger file changed outside status.cjs${key ? ` for ${key}` : ""}`);
+	for (const c of found) console.log(`${c.code} ${c.file}`);
+	const keys = [...new Set(found.map((c) => keyOf(c.file)))].filter((k) => k && fs.existsSync(file(k)));
+	for (const k of keys) {
+		hold(`ledger-${k}`);
+		let s;
+		try { s = load(k); } catch { console.log(`${k}: status.json does not parse; restore it from ${fwd(HISTORY)}`); continue; }
+		const what = "ledger edited outside status.cjs";
+		const evidence = found.filter((c) => keyOf(c.file) === k).map((c) => `${c.code} ${c.file}`).join(", ");
+		const attempt = (s.failures ?? []).filter((x) => x.type === "env" && x.what === what).length + 1;
+		(s.failures ??= []).push({ at: now(), type: "env", what, evidence, attempt });
+		save(k, s);
+	}
+	console.log(`check: ${found.length} ledger file(s) changed outside status.cjs${keys.length ? `; recorded as a problem on ${keys.join(", ")}` : ""}`);
+	process.exitCode = 1;
 } else if (cmd === "metrics") {
 	const keys = fs.existsSync(ROOT) ? fs.readdirSync(ROOT).filter((k) => fs.existsSync(file(k))) : [];
 	const rows = keys.map(load).filter((s) => s.stage === "done").map((s) => ({ s, c: s.closing ?? closing(s, s.updatedAt) }));
@@ -997,5 +1162,5 @@ if (!cmd) {
 		console.log(`| ${name} | ${list.length} | ${mean(tracked, (row) => row.c.fixRounds)} | ${mean(list, (row) => (row.s.findings ?? []).length)} | ${mean(timed, (row) => row.c.hours)} |`);
 	}
 } else {
-	console.log("usage: status.cjs [show KEY | init KEY title bePort fePort beDir feDir | set KEY k=v... | ac KEY n STATE text evidence | ac-set KEY @file [jiraUpdated] | stale [KEY jiraUpdated [@file]] | handoff KEY who k=v...|@file.json | fail KEY type evidence [what] | assume KEY text falsifier | assume KEY n confirmed|refuted evidence | replan KEY reason | finding KEY [--severity blocker|non-blocking|nit] text | finding KEY n resolve why | lgtm KEY text | dispatch KEY agent opus|sonnet|haiku [--step step] | verdict KEY approve|request-change [--ticket KEY] [--pr url]... [--ready-for-qa yes|no [--qa-reason text]...] | metrics | brief KEY text|@file | decide KEY text [--status GUESS|USULAN|DECIDED] [--by owner|sous-<agent>|arbiter|sous|agent] [--issue n] [--effect text] [--alt \"option::effect\"]... [--replaces n] [--question text] [--rejected \"option: why not\"]... | issue KEY TYPE text [--options \"A::effect|B::effect\"] | issue KEY n escalate sous|owner why | issue KEY n resolve decisionN | round KEY [why] | lock name KEY [--wait s] [--pid n] | unlock name KEY | render KEY | sync [KEY] | remote | handover KEY --to machine [--note text] | pull KEY [--force] | checkpoint KEY step text [--agent name] [--agent-id id] [--untestable line]... [--missing-data line]...]");
+	console.log("usage: status.cjs [show KEY | init KEY title bePort fePort beDir feDir | set KEY k=v... | ac KEY n STATE text evidence | ac-set KEY @file [jiraUpdated] | stale [KEY jiraUpdated [@file]] | handoff KEY who k=v...|@file.json | fail KEY type evidence [what] | assume KEY text falsifier | assume KEY n confirmed|refuted evidence | replan KEY reason | finding KEY [--severity blocker|non-blocking|nit] text | finding KEY n resolve why | lgtm KEY text | dispatch KEY agent opus|sonnet|haiku [--step step] | verdict KEY approve|request-change [--ticket KEY] [--pr url]... [--ready-for-qa yes|no [--qa-reason text]...] | metrics | brief KEY text|@file | decide KEY text [--status GUESS|USULAN|DECIDED] [--by owner|sous-<agent>|arbiter|sous|agent] [--issue n] [--effect text] [--alt \"option::effect\"]... [--replaces n] [--question text] [--rejected \"option: why not\"]... | issue KEY TYPE text [--options \"A::effect|B::effect\"] | issue KEY n escalate sous|owner why | issue KEY n resolve decisionN | round KEY [why] | lock name KEY [--wait s] [--pid n] | unlock name KEY | render KEY | check [KEY] | sync [KEY] | remote | handover KEY --to machine [--note text] | pull KEY [--force] | checkpoint KEY step text [--agent name] [--agent-id id] [--untestable line]... [--missing-data line]...]");
 }
