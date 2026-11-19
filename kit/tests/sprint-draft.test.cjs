@@ -141,3 +141,107 @@ test('bad visual input is refused locally', () => {
   for (const [line, want] of Object.entries(cases)) assert.match(request(line.split(' '), readFile).error, want, line);
   assert.match(request(['visual', 'put', '27', '--title', 'x'.repeat(61), '--file', 'p.html'], readFile).error, /--title must be 1-60/);
 });
+
+const { parseCsv, sheetCsvUrl } = require('../sprint-draft.cjs');
+const goodTicket = { summary: '[BE][Workflow] Add export', type: 'Task', epic: 'qrd-1400', dev: 'Danu', sp: 3, priority: 'High', userStory: 'As a user I want x so that y', problem: 'p', ac: ['one', 'two'], reference: 'https://discord.com/x', source: 'sheet row 2', extra: 'dropped' };
+
+test('new posts the ticket to sprint-draft/new and prints the id; rm removes it', async () => {
+  const { seen, send } = recorder({ status: 200, result: { id: 'NEW-1', ticket: { summary: 's' } } });
+  const io = quiet();
+  const readFile = files({ 't.json': JSON.stringify(goodTicket) });
+  assert.equal(await run(['new', '27', '--file', 't.json'], { send, readFile, ...io }), 0);
+  assert.equal(await run(['new', '27', '--file', 't.json', '--id', 'new-1'], { send, readFile, ...io }), 0);
+  assert.equal(await run(['new', 'rm', '27', '--id', 'NEW-1'], { send, readFile, ...io }), 0);
+  const { extra, ...ticket } = { ...goodTicket, epic: 'QRD-1400' };
+  assert.deepEqual(seen.map((s) => [s.route, s.body]), [
+    ['/sprint-draft/new', { sprint: '27', ticket }],
+    ['/sprint-draft/new', { sprint: '27', id: 'NEW-1', ticket }],
+    ['/sprint-draft/new', { sprint: '27', id: 'NEW-1', remove: true }],
+  ]);
+  assert.equal(io.lines.out[0].split(/\r?\n/)[0], 'NEW-1');
+  assert.equal(io.lines.out[2].startsWith('NEW-1'), false, 'rm prints plain JSON');
+});
+
+test('a new ticket that breaks a limit is refused locally', () => {
+  const cases = [
+    [{ ...goodTicket, summary: '' }, /summary must be 1-200/],
+    [{ ...goodTicket, summary: 'x'.repeat(201) }, /summary must be 1-200/],
+    [{ ...goodTicket, userStory: 'x'.repeat(4001) }, /userStory is over 4000/],
+    [{ ...goodTicket, problem: 'x'.repeat(4001) }, /problem is over 4000/],
+    [{ ...goodTicket, reference: 'x'.repeat(2001) }, /reference is over 2000/],
+    [{ ...goodTicket, ac: Array(41).fill('a') }, /more than 40 lines/],
+    [{ ...goodTicket, ac: ['x'.repeat(1001)] }, /over 1000 characters/],
+    [{ ...goodTicket, ac: 'one' }, /ac must be an array/],
+    [{ ...goodTicket, sp: 101 }, /sp must be a number from 0 to 100/],
+    [{ ...goodTicket, sp: -1 }, /sp must be a number from 0 to 100/],
+    [{ ...goodTicket, type: 'Epic' }, /type must be Task, Story or Bug/],
+    [{ ...goodTicket, priority: 'Urgent' }, /priority must be/],
+    [{ ...goodTicket, epic: 'folder' }, /epic must be an existing epic key/],
+  ];
+  for (const [t, want] of cases) assert.match(request(['new', '27', '--file', 't.json'], files({ 't.json': JSON.stringify(t) })).error, want);
+  const edge = { ...goodTicket, summary: 'x'.repeat(200), userStory: 'x'.repeat(4000), reference: 'x'.repeat(2000), ac: Array(40).fill('x'.repeat(1000)), sp: 100 };
+  assert.equal(request(['new', '27', '--file', 't.json'], files({ 't.json': JSON.stringify(edge) })).error, undefined);
+  const usage = {
+    'new': /needs the sprint/, 'new 27': /needs --file/, 'new 27 --file missing.json': /cannot read missing\.json/,
+    'new 27 --file t.json --id 7': /--id must look like NEW-1/, 'new rm': /needs the sprint/, 'new rm 27': /needs --id/,
+    'new rm 27 --id NEW-1 --file t.json': /takes only --id/, 'new 27 --bogus 1': /unknown option --bogus/,
+  };
+  for (const [line, want] of Object.entries(usage)) assert.match(request(line.split(' '), files({ 't.json': '{}' })).error, want, line);
+});
+
+test('parseCsv handles quotes, doubled quotes, newlines in quotes and CRLF', () => {
+  assert.deepEqual(parseCsv('a,b\r\n"x, y","say ""hi"""\r\n"line1\nline2",\r\n'), [['a', 'b'], ['x, y', 'say "hi"'], ['line1\nline2', '']]);
+  assert.deepEqual(parseCsv('﻿a,b\nc,d'), [['a', 'b'], ['c', 'd']]);
+  assert.deepEqual(parseCsv('a,,c\n'), [['a', '', 'c']]);
+});
+
+test('sheetCsvUrl builds the export url and keeps the gid', () => {
+  assert.equal(sheetCsvUrl('https://docs.google.com/spreadsheets/d/AbC-1_2/edit?usp=sharing'), 'https://docs.google.com/spreadsheets/d/AbC-1_2/export?format=csv');
+  assert.equal(sheetCsvUrl('https://docs.google.com/spreadsheets/d/AbC-1_2/edit#gid=456'), 'https://docs.google.com/spreadsheets/d/AbC-1_2/export?format=csv&gid=456');
+  assert.equal(sheetCsvUrl('https://docs.google.com/spreadsheets/d/AbC-1_2/edit?gid=9#gid=9'), 'https://docs.google.com/spreadsheets/d/AbC-1_2/export?format=csv&gid=9');
+  assert.equal(sheetCsvUrl('https://example.com/spreadsheets/d/x'), null);
+  assert.equal(sheetCsvUrl('nope'), null);
+});
+
+const reply = (body, type = 'text/csv; charset=utf-8', status = 200) => async () => ({ ok: status < 400, status, headers: { get: () => type }, text: async () => body });
+
+test('sheet prints rows without a Jira Ticket, row numbers counted from the header', async () => {
+  const csv = 'Title,Jira Ticket,Notes\r\nFirst,,"multi\nline"\r\nDone,QRD-9,x\r\n,,\r\nSecond, ,"a ""q"""\r\n';
+  const io = quiet();
+  let asked;
+  const fetch = async (url, opts) => { asked = [url, opts]; return reply(csv)(); };
+  assert.equal(await run(['sheet', 'https://docs.google.com/spreadsheets/d/ID1/edit#gid=5'], { fetch, ...io }), 0);
+  assert.deepEqual(asked, ['https://docs.google.com/spreadsheets/d/ID1/export?format=csv&gid=5', { redirect: 'follow' }]);
+  assert.deepEqual(JSON.parse(io.lines.out[0]), [
+    { row: 2, cells: { Title: 'First', 'Jira Ticket': '', Notes: 'multi\nline' } },
+    { row: 5, cells: { Title: 'Second', 'Jira Ticket': ' ', Notes: 'a "q"' } },
+  ]);
+});
+
+test('sheet matches the Jira Ticket header case-insensitively and keeps all rows when absent', async () => {
+  let io = quiet();
+  await run(['sheet', 'https://docs.google.com/spreadsheets/d/ID1/edit'], { fetch: reply('a,JIRA TICKET\nx,QRD-1\ny,\n'), ...io });
+  assert.deepEqual(JSON.parse(io.lines.out[0]).map((r) => r.row), [3]);
+  io = quiet();
+  await run(['sheet', 'https://docs.google.com/spreadsheets/d/ID1/edit'], { fetch: reply('a\nx\ny\n'), ...io });
+  assert.deepEqual(JSON.parse(io.lines.out[0]).map((r) => r.row), [2, 3]);
+});
+
+test('sheet errors clearly on a login page, a bad status, a bad link or a failed fetch', async () => {
+  const url = 'https://docs.google.com/spreadsheets/d/ID1/edit';
+  let io = quiet();
+  assert.equal(await run(['sheet', url], { fetch: reply('<!DOCTYPE html><html>Sign in</html>', 'text/html; charset=utf-8'), ...io }), 1);
+  assert.match(io.lines.err[0], /not CSV.*anyone with the link/);
+  io = quiet();
+  assert.equal(await run(['sheet', url], { fetch: reply('<html>', 'text/plain'), ...io }), 1);
+  assert.match(io.lines.err[0], /not CSV/);
+  io = quiet();
+  assert.equal(await run(['sheet', url], { fetch: reply('gone', 'text/plain', 404), ...io }), 1);
+  assert.match(io.lines.err[0], /answered 404/);
+  io = quiet();
+  assert.equal(await run(['sheet', 'https://example.com/x'], { fetch: reply(''), ...io }), 1);
+  assert.match(io.lines.err[0], /needs a Google Sheets link/);
+  io = quiet();
+  assert.equal(await run(['sheet', url], { fetch: async () => { throw new Error('ENOTFOUND'); }, ...io }), 1);
+  assert.match(io.lines.err[0], /cannot fetch the sheet: ENOTFOUND/);
+});
