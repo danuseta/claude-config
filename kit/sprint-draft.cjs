@@ -9,6 +9,10 @@
 //                                                                                   waitsOn: [], before, after, line, testData, ui, acId: [], titleId }
 //   node sprint-draft.cjs visual put <sprint> --title "<title>" --file <page.html> [--id <id>]   a self-contained HTML page in the Planning panel
 //   node sprint-draft.cjs visual rm <sprint> --id <id>                              remove it; put with the same id replaces it
+//   node sprint-draft.cjs new <sprint> --file <draft.json> [--id NEW-n]              a new ticket draft: { summary, type, epic, dev, sp, priority, userStory,
+//                                                                                   problem, ac: [], reference, source }; prints its NEW-n id, --id replaces it
+//   node sprint-draft.cjs new rm <sprint> --id NEW-n                                 remove a new ticket draft
+//   node sprint-draft.cjs sheet <google-sheet-url>                                   the sheet's rows as [{ row, cells }]; rows with a Jira Ticket are skipped
 //   node sprint-draft.cjs storyboard <EPIC>                                          the newest storyboard version: { version, path, frames, changed }
 // Prints DOCK's result as JSON. Exit 0 answered, 3 DOCK refused (its error on stderr), 1 usage error or DOCK did not answer.
 const fs = require("fs");
@@ -16,6 +20,10 @@ const dock = require("./dock-push.cjs");
 
 const KEY = /^[A-Z][A-Z0-9]+-\d+$/;
 const TC_ID = /^TC-\d+$/;
+const NEW_ID = /^NEW-\d+$/;
+const NEW_FIELDS = ["summary", "type", "epic", "dev", "sp", "priority", "userStory", "problem", "ac", "reference", "source"];
+const TICKET_TYPES = ["Task", "Story", "Bug"];
+const PRIORITIES = ["Highest", "High", "Medium", "Low", "Lowest"];
 const VISUAL_ID = /^[a-z0-9-]{1,40}$/;
 const VISUAL_MAX_BYTES = 2 * 1024 * 1024;
 const USAGE = [
@@ -26,6 +34,9 @@ const USAGE = [
 	"       node sprint-draft.cjs summary <sprint> <KEY> <json-file>",
 	"       node sprint-draft.cjs visual put <sprint> --title \"<title>\" --file <page.html> [--id <id>]",
 	"       node sprint-draft.cjs visual rm <sprint> --id <id>",
+	"       node sprint-draft.cjs new <sprint> --file <draft.json> [--id NEW-n]",
+	"       node sprint-draft.cjs new rm <sprint> --id NEW-n",
+	"       node sprint-draft.cjs sheet <google-sheet-url>",
 	"       node sprint-draft.cjs storyboard <EPIC>",
 ].join("\n");
 
@@ -101,10 +112,129 @@ function visualRequest(rest, readFile) {
 	return { route: "/sprint-draft/visual", body: { sprint, action, ...(opt.id !== undefined ? { id: opt.id } : {}), title, html }, timeoutMs: 60000 };
 }
 
+// Null when the new ticket fits the sprint-draft/new limits, else what is wrong with it.
+function newTicketProblem(t) {
+	if (!t || typeof t !== "object" || Array.isArray(t)) return "the draft is not an object";
+	const summary = typeof t.summary === "string" ? t.summary.trim() : "";
+	if (!summary || summary.length > 200) return "summary must be 1-200 characters";
+	if (t.type !== undefined && !TICKET_TYPES.includes(t.type)) return "type must be Task, Story or Bug";
+	if (t.priority !== undefined && t.priority !== null && !PRIORITIES.includes(t.priority)) return "priority must be Highest, High, Medium, Low or Lowest";
+	if (t.sp !== undefined && t.sp !== null && (typeof t.sp !== "number" || !Number.isFinite(t.sp) || t.sp < 0 || t.sp > 100)) return "sp must be a number from 0 to 100";
+	for (const [f, max] of [["userStory", 4000], ["problem", 4000], ["reference", 2000]]) {
+		if (t[f] === undefined || t[f] === null) continue;
+		if (typeof t[f] !== "string") return `${f} must be a string`;
+		if (t[f].length > max) return `${f} is over ${max} characters`;
+	}
+	for (const f of ["epic", "dev", "source"]) if (t[f] !== undefined && t[f] !== null && typeof t[f] !== "string") return `${f} must be a string`;
+	if (t.epic && !KEY.test(keyOf(t.epic))) return "epic must be an existing epic key, e.g. QRD-1400";
+	if (t.ac !== undefined) {
+		if (!Array.isArray(t.ac) || t.ac.some((l) => typeof l !== "string")) return "ac must be an array of strings";
+		if (t.ac.length > 40) return "ac has more than 40 lines";
+		if (t.ac.some((l) => l.length > 1000)) return "an ac line is over 1000 characters";
+	}
+	return null;
+}
+
+function newRequest(rest, readFile) {
+	const remove = rest[0] === "rm";
+	const [sprintRaw, ...args] = remove ? rest.slice(1) : rest;
+	const sprint = String(sprintRaw || "").trim();
+	if (!sprint) return { error: `new${remove ? " rm" : ""} needs the sprint` };
+	const opt = {};
+	for (let i = 0; i < args.length; i++) {
+		const flag = args[i], value = args[i + 1];
+		if (!["--file", "--id"].includes(flag)) return { error: `unknown option ${flag}` };
+		if (value === undefined || value === "") return { error: `${flag} needs a value` };
+		opt[flag.slice(2)] = value;
+		i++;
+	}
+	const id = opt.id === undefined ? undefined : opt.id.trim().toUpperCase();
+	if (id !== undefined && !NEW_ID.test(id)) return { error: "--id must look like NEW-1" };
+	if (remove) {
+		if (id === undefined) return { error: "new rm needs --id" };
+		if (opt.file !== undefined) return { error: "new rm takes only --id" };
+		return { route: "/sprint-draft/new", body: { sprint, id, remove: true }, timeoutMs: 60000 };
+	}
+	if (!opt.file) return { error: "new needs --file <draft.json>" };
+	let t;
+	try { t = JSON.parse(readText(opt.file, readFile)); } catch (e) { return { error: `cannot read ${opt.file}: ${e.message}` }; }
+	const problem = newTicketProblem(t);
+	if (problem) return { error: problem };
+	const ticket = {};
+	for (const f of NEW_FIELDS) if (t[f] !== undefined) ticket[f] = t[f];
+	ticket.summary = ticket.summary.trim();
+	if (ticket.epic) ticket.epic = keyOf(ticket.epic);
+	return { route: "/sprint-draft/new", body: { sprint, ...(id !== undefined ? { id } : {}), ticket }, timeoutMs: 60000 };
+}
+
+// RFC 4180 CSV: quoted cells, doubled quotes, newlines inside quotes, CRLF.
+function parseCsv(text) {
+	const rows = [];
+	let row = [], cell = "", quoted = false, started = false;
+	const endCell = () => { row.push(cell); cell = ""; started = false; };
+	const endRow = () => { endCell(); rows.push(row); row = []; };
+	const src = text.replace(/^﻿/, "");
+	for (let i = 0; i < src.length; i++) {
+		const c = src[i];
+		if (quoted) {
+			if (c !== '"') cell += c;
+			else if (src[i + 1] === '"') { cell += '"'; i++; }
+			else quoted = false;
+		} else if (c === '"' && !started) { quoted = true; started = true; }
+		else if (c === ",") endCell();
+		else if (c === "\r" || c === "\n") {
+			if (c === "\r" && src[i + 1] === "\n") i++;
+			endRow();
+		} else { cell += c; started = true; }
+	}
+	if (started || cell || row.length) endRow();
+	return rows;
+}
+
+function sheetCsvUrl(raw) {
+	let u;
+	try { u = new URL(String(raw || "").trim()); } catch { return null; }
+	const id = /^\/spreadsheets\/d\/([\w-]+)/.exec(u.pathname)?.[1];
+	if (u.hostname !== "docs.google.com" || !id) return null;
+	const gid = /(?:^|[?&#])gid=(\d+)/.exec(u.search + u.hash)?.[1];
+	return `https://docs.google.com/spreadsheets/d/${id}/export?format=csv${gid ? `&gid=${gid}` : ""}`;
+}
+
+// Rows of the sheet that have no Jira Ticket yet: [{ row, cells }], row = sheet row number (header is row 1).
+function sheetRows(csv) {
+	const [header = [], ...body] = parseCsv(csv);
+	const names = header.map((h) => h.trim());
+	const jira = names.findIndex((h) => h.toLowerCase() === "jira ticket");
+	const rows = [];
+	body.forEach((cells, i) => {
+		if (cells.every((c) => !c.trim())) return;
+		if (jira >= 0 && (cells[jira] || "").trim()) return;
+		const out = {};
+		names.forEach((h, n) => { if (h) out[h] = cells[n] ?? ""; });
+		rows.push({ row: i + 2, cells: out });
+	});
+	return rows;
+}
+
+async function sheet(rest, doFetch) {
+	const url = sheetCsvUrl(rest[0]);
+	if (!url) return { code: 1, usage: true, why: "sheet needs a Google Sheets link, e.g. https://docs.google.com/spreadsheets/d/<id>/edit#gid=0" };
+	let res, text;
+	try {
+		res = await doFetch(url, { redirect: "follow" });
+		text = await res.text();
+	} catch (e) { return { code: 1, why: `cannot fetch the sheet: ${e.message}` }; }
+	const type = String(res.headers?.get?.("content-type") || "");
+	if (/html/i.test(type) || /^\s*<(!doctype|html)/i.test(text)) return { code: 1, why: 'the answer is a web page, not CSV: the sheet is not shared with "anyone with the link"' };
+	if (!res.ok) return { code: 1, why: `the sheet answered ${res.status}; share it as "anyone with the link can view"` };
+	return { code: 0, result: sheetRows(text) };
+}
+
 // argv after the script name -> { route, body, timeoutMs } or { error }.
 function request(argv, readFile = (f) => fs.readFileSync(f, "utf8")) {
 	const [cmd, ...rest] = argv;
 	if (cmd === "visual") return visualRequest(rest, readFile);
+	if (cmd === "new") return newRequest(rest, readFile);
 	const sprint = String(rest[0] || "").trim();
 	if (cmd === "storyboard") {
 		const epic = keyOf(rest[0]);
@@ -179,6 +309,12 @@ async function call(req, send = dock.send) {
 async function run(argv, deps = {}) {
 	const out = deps.out || ((s) => console.log(s));
 	const err = deps.err || ((s) => console.error(s));
+	if (argv[0] === "sheet") {
+		const s = await sheet(argv.slice(1), deps.fetch || fetch);
+		if (s.code) err(`sprint-draft: ${s.why}${s.usage ? "\n" + USAGE : ""}`);
+		else out(JSON.stringify(s.result, null, 2));
+		return s.code;
+	}
 	const req = request(argv, deps.readFile);
 	if (req.error) {
 		err(`sprint-draft: ${req.error}\n${USAGE}`);
@@ -187,6 +323,7 @@ async function run(argv, deps = {}) {
 	const r = await call(req, deps.send || dock.send);
 	if (r.code) err(`sprint-draft: ${r.why}`);
 	else if (argv[0] === "visual" && argv[1] === "put" && r.result?.id) out(`${r.result.id}\n${JSON.stringify(r.result, null, 2)}`);
+	else if (argv[0] === "new" && argv[1] !== "rm" && r.result?.id) out(`${r.result.id}\n${JSON.stringify(r.result, null, 2)}`);
 	else out(JSON.stringify(r.result, null, 2));
 	return r.code;
 }
@@ -194,5 +331,5 @@ async function run(argv, deps = {}) {
 if (require.main === module) {
 	run(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (e) => { console.error(`sprint-draft: ${e.message || e}`); process.exitCode = 1; });
 } else {
-	module.exports = { request, call, run, acLines, tcProblem, summaryProblem };
+	module.exports = { request, call, run, acLines, tcProblem, summaryProblem, newTicketProblem, parseCsv, sheetCsvUrl, sheetRows };
 }
