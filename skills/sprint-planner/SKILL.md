@@ -90,12 +90,18 @@ node "$D" visual put <sprint> --title "<title>" --file <path.html> [--id <id>]
 
 ## 6. New tickets
 
-The planner can ask for tickets that do not exist yet, in chat or as rows of a Google Sheet. You draft them; DOCK creates them in Jira only when the planner presses Publish.
+The planner can ask for tickets that do not exist yet, in chat or as rows of a Google Sheet. You draft them; DOCK creates them in Jira only when the planner presses Create in Jira (or Publish).
 
 1. From a sheet, run `node "$D" sheet <url>` first. It prints `[{ row, cells }]` for the rows that have no Jira Ticket yet; `row` is the sheet row. A failure that says the sheet is not shared means the planner must set it to "anyone with the link" and send the link again.
 2. One request or one sheet row is one ticket. A [BE]/[FE] split is only proposed in chat; draft the two tickets only when the planner says so.
 3. Before drafting, look for a duplicate with a read-only search through the Atlassian MCP: `project = QRD AND summary ~ "<words>" AND created >= -30d`. Show a hit in the chat and let the planner decide; never edit or comment on it.
-4. Write the ticket in English, QRD format, to a JSON file in the scratchpad:
+4. Thin context. A request is thin when you cannot write, from what the planner gave, a Problem Definition that names the cause and AC lines a tester can check (when it happens, under which condition, what the user sees). Never fill the gap by guessing. Before drafting a thin request:
+   - Read the source thread. For a Discord link, `node "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/discord-files.cjs" <link>` prints every message (and saves files) through DOCK. Take the symptom, the cause the team found, any workaround already applied and the ticket keys mentioned.
+   - Read the code, read-only, on each repo's `origin/develop` (`git fetch` then `git grep` / `git show origin/develop:<path>`): find the page, endpoint, handler, schema or field the request touches, how it behaves today, and where the fix lands. Cite `path:line` in the Problem Definition.
+   - Write the AC from what you found: one line per moment the behaviour must hold (first connect, reconnect, edit, import…), per condition that changes the result (empty or missing value, another channel type, a value set by hand…), and a line that names what must stay as it is.
+   - What the thread and the code do not settle is a question, not an AC line: ask it in the chat and wait. If the planner says to draft anyway, end the Problem Definition with `Open to confirm:` and the questions.
+   - When the request is larger than one ticket (several screens, BE and FE, more than about 8 SP), propose the split in the chat, one line per ticket with its SP, and draft only what the planner agrees to.
+5. Write the ticket in English, QRD format, to a JSON file in the scratchpad:
 
         { "summary": "[BE][Workflow] ...", "type": "Task", "epic": "QRD-1400", "dev": "<name>", "sp": 3, "priority": "Medium",
           "userStory": "As a ... I want ... so that ...", "problem": "...", "ac": ["..."],
@@ -105,7 +111,7 @@ The planner can ask for tickets that do not exist yet, in chat or as rows of a G
    - `ac`: up to 40 lines of 1000, one capability per line, only what is tested on this ticket (the AC rule of section 1).
    - `reference` (up to 2000) keeps the Discord or source link and anything about other tickets.
    - Propose `type` (Task, Story or Bug; Task by default), `sp` (0-100) and `dev` in the chat table with the reason, as in section 3, and write what the planner agrees to. `epic` must be an existing epic key or left out.
-5. Publish it to the draft: `node "$D" new <sprint> --file <draft.json>`. It prints the `NEW-n` id. To change a draft, run it again with `--id NEW-n`; to remove one: `node "$D" new rm <sprint> --id NEW-n`. Then `get` the draft and check the ticket is in `newTickets`.
+6. Publish it to the draft: `node "$D" new <sprint> --file <draft.json>`. It prints the `NEW-n` id. To change a draft, run it again with `--id NEW-n`; to remove one: `node "$D" new rm <sprint> --id NEW-n`. Then `get` the draft and check the ticket is in `newTickets`.
 
 ## 7. Close each turn
 
