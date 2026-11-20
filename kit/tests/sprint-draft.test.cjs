@@ -1,5 +1,5 @@
 'use strict';
-// kit/sprint-draft.cjs: the Planning chat reads and writes DOCK's sprint draft through six fixed ingest routes.
+// kit/sprint-draft.cjs: the Planning chat reads and writes DOCK's sprint draft through fixed ingest routes.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { request, run } = require('../sprint-draft.cjs');
@@ -244,4 +244,59 @@ test('sheet errors clearly on a login page, a bad status, a bad link or a failed
   io = quiet();
   assert.equal(await run(['sheet', url], { fetch: async () => { throw new Error('ENOTFOUND'); }, ...io }), 1);
   assert.match(io.lines.err[0], /cannot fetch the sheet: ENOTFOUND/);
+});
+
+const goodRevision = { summary: ' [BE] Fix export ', type: 'Bug', userStory: 'As a user', problem: 'p', ac: ['one', 'two'], reference: 'Split from QRD-1', openToConfirm: 'who owns it?', note: 'AC was thin', source: 'chat' };
+
+test('revise posts the allowed fields to sprint-draft/revise and prints before/after per field; rm discards', async () => {
+  const answer = { key: 'QRD-1602', revision: { summary: 'Fix export', note: 'AC was thin', fields: [
+    { name: 'summary', label: 'Summary', before: ['Export'], after: ['Fix export'] },
+    { name: 'ac', label: 'Acceptance Criteria', before: [], after: ['one', 'two'] },
+  ] } };
+  const { seen, send } = recorder({ status: 200, result: answer });
+  const io = quiet();
+  const readFile = files({ 'r.json': JSON.stringify(goodRevision) });
+  assert.equal(await run(['revise', '27', '--key', 'qrd-1602', '--file', 'r.json'], { send, readFile, ...io }), 0);
+  assert.equal(await run(['revise', 'rm', '27', '--key', 'QRD-1602'], { send: recorder({ status: 200, result: { discarded: 'QRD-1602' } }).send, ...io }), 0);
+  const revision = { ...goodRevision, summary: '[BE] Fix export' };
+  assert.deepEqual(seen.map((s) => [s.route, s.body]), [['/sprint-draft/revise', { sprint: '27', key: 'QRD-1602', revision }]]);
+  assert.equal(request(['revise', 'rm', '27', '--key', 'qrd-1602']).route, '/sprint-draft/revise');
+  assert.deepEqual(request(['revise', 'rm', '27', '--key', 'qrd-1602']).body, { sprint: '27', key: 'QRD-1602', remove: true });
+  const blocks = io.lines.out[0].split('\n\n');
+  assert.equal(blocks[0], 'QRD-1602 Fix export');
+  assert.equal(blocks[1], 'note: AC was thin');
+  assert.equal(blocks[2], '## Summary (summary)\nbefore:\n  Export\nafter:\n  Fix export');
+  assert.equal(blocks[3], '## Acceptance Criteria (ac)\nbefore:\n  (empty)\nafter:\n  one\n  two');
+  assert.equal(JSON.parse(io.lines.out[1]).discarded, 'QRD-1602');
+});
+
+test('a revision that breaks a limit or names a forbidden field is refused locally', () => {
+  const cases = [
+    [{ ...goodRevision, summary: '' }, /summary must be 1-200/],
+    [{ ...goodRevision, summary: 'x'.repeat(201) }, /summary must be 1-200/],
+    [{ ...goodRevision, type: 'Epic' }, /type must be Task, Story or Bug/],
+    [{ ...goodRevision, userStory: 'x'.repeat(4001) }, /userStory is over 4000/],
+    [{ ...goodRevision, problem: 'x'.repeat(4001) }, /problem is over 4000/],
+    [{ ...goodRevision, openToConfirm: 'x'.repeat(4001) }, /openToConfirm is over 4000/],
+    [{ ...goodRevision, reference: 'x'.repeat(2001) }, /reference is over 2000/],
+    [{ ...goodRevision, ac: Array(41).fill('a') }, /more than 40 lines/],
+    [{ ...goodRevision, ac: ['x'.repeat(1001)] }, /over 1000 characters/],
+    [{ ...goodRevision, ac: 'one' }, /ac must be an array/],
+    [{ ...goodRevision, assignee: 'Danu' }, /assignee is not a field a revision may change/],
+    [{ ...goodRevision, sprint: '28' }, /sprint is not a field/],
+    [{ ...goodRevision, status: 'Done' }, /status is not a field/],
+    [{ note: 'only a note' }, /changes no field/],
+    [[], /not an object/],
+  ];
+  for (const [r, want] of cases) assert.match(request(['revise', '27', '--key', 'QRD-1', '--file', 'r.json'], files({ 'r.json': JSON.stringify(r) })).error, want);
+  const edge = { summary: 'x'.repeat(200), userStory: 'x'.repeat(4000), reference: 'x'.repeat(2000), ac: Array(40).fill('x'.repeat(1000)) };
+  assert.equal(request(['revise', '27', '--key', 'QRD-1', '--file', 'r.json'], files({ 'r.json': JSON.stringify(edge) })).error, undefined);
+  const usage = {
+    'revise': /needs the sprint/, 'revise 27': /needs --key/, 'revise 27 --key QRD-1': /needs --file/,
+    'revise 27 --key 1602 --file r.json': /--key must look like QRD-1602/, 'revise 27 --key folder --file r.json': /--key must look like/,
+    'revise 27 --key QRD-1 --file missing.json': /cannot read missing.json/, 'revise 27 --key QRD-1 --file r.json --bogus 1': /unknown option --bogus/,
+    'revise rm': /needs the sprint/, 'revise rm 27': /needs --key/, 'revise rm 27 --key nokey': /--key must look like/,
+    'revise rm 27 --key QRD-1 --file r.json': /takes only --key/,
+  };
+  for (const [line, want] of Object.entries(usage)) assert.match(request(line.split(' '), files({ 'r.json': '{}' })).error, want, line);
 });

@@ -12,6 +12,10 @@
 //   node sprint-draft.cjs new <sprint> --file <draft.json> [--id NEW-n]              a new ticket draft: { summary, type, epic, dev, sp, priority, userStory,
 //                                                                                   problem, ac: [], reference, source }; prints its NEW-n id, --id replaces it
 //   node sprint-draft.cjs new rm <sprint> --id NEW-n                                 remove a new ticket draft
+//   node sprint-draft.cjs revise <sprint> --key QRD-n --file <rev.json>              a proposed rewrite of a ticket that exists in Jira: { summary, type, userStory,
+//                                                                                   problem, ac: [], reference, openToConfirm, note, source }; only the fields given;
+//                                                                                   prints the before/after DOCK read from Jira, one field per block
+//   node sprint-draft.cjs revise rm <sprint> --key QRD-n                             discard the pending revision of that ticket
 //   node sprint-draft.cjs sheet <google-sheet-url>                                   the sheet's rows as [{ row, cells }]; rows with a Jira Ticket are skipped
 //   node sprint-draft.cjs storyboard <EPIC>                                          the newest storyboard version: { version, path, frames, changed }
 // Prints DOCK's result as JSON. Exit 0 answered, 3 DOCK refused (its error on stderr), 1 usage error or DOCK did not answer.
@@ -22,6 +26,7 @@ const KEY = /^[A-Z][A-Z0-9]+-\d+$/;
 const TC_ID = /^TC-\d+$/;
 const NEW_ID = /^NEW-\d+$/;
 const NEW_FIELDS = ["summary", "type", "epic", "dev", "sp", "priority", "userStory", "problem", "ac", "reference", "source"];
+const REVISE_FIELDS = ["summary", "type", "userStory", "problem", "ac", "reference", "openToConfirm", "note", "source"];
 const TICKET_TYPES = ["Task", "Story", "Bug"];
 const PRIORITIES = ["Highest", "High", "Medium", "Low", "Lowest"];
 const VISUAL_ID = /^[a-z0-9-]{1,40}$/;
@@ -36,6 +41,8 @@ const USAGE = [
 	"       node sprint-draft.cjs visual rm <sprint> --id <id>",
 	"       node sprint-draft.cjs new <sprint> --file <draft.json> [--id NEW-n]",
 	"       node sprint-draft.cjs new rm <sprint> --id NEW-n",
+	"       node sprint-draft.cjs revise <sprint> --key QRD-n --file <rev.json>",
+	"       node sprint-draft.cjs revise rm <sprint> --key QRD-n",
 	"       node sprint-draft.cjs sheet <google-sheet-url>",
 	"       node sprint-draft.cjs storyboard <EPIC>",
 ].join("\n");
@@ -167,6 +174,72 @@ function newRequest(rest, readFile) {
 	return { route: "/sprint-draft/new", body: { sprint, ...(id !== undefined ? { id } : {}), ticket }, timeoutMs: 60000 };
 }
 
+// Null when the revision fits the sprint-draft/revise limits, else what is wrong with it.
+function revisionProblem(r) {
+	if (!r || typeof r !== "object" || Array.isArray(r)) return "the revision is not an object";
+	const unknown = Object.keys(r).find((f) => !REVISE_FIELDS.includes(f));
+	if (unknown) return `${unknown} is not a field a revision may change (allowed: ${REVISE_FIELDS.join(", ")})`;
+	if (r.summary !== undefined && r.summary !== null) {
+		if (typeof r.summary !== "string") return "summary must be a string";
+		if (!r.summary.trim() || r.summary.trim().length > 200) return "summary must be 1-200 characters";
+	}
+	if (r.type !== undefined && r.type !== null && !TICKET_TYPES.includes(r.type)) return "type must be Task, Story or Bug";
+	if (r.source !== undefined && r.source !== null && !["chat", "manual"].includes(r.source)) return "source must be chat or manual";
+	for (const [f, max] of [["userStory", 4000], ["problem", 4000], ["openToConfirm", 4000], ["reference", 2000], ["note", 500]]) {
+		if (r[f] === undefined || r[f] === null) continue;
+		if (typeof r[f] !== "string") return `${f} must be a string`;
+		if (r[f].length > max) return `${f} is over ${max} characters`;
+	}
+	for (const f of ["note", "source"]) if (r[f] !== undefined && r[f] !== null && typeof r[f] !== "string") return `${f} must be a string`;
+	if (r.ac !== undefined && r.ac !== null) {
+		if (!Array.isArray(r.ac) || r.ac.some((l) => typeof l !== "string")) return "ac must be an array of strings";
+		if (r.ac.length > 40) return "ac has more than 40 lines";
+		if (r.ac.some((l) => l.length > 1000)) return "an ac line is over 1000 characters";
+	}
+	if (!Object.keys(r).some((f) => !["note", "source"].includes(f) && r[f] !== undefined && r[f] !== null)) return "the revision changes no field";
+	return null;
+}
+
+function reviseRequest(rest, readFile) {
+	const remove = rest[0] === "rm";
+	const [sprintRaw, ...args] = remove ? rest.slice(1) : rest;
+	const sprint = String(sprintRaw || "").trim();
+	if (!sprint) return { error: `revise${remove ? " rm" : ""} needs the sprint` };
+	const opt = {};
+	for (let i = 0; i < args.length; i++) {
+		const flag = args[i], value = args[i + 1];
+		if (!["--file", "--key"].includes(flag)) return { error: `unknown option ${flag}` };
+		if (value === undefined || value === "") return { error: `${flag} needs a value` };
+		opt[flag.slice(2)] = value;
+		i++;
+	}
+	if (opt.key === undefined) return { error: `revise${remove ? " rm" : ""} needs --key QRD-n` };
+	const key = keyOf(opt.key);
+	if (!KEY.test(key)) return { error: "--key must look like QRD-1602" };
+	if (remove) {
+		if (opt.file !== undefined) return { error: "revise rm takes only --key" };
+		return { route: "/sprint-draft/revise", body: { sprint, key, remove: true }, timeoutMs: 60000 };
+	}
+	if (!opt.file) return { error: "revise needs --file <rev.json>" };
+	let r;
+	try { r = JSON.parse(readText(opt.file, readFile)); } catch (e) { return { error: `cannot read ${opt.file}: ${e.message}` }; }
+	const problem = revisionProblem(r);
+	if (problem) return { error: problem };
+	const revision = {};
+	for (const f of REVISE_FIELDS) if (r[f] !== undefined) revision[f] = r[f];
+	if (typeof revision.summary === "string") revision.summary = revision.summary.trim();
+	return { route: "/sprint-draft/revise", body: { sprint, key, revision }, timeoutMs: 60000 };
+}
+
+const reviseLines = (list) => (list && list.length ? list.map((l) => `  ${l}`) : ["  (empty)"]);
+
+// One block per changed field: label, then the Jira value and the proposed one.
+function revisionText(result) {
+	const rev = result?.revision;
+	const blocks = (rev?.fields || []).map((f) => [`## ${f.label || f.name} (${f.name})`, "before:", ...reviseLines(f.before), "after:", ...reviseLines(f.after)].join("\n"));
+	return [`${result.key}${rev?.summary ? ` ${rev.summary}` : ""}`, ...(rev?.note ? [`note: ${rev.note}`] : []), ...blocks].join("\n\n");
+}
+
 // RFC 4180 CSV: quoted cells, doubled quotes, newlines inside quotes, CRLF.
 function parseCsv(text) {
 	const rows = [];
@@ -235,6 +308,7 @@ function request(argv, readFile = (f) => fs.readFileSync(f, "utf8")) {
 	const [cmd, ...rest] = argv;
 	if (cmd === "visual") return visualRequest(rest, readFile);
 	if (cmd === "new") return newRequest(rest, readFile);
+	if (cmd === "revise") return reviseRequest(rest, readFile);
 	const sprint = String(rest[0] || "").trim();
 	if (cmd === "storyboard") {
 		const epic = keyOf(rest[0]);
@@ -324,6 +398,7 @@ async function run(argv, deps = {}) {
 	if (r.code) err(`sprint-draft: ${r.why}`);
 	else if (argv[0] === "visual" && argv[1] === "put" && r.result?.id) out(`${r.result.id}\n${JSON.stringify(r.result, null, 2)}`);
 	else if (argv[0] === "new" && argv[1] !== "rm" && r.result?.id) out(`${r.result.id}\n${JSON.stringify(r.result, null, 2)}`);
+	else if (argv[0] === "revise" && argv[1] !== "rm" && r.result?.revision) out(revisionText(r.result));
 	else out(JSON.stringify(r.result, null, 2));
 	return r.code;
 }
@@ -331,5 +406,5 @@ async function run(argv, deps = {}) {
 if (require.main === module) {
 	run(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (e) => { console.error(`sprint-draft: ${e.message || e}`); process.exitCode = 1; });
 } else {
-	module.exports = { request, call, run, acLines, tcProblem, summaryProblem, newTicketProblem, parseCsv, sheetCsvUrl, sheetRows };
+	module.exports = { request, call, run, acLines, tcProblem, summaryProblem, newTicketProblem, revisionProblem, revisionText, parseCsv, sheetCsvUrl, sheetRows };
 }
