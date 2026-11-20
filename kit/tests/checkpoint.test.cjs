@@ -148,3 +148,18 @@ test('set qaMenu stores the menu path and qaMenu= clears it', async () => {
     assert.ok(!('qaMenu' in ledger('ZED-903')));
   } finally { rmrf(base); }
 });
+
+test('checkpoint accepts a T<n>-round-<k> step and posts it unchanged', async () => {
+  const dock = await startServer(() => ({ json: { ok: true, result: { recorded: true } } }));
+  const { base, status } = scratch('checkpoint-round', dock.url);
+  try {
+    const r = await status('checkpoint', 'ZED-901', 'T1-round-2', 'Uji gagal, kembali ke worker.', '--agent', 'sous-verifier');
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /ZED-901 checkpoint T1-round-2: recorded/);
+    assert.equal(dock.requests[0].body.step, 'T1-round-2');
+    assert.equal(dock.requests[0].body.agent, 'sous-verifier');
+  } finally {
+    await dock.close();
+    rmrf(base);
+  }
+});
