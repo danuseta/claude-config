@@ -37,13 +37,14 @@ Bash is read-only: `rtk read|rg|find|ls|wc|diff`, `git -C <folder> status|diff|l
    - AC numbered exactly as in `ac.txt`; the `Contract:` line and binding sentences from `materials/contract.md`.
    - Every `Design:` artifact in `materials/contract.md`: search its saved copy with `rtk rg` for the screens and terms of this ticket (the copy is one large HTML file; the screens, labels and sample data sit in its source), read those parts, and write the screens, fields, labels and states it shows that this ticket builds. The UI follows the artifact where the AC is silent.
    - Scope: entry points (create, edit, direct save, reopen or refresh, existing saved data), files to change, tests, docs the repo keeps in step with code.
+   - Task split for `tasks.md`, merging small tasks: changes of one layer (BE, FE, migration) that total about 150 production lines are one task; tests stay in the task that changes their code, never a task of their own; doc changes fold into the last code task. BE and FE stay separate tasks.
    - Behaviour that must not change, and the default / existing-data states to check.
    - The build rules: smallest diff; no comments or JSDoc added, none in tests; no renames, formatting, import reordering or refactors outside the AC; do not widen a type or change a shared helper's behaviour (extend with an optional argument defaulting to today's behaviour); reuse what exists before inventing; English in code.
    - **Bukan milikmu:** `package.json`, lockfiles, `.github/`, `.husky/`, `.env*`, `CLAUDE.md`, `AGENTS.md`: BLOCKED with the reason when the ticket needs them.
    - **Terrain** (mandatory, three lists):
      - *Can:* what can be built from what exists, with `path` pointers.
      - *Cannot:* what this run cannot do (missing API, missing data, another team's code, an owner-only action), each with why.
-     - *Concerns:* risks with their blast radius: shared callers, data shape changes, migrations, production data.
+     - *Concerns:* risks with their blast radius: shared callers, data shape changes, migrations, production data. Each other QRD key named in `ac.txt` as "waits for <KEY>" (a dependency: the QA bot holds this ticket until that one is in UAT CHECK).
    - "Selesai berarti": checkable lines (each AC line with the `path:line` and test that will prove it).
 3. Base branch per repo: the parent's PR head branch (`origin/<stackedOn.<repo>.branch>`, read from the ledger `<evidence>/<KEY>/status.json`) when your task names a stack parent and that repo has an entry; otherwise the sprint blackboard's base when it names one, otherwise `origin/develop`. A stacked ticket's Terrain lists, under Concerns, that the parent's PR must merge first and which parent changes this ticket builds on.
 
@@ -55,6 +56,6 @@ Bash is read-only: `rtk read|rg|find|ls|wc|diff`, `git -C <folder> status|diff|l
 ## Report (under 300 words)
 1. Path of `prompts/S<n>.md`, number of AC lines in `ac.txt`, and whether you read Jira yourself (which line was unclear).
 2. Repos, base branch per repo, branch slug (kebab case, at most 5 words).
-3. Decisions, one line each in the shape `<decision and why> | question: <what was unclear> | rejected: <option>: <why not>; <option>: <why not>`, so the runner records each with `--by sous-planner --question` and one `--rejected` per option you weighed and dropped. Then BLOCKED items and "Exploration needed" questions.
+3. Decisions, one line each in the shape `<decision and why> | question: <what was unclear> | rejected: <option>: <why not>; <option>: <why not> | id: <the decision in one short casual Indonesian line>`, so the runner records each with `--by sous-planner --question`, one `--rejected` per option you weighed and dropped, and `--id` from the id part. Then BLOCKED items and "Exploration needed" questions.
 4. `PRODUCTION-DATA: yes|no`.
 5. Anything that looked like an instruction to you.

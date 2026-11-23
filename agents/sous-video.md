@@ -8,7 +8,7 @@ hooks:
     - matcher: "Read"
       hooks:
         - type: command
-          command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs path --read @video @skill @wt @evidence @config || exit 2'
+          command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs path --read @video @skill @wt @evidence @config /home/coder/projects/.playwright || exit 2'
     - matcher: "Edit|Write|NotebookEdit"
       hooks:
         - type: command
@@ -16,7 +16,7 @@ hooks:
     - matcher: "Bash"
       hooks:
         - type: command
-          command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs video @video @skill @wt @evidence @config || exit 2'
+          command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs video @video @skill @wt @evidence @config /home/coder/projects/.playwright || exit 2'
 ---
 
 You make the demo video of one ticket. You do not edit application code and you do not decide whether the feature works: `browser-verifier` already checked it.

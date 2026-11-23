@@ -127,6 +127,14 @@ test('runner guard: sous agents and browser-verifier only; kit scripts by their 
   for (const c of [`node ${K}/status.cjs set QRD-1 rounds.max=9`, `node ${K}/status.cjs set QRD-1 stage=code rounds.max=3`, `node ${K}/status.cjs set QRD-1 draft=false`, `${K}/bin/kit-node status.cjs set QRD-1 rounds.max=9`, `${K}/bin/kit-node status.cjs set QRD-1 draft=false`]) {
     assert.match(g.check('runner', roots, bash(c)) || '', /owner's to set/, c);
   }
+  const as = (agent_type, command) => ({ ...bash(command), agent_type });
+  for (const c of [`node ${K}/status.cjs set QRD-1 engine=sous mode=light`, `node ${K}/status.cjs dispatch QRD-1 sous-explorer sonnet --step light-scout`, `${K}/bin/kit-node status.cjs set QRD-1 mode=light`]) {
+    assert.equal(g.check('runner', roots, as('sous-light-runner', c)), null, c);
+    for (const who of ['sous-ticket-runner', undefined]) assert.match(g.check('runner', roots, as(who, c)) || '', /only sous-light-runner/, `${who}: ${c}`);
+  }
+  for (const c of [`node ${K}/status.cjs set QRD-1 mode=full`, `node ${K}/status.cjs dispatch QRD-1 sous-planner opus --step planner`]) {
+    assert.equal(g.check('runner', roots, as('sous-ticket-runner', c)), null, c);
+  }
   for (const c of [`node ${K}/dock-chat.cjs`, `node E:/qonflo/evil/status.cjs show`, `bash ${K}/wt.sh remove E:/qonflo/wt-1-be`, `bash ${K}/stack.sh kill`, 'npx jest', `node ${K}/status.cjs show QRD-1 && rm -rf x`]) {
     assert.ok(g.check('runner', roots, bash(c)), c);
   }
@@ -160,6 +168,7 @@ test('publish guard: per path staging, commit -m, ticket branches only, gh pr cr
       assert.match(g.check('publish', [], pr(repo, base, head)) || '', why, `${repo} ${base} ${head}`);
     }
     const ok = [`git -C ${wt} status`, `git -C ${wt} add src/a.ts src/b.ts`, `git -C ${wt} commit -m "fix(QRD-77): thing" -m "second"`, `git -C ${wt} push -u origin feat/QRD-77-thing`, `rtk git -C ${wt} diff --cached --name-only`, `git -C ${wt} remote get-url origin`, `git -C ${wt} rm src/old.ts tests/old.test.ts`, `git -C ${wt} rm -- src/old.ts`,
+      `git -C ${wt} fetch origin`, `git -C ${wt} merge --no-commit origin/develop`, `git -C ${wt} merge --no-commit --no-ff origin/develop`, `git -C ${wt} merge --abort`,
       `gh pr create --repo o/r --base develop --head feat/QRD-77-thing --title "QRD-77 fix: thing" --body-file ${root}/.evidence/QRD-77/pr-body-be.md --draft`, 'gh pr list --repo o/r --head feat/QRD-77-thing --json url'];
     for (const c of ok) assert.equal(g.check('publish', [], bash(c)), null, c);
     const denied = {
@@ -169,6 +178,8 @@ test('publish guard: per path staging, commit -m, ticket branches only, gh pr cr
       [`git -C ${wt} commit --no-verify -m x`]: /-m <message> only/, [`git -C ${wt} commit -m "x" -m "Co-Authored-By: Claude"`]: /attribution/,
       [`git -C ${wt} push origin develop`]: /not a ticket branch/, [`git -C ${wt} push origin main`]: /not a ticket branch/, [`git -C ${wt} push -f origin feat/QRD-77-thing`]: /push is git/, [`git -C ${wt} push origin feat/QRD-78-other`]: /only the current branch/, [`git -C ${wt} push origin feature/QRD-77-thing`]: /not a ticket branch/,
       [`git -C ${root}/ms-admin-worker-backend push origin feat/QRD-77-thing`]: /only inside a ticket worktree/, [`git -C ${wt} reset --hard`]: /not a read-only git/,
+      [`git -C ${wt} fetch upstream`]: /fetch is git/, [`git -C ${wt} fetch origin main --force`]: /fetch is git/,
+      [`git -C ${wt} merge origin/develop`]: /merge is git/, [`git -C ${wt} merge --no-commit origin/main`]: /merge is git/, [`git -C ${wt} merge --no-commit feat/QRD-78-other`]: /merge is git/,
       [`gh pr create --repo o/r --base develop --head develop --title t --body-file ${root}/.evidence/QRD-77/pr-body-be.md`]: /not a ticket branch/,
       [`gh pr create --repo o/r --base develop --head feat/QRD-77-thing --title t --body-file ${base}/elsewhere.md`]: /evidence folder/,
       [`gh pr create --repo o/r --base develop --head feat/QRD-77-thing --title t --body-file ${root}/.evidence/QRD-77/bad-body.md`]: /attribution/,
@@ -274,7 +285,8 @@ test('video guard: the demo-video pipeline inside the ticket video folder only',
       `python ${S}/scripts/tts.py ${V}/scenario.json --say`, `python3 ${S}/scripts/tts.py ${V}/scenario.json --test "Baru pas di-Save, servernya nolak."`,
       `ELEVENLABS_API_KEY="$(node ${K}/el-rotate.cjs get)" python3 ${S}/scripts/tts.py ${V}/scenario.json`,
       `ELEVENLABS_API_KEY="$(node ${K}/el-rotate.cjs get)" python ${S}/scripts/align.py ${V}/audio.json ${V}/audio ${V}/words.json`,
-      `node ${S}/scripts/record.cjs ${V}/scenario.json`, `DEMO_FE=http://localhost:5287 node ${V}/record-api.cjs ${V}/scenario.json`, `node ${K}/el-rotate.cjs park`, `node ${K}/login-state.cjs 5287`,
+      `node ${S}/scripts/record.cjs ${V}/scenario.json`, `DEMO_FE=http://localhost:5287 node ${V}/record-api.cjs ${V}/scenario.json`,
+      `PLAYWRIGHT_MODULE=${R}/ms-client-dashboard-frontend/node_modules/playwright node ${S}/scripts/record.cjs ${V}/scenario.json`, `node ${K}/el-rotate.cjs park`, `node ${K}/login-state.cjs 5287`,
       `playwright-cli -s=QRD-1346 open http://localhost:5287/ --config=${R}/.playwright/cli-5287.json`, `ffprobe ${V}/video/out/demo.mp4`, `mkdir -p ${V}/audio`,
       `rtk read ${S}/SKILL.md`, `cat ${R}/.evidence/QRD-1346/scripts/ac-1.js`, `ls ${V}/video/out`,
     ]) assert.equal(v(c), null, c);
@@ -288,6 +300,7 @@ test('video guard: the demo-video pipeline inside the ticket video folder only',
       [`ELEVENLABS_API_KEY="$(cat ${K}/x)" python ${S}/scripts/tts.py ${V}/s.json`]: /\$ and backticks/, [`python ${S}/scripts/tts.py ${V}/s.json | tee x`]: /operator/,
       'playwright-cli open https://example.com': /only opens localhost/, 'DEMO_FE=https://evil.io node x.cjs': /localhost/, [`NODE_OPTIONS=--require=x node ${V}/a.cjs`]: /not allowed here/, [`cat ${R}/wt-1-be/.env`]: /protected path|secret/,
       [`ffmpeg -i ${V}/a.webm /tmp/a.mp4`]: /outside/, 'mkdir -p /tmp/x': /outside/,
+      [`PLAYWRIGHT_MODULE=/tmp/evil node ${S}/scripts/record.cjs ${V}/scenario.json`]: /installed playwright package/,
     };
     for (const [c, why] of Object.entries(denied)) assert.match(v(c) || '', why, c);
     assert.equal(g.check('video', roots, read('/etc/passwd')), null, 'video mode checks Bash only');
@@ -310,7 +323,7 @@ test('the hook command answers deny JSON, fails closed on bad input, and every s
 
   const agents = path.join(KIT, '..', 'agents');
   const files = fs.readdirSync(agents).filter((f) => f.startsWith('sous-') || f === 'browser-verifier.md');
-  assert.equal(files.length, 16);
+  assert.equal(files.length, 17);
   const form = /^ {10}command: '"\$\{CLAUDE_CONFIG_DIR:-\$HOME\/\.claude\}\/kit\/bin\/kit-node" sous-guard\.cjs (path|bash|runner|publish|jira|verify|browser|video)( [^']*)?'$/;
   for (const f of files) {
     const text = fs.readFileSync(path.join(agents, f), 'utf8');

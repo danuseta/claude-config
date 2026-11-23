@@ -54,6 +54,7 @@ async function runInteractiveTurn(msg, cfg, opts, d) {
 	args.push(...chosen.args);
 	if (att.files.length && att.dir) args.push('--add-dir', att.dir);
 	if (opts.appendSystemPrompt) args.push('--append-system-prompt', opts.appendSystemPrompt);
+	if (opts.settingsFile) args.push('--settings', opts.settingsFile);
 	const canSteer = Boolean(flags.replayUser);
 	if (canSteer && !opts.extraArgs.includes('--replay-user-messages')) args.push('--replay-user-messages');
 	args.push(...opts.extraArgs);

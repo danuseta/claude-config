@@ -742,7 +742,7 @@ test('"interactive": false in dock-chat.json keeps the legacy path and offers no
   const t = await turn({ script: SAY, config: { interactive: false } });
   assert.deepEqual(t.argv.slice(0, 5), ['-p', 'hello', '--output-format', 'stream-json', '--verbose']);
   assert.equal(t.state.waits.length, 0);
-  assert.deepEqual(legacyCaps(t), [['agents'], []], 'a legacy bridge offers the agent library only, no modes');
+  assert.deepEqual(legacyCaps(t), [['agents', 'gm'], []], 'a legacy bridge offers the agent library and Guild Master only, no modes');
   assert.equal(t.procs.length, 1, 'no probe process was started');
 });
 
@@ -750,7 +750,7 @@ test('a claude without --input-format or --permission-prompts in --help takes th
   const t = await turn({ script: SAY, env: { FAKE_NO_INTERACTIVE: '1' } });
   assert.ok(!t.argv.includes('--input-format'));
   assert.equal(t.state.waits.length, 0);
-  assert.deepEqual(legacyCaps(t), [['agents'], []], 'a legacy bridge offers the agent library only, no modes');
+  assert.deepEqual(legacyCaps(t), [['agents', 'gm'], []], 'a legacy bridge offers the agent library and Guild Master only, no modes');
   assert.equal(t.last.done, true);
 });
 
@@ -784,7 +784,7 @@ test('dock-chat.cjs check prints the detected features and never the token', asy
     assert.match(r.stdout, /token: set/);
     assert.ok(!r.stdout.includes('SECRETSECRET'));
     const off = await runNode([path.join(KIT, 'dock-chat.cjs'), 'check'], { env: { ...sandboxEnv(dir), DOCK_CHAT_CONFIG: path.join(dir, 'dock-chat.json'), DOCK_INGEST_URL: 'http://127.0.0.1:9/ingest/orchestrator', DOCK_INGEST_TOKEN: 'dock_ing_SECRETSECRETSECRET1234', FAKE_NO_INTERACTIVE: '1' } });
-    assert.match(off.stdout, /features: agents\nmodes: \(none\)/);
+    assert.match(off.stdout, /features: agents, gm\nmodes: \(none\)/);
   } finally { rmrf(dir); }
 });
 

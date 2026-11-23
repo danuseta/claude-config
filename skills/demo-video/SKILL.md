@@ -19,6 +19,7 @@ Work in a scratch folder, never in a repo.
 ## Rules
 
 - **Data and screen.** Record the local stack (FE + BE) on test data you created, never real customer data. Dark mode, 1920×1080, 30 fps.
+- **Plugins.** First run `node <kitDir>/plugins.cjs`; it prints the choices from DOCK Settings › Plugins. `voice: none`: never call ElevenLabs (no keys, no alignment); voice the narration with `voice.provider = "edge"`, or tell the owner when edge-tts is missing. `storage: none`: do not run `demo-upload.cjs`; leave the video in the evidence folder and give the owner its path. `storage: local` and `s3`: upload as below, DOCK puts the file where the plugin says.
 - **Keys.** The ElevenLabs keys live in DOCK and rotate. Before the TTS and alignment runs, set the env from the rotation: `export ELEVENLABS_API_KEY="$(node <kitDir>/el-rotate.cjs get)"`. When a run fails with 401, 402 or 429, run `node <kitDir>/el-rotate.cjs park`, take the next key the same way and run again. Never write a key to a file or a script, and never echo it or paste it into chat.
 - **Recording.** Record headless only. OBS and screen capture record whatever is on the user's screen.
 - **Look.**
