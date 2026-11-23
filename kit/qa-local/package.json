@@ -1,0 +1,8 @@
+{
+  "name": "qonflo-qa-local",
+  "private": true,
+  "description": "Runner for qonflo-qa-local: the Playwright test runner only. The browser is the workspace chromium.",
+  "dependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}

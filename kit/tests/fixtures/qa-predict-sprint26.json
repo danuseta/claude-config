@@ -1,0 +1,380 @@
+{
+  "source": "Sprint 26 (QRD), fetched 2026-11-09 with the Atlassian MCP: getJiraIssue (customfield_10332, labels, changelog), listJiraIssueComments, searchJiraIssuesUsingJql, and the QA Confluence database 474677254",
+  "dayModel": "endDay 5 is the day QA ran. A waitsOn key that reached UAT MERGED or UAT CHECK before that run is day 4, one that had not is day 7 (JQL: status CHANGED TO (\"UAT MERGED\",\"UAT CHECK\") BEFORE <QA run time>).",
+  "fields": "predictable: AC text and landing order are enough to predict the outcome. causeMatches: the real blockedReason is among the predicted causes. v2 re-check (kit/qa-predict.mjs): QRD-1286 is no longer predictable because a second account is a warning, not ESCALATED; QRD-1498 still escalates through its dependency line, and its data cause is a warning.",
+  "cases": [
+    {
+      "key": "QRD-1510",
+      "summary": "[FE][BE] Permission to expose Playbook folders: serve, allow a client, add a token, edit Limits",
+      "acSource": "customfield_10332 as QA round 3 read it (2026-11-03 10:38 WIB): the value Jira changelog 84123 replaced on 2026-11-04",
+      "endDay": 5,
+      "waitsOn": [
+        {
+          "key": "QRD-1301",
+          "endDay": 4
+        },
+        {
+          "key": "QRD-1289",
+          "endDay": 4
+        },
+        {
+          "key": "QRD-1312",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1307",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1305",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1500",
+          "endDay": 7
+        }
+      ],
+      "ac": [
+        "FE",
+        "Team Management › <team> › Level Access gets a Playbook category with one rule, \"Expose Playbook folders\", described as \"Allows users to switch serving on for a Playbook folder and switch items on in what it serves, allow an MCP client on the consent page, generate and rotate access tokens and edit a served folder's Limits. Anyone in the Playbook can still switch serving or an item off and revoke clients and tokens. Clients a user allowed are disconnected when the user loses this rule; tokens they generated keep working.\"",
+        "The workspace owner always has the rule, as with every rule (`useCanAccess`)",
+        "In the MCP server drawer (QRD-1312), for a member without the rule: the serving switch and every Contents switch (a row, a subfolder, the switch for everything) can be switched off but not on, + Token and Rotate on a token (QRD-1500) are disabled, and the Limits fields are read-only. Each shows the tooltip \"Only someone allowed to expose Playbook folders can do this.\"",
+        "On the consent page (QRD-1307), a member without the rule sees Allow disabled and the line \"Only someone allowed to expose Playbook folders can allow a client.\"; Deny still works",
+        "Switching serving off, switching a Contents switch off, Revoke on any client or token, Remove on an expired token and Move into a serving folder stay enabled for every member who can open the Playbook, whoever allowed the client or generated the token",
+        "BE",
+        "A new `playbookRules` category with one key, `exposePlaybookFolders`, and the AccessFeature `PLAYBOOK_EXPOSE_FOLDERS = \"playbook:expose-folders\"`, added at every touchpoint above in both repos. The FE and BE strings match byte for byte, and `RULE_CATEGORIES` lists the category so the level cascade and the save keep it",
+        "The rule is off by default: existing levels and new levels do not have it until someone turns it on in Level Access, and the workspace owner always has it. Nothing is exposed today, so no level loses anything it could do before. Only the owner can expose a folder until someone grants the rule (least privilege, decided 27 Oct)",
+        "Below Level 1 the rule follows the level cascade, like every rule: a level can switch it on only when the level above has it on, so Level 1 is switched on first. While the level above has it off, the row is locked and reads \"Locked: <level above> has this off. Turn it on for <level above> first.\"",
+        "These actions check the rule on the server and answer 403 without it:; switching serving on (QRD-1305); switching a row, a subfolder or the switch for everything on in a folder's Contents, whether or not it is serving (QRD-1305, QRD-1312); Allow on the consent page (QRD-1307); no grant is recorded; generating or rotating an access token (QRD-1500); changing a served folder's limits (QRD-1301, QRD-1312)",
+        "These need no rule beyond being a member who can open the Playbook: switching serving off, switching a Contents row, subfolder or everything off, revoking any client or token, removing an expired token, and reading the drawer, its clients and its limits. Moving a live skill or published tool into a serving folder needs only the rights to move it (QRD-1289): it takes the folder's switch, as a file added to a shared folder takes its sharing, and the Move picker's served-folder warning (F1.3b [1]) is the safeguard",
+        "When a member loses the rule (for example by a level change, or the rule being switched off) or leaves the workspace, every client grant they allowed ends at once, as an OAuth grant is bound to the user who gave it (QRD-1307). Access tokens they generated keep working: a token belongs to the workspace, not to its generator (QRD-1500)",
+        "`/access-rights/features` and `/access-rights/me` return the new feature like any other, so the FE reads it through its existing permission store"
+      ],
+      "real": {
+        "outcome": "ESCALATED",
+        "label": "QA-ESCALATED (changelog 83923, 2026-11-03 11:38; round 1 and 2 were QA-DONE-NOT-PASSED)",
+        "blockedReason": "dependency",
+        "evidence": "Confluence QA DB 474677254: TC016 (AC-3) Blocked, MCP server drawer QRD-1312/1305/1500 not in UAT; TC017 (AC-4) Blocked, consent page QRD-1307 not in UAT and needs a member account without the rule. Comment 22398."
+      },
+      "predictable": true,
+      "causeMatches": true
+    },
+    {
+      "key": "QRD-1506",
+      "summary": "[FE][BE] \"Changes data\" flag on every Playbook tool: set by the author, shown on every tool row, never called in a Run test",
+      "acSource": "customfield_10332 as QA round 1 read it (2026-11-02 16:08 WIB): the value Jira changelog 83951 replaced on 2026-11-03",
+      "endDay": 5,
+      "waitsOn": [
+        {
+          "key": "QRD-1388",
+          "endDay": 4
+        },
+        {
+          "key": "QRD-1498",
+          "endDay": 4
+        },
+        {
+          "key": "QRD-1298",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1306",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1309",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1284",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1312",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1305",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1307",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1308",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1302",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1492",
+          "endDay": 7
+        }
+      ],
+      "ac": [
+        "FE",
+        "The drawer of every tool kind has a DATA section above RETURNS: a workflow tool (QRD-1388), an MCP tool (QRD-1298) and an Agent tool (QRD-1306), draft or published. It holds one two-way switch, \"Changes data | Reads only\"",
+        "Under the switch, one line says where the value comes from: \"Default for a workflow tool\" or \"Default for an Agent tool\" until someone sets it, \"From the server's annotations\" for an MCP tool as imported, and \"Set by <member> · <date>\" once someone sets it",
+        "The section's (i) says: \"Changes data: a call may create, change, send or delete something, and a Run test from an MCP server drawer does not call it. Reads only: a call only looks things up, and a Run test calls it for real. Every tool counts as changes data until it is marked reads only.\"",
+        "Changing the switch saves at once, with no Publish, and a toast says \"<tool> marked reads only\" or \"<tool> marked changes data\"",
+        "Every tool row shows the trait, \"changes data\" or \"reads only\", taken from the flag and never from the description text:; Playbook list: the row's description line ends with it (\"Ajukan refund satu pesanan ke kasir · changes data\", \"Hitung nominal refund dari daftar item yang salah · reads only\"; `4-data.js:17-18`); Agent Playbook card (QRD-1498): after what the tool runs, \"Workflow · changes data\" (F3.1, `3c-views3.js:35`) or \"from Keuangan/ · MCP · accounting-mcp · changes data\". A tool listed under its skill reads \"with minta-refund · reads only\"; Arm from Playbook (QRD-1309): after the status or kind and before the ≈ figure (\"Published · changes data · ≈ 88 tok\", \"Agent tool · changes data · ≈ N tok\", \"Tool · comes with minta-refund · reads only\"); Pick a tool (QRD-1284): after the kind, \"Published · Workflow · changes data\" for proses-refund and \"Published · Workflow · reads only\" for hitung-refund (F4.1d [0]); MCP server drawer (QRD-1312): each tool row of the Contents tree; Start serving (QRD-1312, list from QRD-1305) and the consent page's (i) (QRD-1307): in the list of names, each tool that changes data is followed by \"(changes data)\" (\"… hitung-refund · proses-refund (changes data)\"). Tools that read only carry no mark",
+        "The trait on the Playbook card's tool rows (QRD-1498, taken over from its AC 17) shows on every tool row, a tool listed under its skill included, as the Agent Playbook card line above describes. It is built on QRD-1498's tool row (`assignment-row.tsx`), and QRD-1498 shows only what the tool runs (\"Workflow\") until this ticket ships",
+        "A tool whose workflow hands the chat to a person shows \"hands the chat to a person\" in place of the trait (eskalasi-cs, F4.1d [0]). That trait comes from the hand-over step (G5), not from this ticket; until it exists, such a tool shows its flag",
+        "Rows that have no description or kind line (the Playbook tree, search suggestions) do not show the trait",
+        "In the MCP server drawer's Run test (QRD-1308), the line under the result names each call that was not made as \"would call <tool>\": \"Read kebijakan-retur.pdf · called hitung-refund · would call proses-refund · 3.2 s\". The Try it (i) adds \"Tools that change data are not called in a test.\"",
+        "BE",
+        "Every tool node stores one flag, changes data or reads only, with who set it and when (empty while it holds its default)",
+        "A tool with no stored flag reads as changes data: every tool on develop today, and every new workflow or Agent tool. No migration writes it",
+        "An imported MCP tool stores its flag at import from the function's annotations: reads only when readOnlyHint is true, otherwise changes data. A later probe (QRD-1302) or Review change (QRD-1492) does not change it",
+        "Anyone who can edit the tool can set the flag, on any tool kind, draft or published, through the tool's own update endpoint. It applies from the next call, needs no Publish, and is never part of the compiled definition the model sees",
+        "Every response that returns tool rows carries the flag and where it came from, with no request per row: the Playbook list, the tool drawer, the Agent's assignment resolve (QRD-1498), the assignables for Arm from Playbook (QRD-1309), the guardrail picker's list (QRD-1284), the serving Contents tree and Start serving list (QRD-1305) and the consent page's list (QRD-1307)",
+        "In a Run test from the MCP server drawer (QRD-1308), a call to a tool flagged changes data is not made. The model gets the call's failed result \"Not run in a test: <tool> changes data.\", the way TestRunToolNotRunError works today, and nothing is made up in its place. The run's report lists the call as not made, so the drawer can show \"would call <tool>\"",
+        "The rule holds at every depth of the test run: a call the skill's model makes, a call made inside an Agent tool run that the test started, and a guardrail level's call (QRD-1284). A level whose call was not made is audited as reached, with its call \"not run in a test\"",
+        "A tool flagged reads only is called for real in a Run test, as QRD-1308's AC already says (F7.4 [5] calls hitung-refund)",
+        "Outside a test run the flag never blocks, delays or asks before a call: there is no approval gate (M1)",
+        "A served folder's tools/list (QRD-1305) sets each tool's MCP annotations from the flag: readOnlyHint true for a tool that reads only, false for one that changes data. A served skill goes out with readOnlyHint false, since it can call tools that change data"
+      ],
+      "real": {
+        "outcome": "ESCALATED",
+        "label": "QA-ESCALATED (2026-11-02 17:09)",
+        "blockedReason": "dependency",
+        "evidence": "Confluence QA DB: TC008 (AC-9) Blocked, MCP server drawer and Run test (QRD-1312, QRD-1308) not in UAT; every other TC passed. Comment 22401."
+      },
+      "predictable": true,
+      "causeMatches": true,
+      "note": "The prediction also flags AC-1 (QRD-1298, QRD-1306) and AC-5 (QRD-1309, QRD-1284, QRD-1312, QRD-1305, QRD-1307); the bot passed AC-1 and AC-5 on their workflow-tool part and blocked only AC-9."
+    },
+    {
+      "key": "QRD-1286",
+      "summary": "[FE][BE] Concurrent-edit presence: who else has this skill open",
+      "acSource": "customfield_10332 as QA read it (2026-11-04 21:36 WIB), unchanged since changelog 84133",
+      "endDay": 5,
+      "waitsOn": [
+        {
+          "key": "QRD-1275",
+          "endDay": 4
+        }
+      ],
+      "ac": [
+        "FE",
+        "The Skill Builder header shows one initials avatar for each other person who has this skill open. The operator's own avatar is not shown, and a person with several tabs open shows once",
+        "An avatar appears when someone opens the skill, without a page reload",
+        "Hovering an avatar shows the person's name and the version they have open (\"Rangga Aditya · has 2.1 open\"). A person with tabs on different versions shows once, and the tooltip names each version they have open (\"Rangga Aditya · has 2.1 and 3.0 open\")",
+        "Someone who closes the skill or goes offline leaves the header within 35 seconds, without a page reload",
+        "BE",
+        "Skill presence reuses the Redis-backed socket.io presence that data tables use (heartbeat, stale reaper, one entry per user), generalised to one room per skill",
+        "Each presence entry carries the version open in each of that person's tabs, one per socket, so a person with tabs on 2.1 and 3.0 reads as one entry with both versions (today one entry per user, `datatable-room.ts:51-59`)",
+        "Only members of the skill's workspace can join its room or see who is in it"
+      ],
+      "real": {
+        "outcome": "ESCALATED",
+        "label": "QA-ESCALATED (2026-11-04 22:36)",
+        "blockedReason": "access",
+        "evidence": "Confluence QA DB: TC002-TC005 (AC-1..AC-4) Blocked, 'perlu dua akun berbeda di workspace yang sama, UAT hanya memberi satu akun test'."
+      },
+      "predictable": false,
+      "causeMatches": false,
+      "note": "v2 no longer predicts this from AC text: a second account is read from accounts-check.mjs (triage-rules.md \"Syarat bisa diuji\" 3), so the AC lines that need another person are an AKUN_KEDUA warning. The v1 bot blocked them because UAT gave one account."
+    },
+    {
+      "key": "QRD-1498",
+      "summary": "[FE][BE] Agent Playbook tab: skills, tools and folders in one list",
+      "acSource": "customfield_10332 as QA read it (2026-11-02 12:55 WIB), unchanged since changelog 83806",
+      "endDay": 5,
+      "waitsOn": [
+        {
+          "key": "QRD-1311",
+          "endDay": 4
+        },
+        {
+          "key": "QRD-1388",
+          "endDay": 4
+        },
+        {
+          "key": "QRD-1301",
+          "endDay": 4
+        },
+        {
+          "key": "QRD-1289",
+          "endDay": 4
+        },
+        {
+          "key": "QRD-1502",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1309",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1297",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1422",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1268",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1506",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1298",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1306",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1302",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1283",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1296",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1489",
+          "endDay": 7
+        }
+      ],
+      "ac": [
+        "FE",
+        "The Agent panel's second tab is Playbook, in place of Skills (F3.1 [2]). The tabs after it, Instructions and Output, are QRD-1502",
+        "The tab shows one Playbook card. Its header has the title with an (i) (\"One list for skills and tools. Removing takes an item off this agent only; it stays in the Playbook.\") and one \"+ Add\" button (F3.1 [3]). Until QRD-1309 ships, \"+ Add\" opens a small Skill / Tool menu and then the existing picker; QRD-1309 replaces it with its \"Arm from Playbook\" dialog, which is built and checked there. The separate Assign and Arm buttons are gone. The count in the header is built in QRD-1297; until then the header shows the row count",
+        "The list runs in this order: armed folders as boxes, items armed one by one (skills before tools, F3.1d), the System tools row, then the \"Total\" row. This ticket builds only the items armed one by one. The folder boxes are built in QRD-1422, the System tools row in QRD-1268, and the Total row with the ≈ total in QRD-1297; they are not checked here",
+        "Every row starts with the Playbook's icon for its kind, the same icons as the Playbook tree: a folder, a sparkle for a skill, a wrench for a tool. The System tools row gets its icon in QRD-1268 and is not checked here",
+        "A skill row shows its name, what it brings (\"with hitung-refund, 2 files\"), an On/Off switch and ×. Its version control, with the LIVE chip, is built in QRD-1311 and its ≈ figure in QRD-1297",
+        "The tools a skill uses are listed right under it with a PUBLISHED chip and \"with <skill>\". They have a lock instead of × and a switch that follows the skill's switch (F3.1 [3])",
+        "A tool is listed once, the same way as an item in an armed folder. A tool that was armed by itself is taken in when its skill is armed: from then on it is listed and stored only under the skill, locked",
+        "An agent saved on develop with a tool both armed by itself and held by a switched-on skill (\"Held by <skill>\") shows that tool only under the skill. The next Save writes it once, under the skill, and the card says so on the skill row before the Save",
+        "A tool row shows its name, a PUBLISHED chip, what it runs, after its folder when it is armed by itself (\"from Keuangan/ · …\"), an On/Off switch and ×. What it runs reads \"Workflow\" here; a tool that runs an MCP server function (QRD-1298) or an Agent (QRD-1306) shows its own kind once those tools exist. Its ≈ figure is QRD-1297's. The trait on every tool row, the tools listed under a skill included, is built in QRD-1506, whose AC covers this card",
+        "The status of a tool whose MCP server fails (the red line, and the switch that can still be turned off) is built in QRD-1302, whose AC covers this tab",
+        "A switched-off row stays in the list, dimmed, with its switch at Off",
+        "× takes the item off this agent only. The tools listed under a skill leave with it, including one that was armed by itself before the skill took it in",
+        "The yellow Looping Chance label on the card row of an armed Agent tool is built in QRD-1309",
+        "After the panel's Save, the Agent panel stays open on the same tab and a toast says \"Saved · <workflow>\" (F3.1 [7], F3.4 [5]). This applies to the Agent panel only; other components' panels keep closing with \"Component saved\"",
+        "Every row shows the item's current name, read by its ID, so a rename in the Playbook (QRD-1289) shows on the card without touching the agent (F1.3c)",
+        "A row whose item was deleted (QRD-1283) shows the item's last known name, never its raw ID, and the reason \"Deleted\". The runtime no longer offers the item, and × clears the row. The reasons \"No access\" and \"Source removed\" for an item whose share access or source was removed are built in QRD-1296 and QRD-1489, which set those states. On develop such a row shows the raw ID, because the name is kept only while the item resolves ok (`assignment-row.tsx:57`, `:83`), although the resolve already returns a deleted node's name (`playbook-node.service.ts:666`)",
+        "BE",
+        "An Agent save may leave out of `tools[]` a tool that a switched-on skill in the same save holds. The skill takes the tool in, so it is not a switch-off and the save goes through. On develop both save paths refuse it with 409 TOOL_HELD_BY_SKILL (\"This tool is held by the switched-on skill …\"; `assertAgentAssignments`, `workflow.service.ts:315-336`, called at `:287` and `:3598`; `assertToolsNotHeld`, `playbook-assignable.service.ts:146-156`)",
+        "A tool is stored once: a `tools[]` entry that a switched-on skill in the same save holds is left out of what is stored, even when the payload lists it",
+        "`assertHeldToolsStaySwitchedOn` (`workflow.service.ts:372-401`, called at `:292` and `:3607`) goes, since a tool that a skill holds is no longer in `tools[]`",
+        "An agent that is not saved again keeps its develop `tools[]` until its next Save; there is no migration. Until then the runtime offers such a tool once, since it already dedupes by toolId (`agent-tool-plan.helper.ts:107`, `:114`)",
+        "Once a tool is stored only under its skill, it is no longer active from step 1 the way a tool armed by itself is (`activeToolIds`, `agent-tool-plan.helper.ts:145-148`); it comes with its skill, like every tool under a skill"
+      ],
+      "real": {
+        "outcome": "ESCALATED",
+        "label": "QA-ESCALATED (2026-11-02 13:56)",
+        "blockedReason": "data",
+        "evidence": "Confluence QA DB: TC009 (AC-6) and TC010 (AC-9) Blocked, no PUBLISHED tool could be made (the workflow tool stays DRAFT, 'needs a description'; the edit icon does not respond headless)."
+      },
+      "predictable": true,
+      "causeMatches": false,
+      "note": "The outcome still matches, now through the dependency line (AC-16, QRD-1283) only: v2 does not decide DATA_PRASYARAT in triage (triage-rules.md \"Format alasan eskalasi\"), so the AC-8 data line is a warning and the real data cause is not predicted. v1 note: data is predicted for AC-8 (an agent saved on develop), not for the PUBLISHED tool the bot could not make; that came from UAT behaviour, which AC text cannot show. The prediction also names QRD-1283 for AC-16, which the bot left untested rather than Blocked."
+    },
+    {
+      "key": "QRD-1488",
+      "summary": "[FE] Skill Builder: Publish from the header through one Publish check dialog",
+      "acSource": "customfield_10332 as QA round 1 and 2 read it (2026-11-03 20:52 and 2026-11-04 21:20 WIB): the value Jira changelog 84211 replaced on 2026-11-05",
+      "endDay": 5,
+      "waitsOn": [
+        {
+          "key": "QRD-1275",
+          "endDay": 4
+        },
+        {
+          "key": "QRD-1292",
+          "endDay": 4
+        },
+        {
+          "key": "QRD-1490",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1501",
+          "endDay": 7
+        }
+      ],
+      "ac": [
+        "FE",
+        "The Skill Builder header shows Preview SKILL.md, Save and Publish. Publish works from any tab, and is hidden while the version in the editor is live, unless an Edit client's changes wait (QRD-1490); the version chips and the Save split button are QRD-1275",
+        "Publish opens \"Publish <skill> <version>?\" with a count of blocking findings and warnings, then one row per finding with its severity and \"Go to ›\". Go to › closes the dialog and opens and highlights the card concerned",
+        "Warnings never block: the button reads \"Publish anyway\". Any blocking finding disables Publish and says why",
+        "The dialog lists the agents and the clients (QRD-1501) that go live on this version and those that stay where they are (pinned agents and pinned clients, each with its version), from QRD-1292's publish preview; until QRD-1292 ships that section is hidden",
+        "\"Back to editor\" closes the dialog without publishing",
+        "With unsaved edits, Publish asks at most once (QRD-1275). On a published version it first asks \"Save as <next branch> and publish?\": confirming saves the edits as that new branch and opens the Publish check for it, and Cancel changes nothing. On a version never published it saves the edits over it without asking. Either way the findings describe what will be published",
+        "While an Edit client's changes wait (QRD-1490), the dialog also lists them under \"Changes from <client>\"; until QRD-1490 ships that section is hidden"
+      ],
+      "real": {
+        "outcome": "ESCALATED",
+        "label": "QA-ESCALATED (2026-11-03 21:53 and 2026-11-04 22:20); QA-DONE-PASSED was added by hand on 2026-11-05 after the AC was narrowed, with no bot round",
+        "blockedReason": "dependency",
+        "evidence": "Confluence QA DB round 2: TC013/TC014 (AC-6) Blocked, Versions tab disabled, 'ruang lingkup QRD-1275'; TC008-TC011 (AC-3) Blocked, a BLOCKING finding cannot be produced through the UI."
+      },
+      "predictable": false,
+      "causeMatches": false,
+      "note": "Not predictable from AC text. The bot blocked AC-6 because QRD-1275 had reached UAT with its Versions tab disabled (a defect of that ticket, not a late landing), and AC-3 because no UI path produced a BLOCKING finding. Both are UAT facts. Every key in this AC that lands later sits in a sentence that hands its part elsewhere (\"are QRD-1275\", \"until QRD-1292 ships\", \"until QRD-1490 ships\"), so predict.mjs answers LOLOS. After the 5 Nov AC change took both lines out of the test, the ticket did pass."
+    },
+    {
+      "key": "QRD-1289",
+      "summary": "[FE][BE] Move and rename: reorganise the Playbook without breaking a pointer",
+      "acSource": "customfield_10332 as QA read it (2026-11-04 11:30 WIB), unchanged since changelog 84024",
+      "endDay": 5,
+      "waitsOn": [
+        {
+          "key": "QRD-1238",
+          "endDay": 4
+        },
+        {
+          "key": "QRD-1285",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1305",
+          "endDay": 7
+        },
+        {
+          "key": "QRD-1312",
+          "endDay": 7
+        }
+      ],
+      "ac": [
+        "FE",
+        "Rename, from the row menu (QRD-1285), opens a dialog with the current name filled in and an (i) on Name: \"Pointers, SKILL.md chips and agents follow the new name.\" The name is checked as it is typed against the folder's current contents: when it is free in that folder, a green \"✓ Available in <folder>/\" shows and Rename is enabled; when it is taken, an error names the folder where it clashes and Rename is disabled. The same name in another folder is allowed",
+        "After a rename, the new name shows at once in the tree and the list, the row flashes, and a toast says \"Renamed to <name> — pointers, chips and agents follow the new name\"",
+        "Every chip, pointer and Structure node that targets the renamed node, in any skill, shows the new name; nothing needs re-pointing. An agent's Playbook card shows the new name too",
+        "A LIVE skill that points at the renamed node stays LIVE on the same version; the rename creates no draft",
+        "Move, from the row menu, opens \"Move <name> to…\": a \"Search by name…\" field over the Playbook tree (chevrons, nested folders indented under their parent), minus the node itself and anything inside it, with the folder it sits in now tagged \"current folder\". A line says \"Pointers and chips that reach <name> show the new path — nothing to edit.\" \"Move here\" moves the node into the folder or skill picked",
+        "Serving folders (SERVING tag in the picker, the \"is served over MCP\" warning, the \"Move\" button label and the refusal to nest serving folders) depend on QRD-1305 and QRD-1312 and are not part of this ticket's test. They are verified in those tickets",
+        "When an agent holds two skills with the same name from different folders, its menu and Assign tab show each one with its path (refund · sales/refund)",
+        "BE",
+        "Rename and move endpoints expose the QRD-1238 service methods. Each refuses, with the reason: renaming a tool, renaming or moving a SKILL.md marker, a name already taken in the target folder (case-insensitive), and moving a node into itself or anything under it. The refusal for a move that would nest serving folders (QRD-1305) is not part of this ticket's test",
+        "The FE checks a name while typing against the folder's listed contents, with the same case-insensitive rule the endpoint enforces. A dedicated sibling-names endpoint is not required",
+        "Renaming a skill changes only its display name. Its slug and its published versions stay the same",
+        "A live version keeps working after a rename or move without a republish, and nothing offers one: what the agent is served (SKILL.md chips, pointer sentences, read_file paths) resolves targets by ID and shows their current name and path. The live version keeps its number and does not become a draft (F1.3c [3])"
+      ],
+      "real": {
+        "outcome": "ESCALATED",
+        "label": "QA-ESCALATED (2026-11-04 12:30)",
+        "blockedReason": "data",
+        "evidence": "Confluence QA DB: TC008 (AC-3, AC-9) Blocked, 'butuh skill dengan pointer ke node yang di-rename dan agent dengan dua skill bernama sama dari folder berbeda. Prasyarat belum disiapkan'."
+      },
+      "predictable": true,
+      "causeMatches": false,
+      "note": "The outcome matches for a different cause: the prediction flags AC-1 for QRD-1285 (the row menu), which had not reached UAT, yet the bot renamed from the existing menu. The real block was prerequisites the bot did not build; the rules say the bot builds such data itself, so AC text gives no data signal."
+    }
+  ]
+}

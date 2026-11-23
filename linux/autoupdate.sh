@@ -48,9 +48,12 @@ au_pass() {
     if [ "$AU_DRY" = 1 ]; then say DRY "would pull claude-config and apply binaries, install and plugins"
     else
       say INFO "claude-config moved, updating"
-      bash "$CCFG_LINUX_DIR/personalize.sh" --stdout --only=repo,binaries,pdftools,install,brainhooks,plugins
+      bash "$CCFG_LINUX_DIR/personalize.sh" --stdout --only=repo,binaries,pdftools,install,qa,brainhooks,plugins
     fi
   fi
+
+  if [ "$AU_DRY" = 1 ]; then say DRY "would run kit/qa-skill-sync.sh --daily"
+  elif [ -f "$CCFG_CLAUDE_DIR/kit/qa-skill-sync.sh" ]; then timeout 600 bash "$CCFG_CLAUDE_DIR/kit/qa-skill-sync.sh" --daily || say WARN "qa-skill-sync failed"; fi
 
   if dock_stale; then
     if turn_running; then say INFO "DOCK update waits: a chat turn is running"
