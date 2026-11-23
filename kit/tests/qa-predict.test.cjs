@@ -84,7 +84,7 @@ test('a dependency counts only when the other ticket lands after this one', asyn
   assert.equal(one({ key: 'T-1', ac: ['FE', 'The list shows the rows', 'BE', 'The endpoint (QRD-2) answers 403'], endDay: 3, waitsOn: [{ key: 'QRD-2', endDay: 4 }] }).prediction, 'LOLOS');
 });
 
-test('third party, payment and plan lines escalate with their code; data and second account only warn; vague is REVISION-RISK', async () => {
+test('third party, payment and plan lines escalate with their code; data and second account only warn; vague and placeholder lines are ESCALATED LAINNYA', async () => {
   const { predict } = await load();
   const one = (ac) => predict({ tickets: [{ key: 'T-1', ac: ['FE', ...ac] }] }).results[0];
   const ig = one(['Connect Instagram through Facebook Login and see the account listed']);
@@ -101,9 +101,22 @@ test('third party, payment and plan lines escalate with their code; data and sec
   assert.equal(data.prediction, 'LOLOS');
   assert.match(data.reasons[0], /\[DATA_PRASYARAT warning\]/);
   assert.equal(data.fix, null);
-  const vague = one(['The page loads fast', 'The button reads "Save"']);
-  assert.equal(vague.prediction, 'REVISION-RISK');
-  assert.match(vague.fix, /rewrite AC-1/);
+  const vague = one(['Phone number display works correctly.', 'The button reads "Save"']);
+  assert.equal(vague.prediction, 'ESCALATED');
+  assert.match(vague.reasons[0], /^AC-1 \[LAINNYA\] not verifiable as written/);
+  assert.match(vague.fix, /rewrite AC-1 as an observable result/);
+  for (const phrase of ['works properly', 'as expected', 'user-friendly', 'sesuai', 'dengan baik', 'berjalan normal', 'optimal', 'seamless', 'intuitive']) {
+    assert.equal(one([`The header is ${phrase}`]).prediction, 'ESCALATED', phrase);
+  }
+  assert.equal(one(['The list splits the rows correctly into two groups']).prediction, 'LOLOS', 'standalone correctly is not vague');
+  assert.equal(one(['The form saves properly']).prediction, 'LOLOS', 'standalone properly is not vague');
+  assert.equal(one(['The form work properly']).prediction, 'ESCALATED');
+  const placeholder = one(['The button reads "Save"', 'TBD for group chats'.slice(0, 3), '-']);
+  assert.equal(placeholder.prediction, 'ESCALATED');
+  assert.deepEqual(placeholder.reasons.map((r) => r.split(' ')[0]), ['AC-2', 'AC-3']);
+  assert.match(placeholder.reasons[0], /\[LAINNYA\] placeholder line "TBD"/);
+  assert.match(placeholder.fix, /write AC-2 as an observable result, or remove it/);
+  assert.equal(one(['The button reads "Save"', '']).prediction, 'ESCALATED');
   assert.deepEqual(one(['The button reads "Save" and saves the row']), { key: 'T-1', prediction: 'LOLOS', reasons: [], fix: null });
 });
 
@@ -115,4 +128,10 @@ test('the CLI rejects bad input with exit 2 and the script imports nothing beyon
   }
   const imports = fs.readFileSync(SCRIPT, 'utf8').match(/^import .* from "([^"]+)";$/gm);
   assert.deepEqual(imports.map((l) => l.match(/"([^"]+)"/)[1]).sort(), ['node:fs', 'node:url']);
+});
+
+test('REVISION-RISK is never produced', async () => {
+  const { predict } = await load();
+  const all = predict(asInput(SPRINT26.cases)).results.concat(predict({ tickets: [{ key: 'T-1', ac: ['FE', 'The page works correctly', 'TBD'] }] }).results);
+  assert.ok(all.every((r) => ['LOLOS', 'ESCALATED'].includes(r.prediction)));
 });

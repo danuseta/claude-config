@@ -11,7 +11,7 @@
 //            group header, not an AC line; lines after a "BE" header are system lines (see below).
 //   waitsOn  tickets this one depends on, with the sprint day each lands in UAT. endDay is this ticket's day.
 //            Every ticket in the same input also counts, by its own endDay.
-// stdout: {"results":[{"key":"QRD-1","prediction":"LOLOS"|"ESCALATED"|"REVISION-RISK","reasons":["..."],"fix":null|"..."}]}
+// stdout: {"results":[{"key":"QRD-1","prediction":"LOLOS"|"ESCALATED","reasons":["..."],"fix":null|"..."}]}
 //
 // Each reason names the AC line (AC-n, numbered top to bottom across groups, as triage-rules.md "Mencari AC" does),
 // a v2 reason code (scripts/reason-codes.mjs: DEPENDENSI, PIHAK_KETIGA, LAINNYA) or a warning, and the rule it comes from.
@@ -20,9 +20,10 @@
 // accounts-check.mjs, an all-system ticket is explored in the UI or follows its FE ticket).
 //
 // Prediction, strongest first:
-//   ESCALATED      no AC, or any line blocked by a dependency, a third party, or a role, plan or payment the test account lacks
-//   REVISION-RISK  any AC line too vague to verify
+//   ESCALATED      no AC, a placeholder line, a line too vague to verify (v2 marks it Blocked), or any line blocked by a
+//                  dependency, a third party, or a role, plan or payment the test account lacks
 //   LOLOS          otherwise
+// REVISION-RISK is no longer produced: the only line it covered, a vague one, is Blocked in v2, so it is ESCALATED with LAINNYA.
 //
 // Exit 0 when computed, 2 when the input is rejected.
 
@@ -38,6 +39,7 @@ const RULE = {
   secondAccount: "triage-rules.md \"Syarat bisa diuji\" 3: accounts-check.mjs menentukan, bukan teks AC",
   data: "triage-rules.md \"Format alasan eskalasi\": DATA_PRASYARAT tidak diputuskan di triage; dicoba lewat UI di perencanaan (judge.md \"Siapkan prasyarat sendiri\")",
   vague: "triage-rules.md \"Mencari AC\": AC ambigu atau tidak bisa diverifikasi",
+  placeholder: "triage-rules.md \"Mencari AC\": placeholder (TBD, -, N/A) sama dengan tidak ada AC",
 };
 
 const PLACEHOLDER = /^\s*(tbd|to be defined|tba|-+|n\/?a|none|kosong)?\s*\.?\s*$/i;
@@ -74,7 +76,8 @@ const THIRD_PARTY = [
 ];
 const SECOND_ACCOUNT = /\b(each |every |any )?other (person|people|user|member)s?\b|\banother (person|user|member|account)\b|\bsecond (account|user|member)\b|\btwo (different )?(accounts|users|people|members)\b|\bsomeone (who )?(else|opens|closes|has)\b|\ba member without\b/i;
 const DATA = /\bsaved on (develop|production)\b|\blegacy\b|\b(customer|production) data\b|\bdata pelanggan\b|\bexisting customer/i;
-const VAGUE = /\b(fast|faster|quick(ly)?|responsive|user[- ]friendly|intuitive|better (ux|experience|usability)|nice(r)?|smooth(ly)?|seamless(ly)?|appropriate(ly)?|properly|as expected|easy to use|cepat|lebih baik|rapi|mudah|nyaman|dengan benar|sesuai harapan)\b/i;
+// Mirrors DOCK backend/bff-graphql/src/integrations/ticket-lint.ts W2 (vague AC phrases); keep the two lists equal.
+const VAGUE_PHRASES = /\b(works? correctly|works? properly|work properly|as expected|user[- ]friendly|sesuai|dengan baik|berjalan normal|optimal|seamless|intuitive)\b/i;
 
 const sentences = (line) => line.split(/(?<=[.!?])\s+(?=["“A-Z(])/);
 const excerpt = (s, n = 90) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
@@ -107,14 +110,15 @@ function validate(input) {
 function acLines(ac) {
   const lines = [];
   let system = false;
+  const body = (ac || []).filter((raw) => !HEADER.test(raw));
+  if (body.every((raw) => PLACEHOLDER.test(raw))) return lines;
   for (const raw of ac || []) {
     const h = raw.match(HEADER);
     if (h) {
       system = h[1].toUpperCase() === "BE";
       continue;
     }
-    if (PLACEHOLDER.test(raw)) continue;
-    lines.push({ n: lines.length + 1, text: raw.trim(), system: system || SYSTEM.test(raw) });
+    lines.push({ n: lines.length + 1, text: raw.trim(), placeholder: PLACEHOLDER.test(raw), system: !PLACEHOLDER.test(raw) && (system || SYSTEM.test(raw)) });
   }
   return lines;
 }
@@ -148,6 +152,12 @@ function predictOne(t, dayOf) {
   for (const l of lines) {
     if (l.system) continue;
     const tag = `AC-${l.n}`;
+    if (l.placeholder) {
+      reasons.push(`${tag} [LAINNYA] placeholder line "${excerpt(l.text) || "(empty)"}": the bot cannot test it (${RULE.placeholder})`);
+      causes.add("escalate");
+      fixes.push(`write ${tag} as an observable result, or remove it`);
+      continue;
+    }
     const needs = new Set();
     for (const s of sentences(l.text)) {
       if (DEFERRED.some((re) => re.test(s))) continue;
@@ -173,9 +183,9 @@ function predictOne(t, dayOf) {
     if (DATA.test(l.text)) {
       reasons.push(`${tag} [DATA_PRASYARAT warning] may need data the UI cannot create: "${excerpt(l.text)}" (${RULE.data})`);
     }
-    if (VAGUE.test(l.text)) {
-      reasons.push(`${tag} [LAINNYA] not verifiable as written: "${excerpt(l.text)}" (${RULE.vague}; the bot marks it Blocked, reason code LAINNYA)`);
-      causes.add("vague");
+    if (VAGUE_PHRASES.test(l.text)) {
+      reasons.push(`${tag} [LAINNYA] not verifiable as written: "${excerpt(l.text)}" (${RULE.vague}; the bot marks it Blocked, so the ticket is ESCALATED with LAINNYA)`);
+      causes.add("escalate");
       fixes.push(`rewrite ${tag} as an observable result`);
     }
   }
@@ -191,7 +201,7 @@ function predictOne(t, dayOf) {
   }
 
   const escalated = ["dependency", "escalate"].some((c) => causes.has(c));
-  const prediction = escalated ? "ESCALATED" : causes.has("vague") ? "REVISION-RISK" : "LOLOS";
+  const prediction = escalated ? "ESCALATED" : "LOLOS";
   return { key: t.key, prediction, reasons, fix: fixes.length ? [...new Set(fixes)].join("; ") : null };
 }
 
