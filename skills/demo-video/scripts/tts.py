@@ -22,7 +22,7 @@ def kamus_path():
     explicit = os.environ.get("DEMO_KAMUS_FILE")
     if explicit:
         return explicit if os.path.isfile(explicit) else None
-    roots = [os.environ.get("DOCK_BLACKBOARD_DIR"), os.path.expanduser("~/projects/.evidence"), "E:/qonflo/.evidence"]
+    roots = [os.environ.get("DOCK_BLACKBOARD_DIR"), os.path.expanduser("~/projects/.evidence/blackboard"), "E:/qonflo/.evidence/blackboard"]
     for root in roots:
         if root and os.path.isfile(os.path.join(root, KAMUS_NAME)):
             return os.path.join(root, KAMUS_NAME)
