@@ -130,6 +130,34 @@ test('the CLI rejects bad input with exit 2 and the script imports nothing beyon
   assert.deepEqual(imports.map((l) => l.match(/"([^"]+)"/)[1]).sort(), ['node:fs', 'node:url']);
 });
 
+test('a [BE] ticket with an FE pair predicts FOLLOWS_FE with the FE key instead of being tested or escalated', () => {
+  const pair = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'qa-predict-fe-pair.json'), 'utf8'));
+  const r = cli(JSON.stringify({ tickets: pair.tickets }));
+  assert.equal(r.status, 0, r.stderr);
+  const byKey = Object.fromEntries(JSON.parse(r.stdout).results.map((x) => [x.key, x]));
+  assert.equal(byKey['QRD-1579'].prediction, 'FOLLOWS_FE');
+  assert.equal(byKey['QRD-1579'].followsFe, 'QRD-1582');
+  assert.match(byKey['QRD-1579'].reasons[0], /^\[FE_LINKED\] Follows FE QRD-1582.*Pasangan FE dan BE beda tiket/);
+  assert.equal(byKey['QRD-1582'].prediction, 'LOLOS', 'the FE ticket itself is tested');
+  assert.equal(byKey['QRD-1590'].prediction, 'FOLLOWS_FE', 'a Test link is enough on its own');
+  assert.equal(byKey['QRD-1590'].followsFe, 'QRD-1591');
+  assert.equal(byKey['QRD-1595'].prediction, 'LOLOS', 'a link to another [BE] ticket is no FE pair');
+  assert.equal(byKey['QRD-1595'].followsFe, undefined);
+});
+
+test('the FE pair needs a [BE] tag group on the ticket, and a Test link wins over other links', async () => {
+  const { predict } = await load();
+  const one = (summary, links, others = []) => predict({ tickets: [{ key: 'T-1', summary, ac: ['FE', 'The page shows the row'], links }, ...others] }).results[0];
+  assert.equal(one('[Playbook][BE] Save order', [{ key: 'T-2', type: 'is blocked by', summary: '[FE] [Playbook] Order' }]).prediction, 'FOLLOWS_FE');
+  assert.equal(one('Save order [BE]', [{ key: 'T-2', type: 'blocks', summary: '[FE] Order' }]).prediction, 'LOLOS');
+  assert.equal(one('[FE] Order page', [{ key: 'T-2', type: 'is tested by' }]).prediction, 'LOLOS');
+  const both = one('[BE] Save order', [{ key: 'T-3', type: 'blocks', summary: '[FE] Other' }, { key: 'T-2', type: 'is tested by' }]);
+  assert.equal(both.followsFe, 'T-2');
+  assert.equal(one('[BE] Save order', [{ key: 'T-2', type: 'blocks' }], [{ key: 'T-2', summary: '[FE] Order page', ac: ['FE', 'x shows'] }]).followsFe, 'T-2');
+  assert.equal(predict({ tickets: [{ key: 'T-1', summary: '[BE] x', ac: [], links: [{ key: 'T-2', type: 'is tested by' }] }] }).results[0].prediction, 'ESCALATED', 'no AC still escalates');
+  assert.equal(cli(JSON.stringify({ tickets: [{ key: 'A', links: [{ key: 'B' }] }] })).status, 2);
+});
+
 test('REVISION-RISK is never produced', async () => {
   const { predict } = await load();
   const all = predict(asInput(SPRINT26.cases)).results.concat(predict({ tickets: [{ key: 'T-1', ac: ['FE', 'The page works correctly', 'TBD'] }] }).results);

@@ -99,6 +99,42 @@ test('--triage-stop writes a done ESCALATED run folder with the reason code and 
   } finally { rmrf(data); }
 });
 
+test('--triage-stop FE_LINKED --fe writes followsFe and verdict FOLLOWS_FE instead of ESCALATED', () => {
+  const data = tmp('qa-local-fe');
+  try {
+    const r = runMain(['QRD-1579', '--triage-stop', 'FE_LINKED', 'QRD-1579 blocks QRD-1582 [FE] (To Do, no QA result yet)', '--fe', 'qrd-1582', '--fe-status', 'To Do'], data);
+    assert.equal(r.status, 3, r.stderr + r.stdout);
+    const [stamp] = fs.readdirSync(path.join(data, 'runs', 'QRD-1579'));
+    const dir = path.join(data, 'runs', 'QRD-1579', stamp);
+    const prog = JSON.parse(fs.readFileSync(path.join(dir, 'progress.json'), 'utf8'));
+    assert.equal(prog.verdict, 'FOLLOWS_FE');
+    assert.equal(prog.rule, 'J-FOLLOWS-FE');
+    assert.deepEqual(prog.followsFe, { key: 'QRD-1582', status: 'To Do' });
+    const res = JSON.parse(fs.readFileSync(path.join(dir, 'results.json'), 'utf8'));
+    assert.equal(res.verdict.prediction, 'FOLLOWS_FE');
+    assert.equal(res.reasonCode, 'FE_LINKED');
+    assert.deepEqual(res.followsFe, { key: 'QRD-1582', status: 'To Do' });
+    assert.equal(res.tickets[0].ticketStatus, 'FOLLOWS_FE');
+    assert.match(fs.readFileSync(path.join(dir, 'summary.md'), 'utf8'), /Follows FE: QRD-1582 \(To Do\)/);
+  } finally { rmrf(data); }
+});
+
+test('--triage-stop FE_LINKED without --fe stays ESCALATED; --fe needs FE_LINKED and a key', () => {
+  const data = tmp('qa-local-fe2');
+  try {
+    assert.equal(runMain(['QRD-1', '--triage-stop', 'LAINNYA', 'why', '--fe', 'QRD-2'], data).status, 2);
+    assert.equal(runMain(['QRD-1', '--triage-stop', 'FE_LINKED', 'why', '--fe', 'wt-2-fe'], data).status, 2);
+    assert.equal(runMain(['QRD-1', '--triage-stop', 'FE_LINKED', 'why', '--fe-status', 'To Do'], data).status, 2);
+    assert.equal(fs.existsSync(path.join(data, 'runs')), false);
+    const r = runMain(['QRD-1', '--triage-stop', 'FE_LINKED', 'candidate QRD-2 not sure'], data);
+    assert.equal(r.status, 3, r.stderr);
+    const [stamp] = fs.readdirSync(path.join(data, 'runs', 'QRD-1'));
+    const res = JSON.parse(fs.readFileSync(path.join(data, 'runs', 'QRD-1', stamp, 'results.json'), 'utf8'));
+    assert.equal(res.verdict.prediction, 'ESCALATED');
+    assert.equal(res.followsFe, undefined);
+  } finally { rmrf(data); }
+});
+
 test('--triage-stop refuses an unknown code, a missing reason, and an active run', () => {
   const data = tmp('qa-local-ts2');
   try {
