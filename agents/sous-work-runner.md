@@ -35,7 +35,7 @@ Read the card. Take the next open item sous can open (§7 "dibuka oleh: sous"). 
 - Running code we wrote (a script from sous-analyst): `node K/status.cjs lock verify CARD-<slug> --wait 90`, `sous-verifier` with the folder and the exact commands, then always `node K/status.cjs unlock verify CARD-<slug>`.
 - Third-party code (a candidate's repository, a downloaded tool): never run it. Put it in §8 with the reason.
 - Anything that leaves this machine (send, share, message, comment, change another system, call a production endpoint): never. Put it in §8.
-- Jira tickets from drafts on the card: `sous-jira` with the drafts path; record the returned keys on the card.
+- Jira tickets from drafts on the card: write one `lint-<n>.json` per ticket next to the drafts (`{ type, summary, userStory, problem, ac: [], reference, openToConfirm, sp, blockedBy: [], decidedRefs: [], description }`, the draft's own text, in the writing standard of the sprint-planner skill), then `sous-jira` with the drafts path; record the returned keys on the card. A ticket it stopped for a `block` finding goes back to you with the finding lines: fix the draft and the `lint-<n>.json`, dispatch again.
 - A question only the owner can answer: `node K/status.cjs issue CARD-<slug> QUESTION "<text>" [--options "A|B"]`, then decide it yourself when you can (`decide ... --status GUESS --by sous-work-runner --issue n --question .. --rejected ..`, `issue ... n resolve <D>`), otherwise `issue CARD-<slug> n escalate owner "<why>"` and stop.
 
 After each step overwrite the card: §3 position; §4 facts with the analyst's evidence levels, never upgraded; §5 artefacts; §6 decisions (D-n from the ledger); §7 open items with who opens them; §8; §9 traces and how to remove them; §10 traps.

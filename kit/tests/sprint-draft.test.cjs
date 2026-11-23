@@ -300,3 +300,72 @@ test('a revision that breaks a limit or names a forbidden field is refused local
   };
   for (const [line, want] of Object.entries(usage)) assert.match(request(line.split(' '), files({ 'r.json': '{}' })).error, want, line);
 });
+
+const failing = {
+  type: 'Task',
+  summary: 'Implement phone number display in inbox header using contact.phone from getConversation resolver and update ChatHeader component',
+  userStory: '',
+  problem: 'Per D-3 (GUESS) the header lacks phone; see ChatHeader.tsx:42. Agents need it.',
+  ac: ['Phone number display works correctly.', 'Uses the field from QRD-1603.', 'TBD for group chats'],
+  sp: 5,
+};
+const lintAnswer = {
+  ok: false,
+  findings: [
+    { rule: 'W2', field: 'ac', line: 1, level: 'block', text: 'Vague phrase "works correctly": a tester cannot tell pass from fail.', fix: 'Write what the tester sees.' },
+    { rule: 'W5', field: 'summary', line: null, level: 'warn', text: 'No [area] prefix and over 100 characters.', fix: 'Start with [FE][Inbox] and say what changes.' },
+  ],
+};
+
+test('lint --file posts the text fields to ticket/lint and prints the findings; exit 4 while a block finding is left', async () => {
+  const { seen, send } = recorder({ status: 200, result: lintAnswer });
+  const io = quiet();
+  const readFile = files({ 't.json': JSON.stringify({ ...failing, extra: 'dropped' }) });
+  assert.equal(await run(['lint', '--file', 't.json'], { send, readFile, ...io }), 4);
+  assert.equal(seen[0].route, '/ticket/lint');
+  assert.deepEqual(seen[0].body, failing);
+  assert.equal(JSON.parse(io.lines.out[0]).ok, false);
+  assert.equal(io.lines.out[1], [
+    'lint: 1 block, 1 warn',
+    'block W2 ac line 1: Vague phrase "works correctly": a tester cannot tell pass from fail. Fix: Write what the tester sees.',
+    'warn W5 summary: No [area] prefix and over 100 characters. Fix: Start with [FE][Inbox] and say what changes.',
+  ].join('\n'));
+  const clean = quiet();
+  assert.equal(await run(['lint', '--file', 't.json'], { send: async () => ({ status: 200, result: { ok: true, findings: [] } }), readFile, ...clean }), 0);
+  assert.equal(clean.lines.out[1], 'lint: ok, no finding');
+  const warnOnly = quiet();
+  assert.equal(await run(['lint', '--file', 't.json'], { send: async () => ({ status: 200, result: { ok: true, findings: [lintAnswer.findings[1]] } }), readFile, ...warnOnly }), 0);
+});
+
+test('lint refuses bad input locally and reports a DOCK refusal', async () => {
+  const bad = {
+    'lint': /needs --file/, 'lint --file': /needs --file/, 'lint --file a.json b.json': /needs --file/,
+    'lint --file missing.json': /cannot read missing.json/,
+  };
+  for (const [line, want] of Object.entries(bad)) assert.match(request(line.split(' '), files({})).error, want, line);
+  for (const [json, want] of [['[]', /not an object/], [JSON.stringify({ ac: 'one' }), /ac must be an array/], [JSON.stringify({ sp: '5' }), /sp must be a number/], [JSON.stringify({ summary: 3 }), /summary must be a string/]]) {
+    assert.match(request(['lint', '--file', 'x.json'], files({ 'x.json': json })).error, want);
+  }
+  const io = quiet();
+  assert.equal(await run(['lint', '--file', 'x.json'], { send: async () => ({ status: 400, error: 'bad body' }), readFile: files({ 'x.json': '{}' }), ...io }), 3);
+  assert.match(io.lines.err[0], /DOCK refused \(400\): bad body/);
+});
+
+test('new and revise print the lint DOCK returned after the result, and stay exit 0', async () => {
+  const draft = { summary: '[FE][Inbox] Show the phone number', ac: ['One'] };
+  const io = quiet();
+  const send = async () => ({ status: 200, result: { id: 'NEW-4', lint: lintAnswer } });
+  assert.equal(await run(['new', '27', '--file', 'd.json'], { send, readFile: files({ 'd.json': JSON.stringify(draft) }), ...io }), 0);
+  assert.equal(io.lines.out[0].split('\n')[0], 'NEW-4');
+  assert.match(io.lines.out[1], /^lint: 1 block, 1 warn\nblock W2 ac line 1:/);
+  const rev = quiet();
+  const sendRev = async () => ({ status: 200, result: { key: 'QRD-5', revision: { summary: 'S', fields: [] }, lint: { ok: true, findings: [] } } });
+  assert.equal(await run(['revise', '27', '--key', 'QRD-5', '--file', 'r.json'], { send: sendRev, readFile: files({ 'r.json': JSON.stringify({ summary: 'S' }) }), ...rev }), 0);
+  assert.equal(rev.lines.out[1], 'lint: ok, no finding');
+  const none = quiet();
+  assert.equal(await run(['new', '27', '--file', 'd.json'], { send: async () => ({ status: 200, result: { id: 'NEW-5' } }), readFile: files({ 'd.json': JSON.stringify(draft) }), ...none }), 0);
+  assert.equal(none.lines.out.length, 1);
+  const rm = quiet();
+  assert.equal(await run(['new', 'rm', '27', '--id', 'NEW-4'], { send: async () => ({ status: 200, result: { removed: 'NEW-4', lint: lintAnswer } }), ...rm }), 0);
+  assert.equal(rm.lines.out.length, 1);
+});

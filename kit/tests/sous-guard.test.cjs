@@ -120,6 +120,13 @@ test('runner guard: sous agents and browser-verifier only; kit scripts by their 
     assert.equal(g.check('runner', roots, bash(c)), null, c);
   }
   assert.equal(g.check('runner', roots, bash(`node ${K}/status.cjs set QRD-1 draft=true`)), null, 'draft=true stays allowed');
+  const lint = (c) => g.check('lint', ['@evidence'], bash(c));
+  const draft = 'E:/qonflo/.evidence/QRD-1/draft.json';
+  assert.equal(lint(`node ${K}/sprint-draft.cjs lint --file ${draft}`), null, 'sous-jira lints through sprint-draft.cjs');
+  assert.equal(lint(`${K}/bin/kit-node sprint-draft.cjs lint --file ${draft}`), null);
+  for (const c of [`node ${K}/sprint-draft.cjs new 27 --file ${draft}`, `node ${K}/sprint-draft.cjs get 27`, `node ${K}/status.cjs show QRD-1`, `node ${K}/sprint-draft.cjs lint --file /etc/passwd`, `node ${K}/sprint-draft.cjs lint --file ${draft} && rm -rf x`, `node E:/elsewhere/sprint-draft.cjs lint --file ${draft}`, 'curl https://x']) {
+    assert.match(lint(c) || '', /only shell command here|inside the evidence folder|operator|not allowed|separate/i, c);
+  }
   for (const c of [`node ${K}/status.cjs decide QRD-1 "keep the endpoint" --status GUESS --by sous-ticket-runner --question "the AC names no endpoint" --rejected "a new endpoint: two calls from the FE" --rejected "do nothing"`,
     `${K}/bin/kit-node status.cjs decide QRD-1 "take B" --status GUESS --by sous-arbiter --issue 1 --question "A or B?" --rejected "A: breaks saved data"`]) {
     assert.equal(g.check('runner', roots, bash(c)), null, c);
@@ -324,7 +331,7 @@ test('the hook command answers deny JSON, fails closed on bad input, and every s
   const agents = path.join(KIT, '..', 'agents');
   const files = fs.readdirSync(agents).filter((f) => f.startsWith('sous-') || f === 'browser-verifier.md');
   assert.equal(files.length, 17);
-  const form = /^ {10}command: '"\$\{CLAUDE_CONFIG_DIR:-\$HOME\/\.claude\}\/kit\/bin\/kit-node" sous-guard\.cjs (path|bash|runner|publish|jira|verify|browser|video)( [^']*)?'$/;
+  const form = /^ {10}command: '"\$\{CLAUDE_CONFIG_DIR:-\$HOME\/\.claude\}\/kit\/bin\/kit-node" sous-guard\.cjs (path|bash|runner|publish|jira|lint|verify|browser|video)( [^']*)?'$/;
   for (const f of files) {
     const text = fs.readFileSync(path.join(agents, f), 'utf8');
     const head = text.split('\n---\n')[0];

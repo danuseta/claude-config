@@ -16,9 +16,13 @@
 //                                                                                   problem, ac: [], reference, openToConfirm, note, source }; only the fields given;
 //                                                                                   prints the before/after DOCK read from Jira, one field per block
 //   node sprint-draft.cjs revise rm <sprint> --key QRD-n                             discard the pending revision of that ticket
+//   node sprint-draft.cjs lint --file <json>                                        DOCK's writing check of free text: { type, summary, userStory, problem, ac: [], reference,
+//                                                                                   openToConfirm, sp, blockedBy: [], decidedRefs: [], description }; prints the findings
 //   node sprint-draft.cjs sheet <google-sheet-url>                                   the sheet's rows as [{ row, cells }]; rows with a Jira Ticket are skipped
 //   node sprint-draft.cjs storyboard <EPIC>                                          the newest storyboard version: { version, path, frames, changed }
-// Prints DOCK's result as JSON. Exit 0 answered, 3 DOCK refused (its error on stderr), 1 usage error or DOCK did not answer.
+// Prints DOCK's result as JSON; after new and revise, and for lint, it also prints DOCK's writing check as one line per finding
+// (level, rule, field and line, text, fix). Exit 0 answered, 3 DOCK refused (its error on stderr), 1 usage error or DOCK did not answer,
+// 4 only for lint: the check answered and a block finding is left.
 const fs = require("fs");
 const dock = require("./dock-push.cjs");
 
@@ -43,6 +47,7 @@ const USAGE = [
 	"       node sprint-draft.cjs new rm <sprint> --id NEW-n",
 	"       node sprint-draft.cjs revise <sprint> --key QRD-n --file <rev.json>",
 	"       node sprint-draft.cjs revise rm <sprint> --key QRD-n",
+	"       node sprint-draft.cjs lint --file <json>",
 	"       node sprint-draft.cjs sheet <google-sheet-url>",
 	"       node sprint-draft.cjs storyboard <EPIC>",
 ].join("\n");
@@ -240,6 +245,31 @@ function revisionText(result) {
 	return [`${result.key}${rev?.summary ? ` ${rev.summary}` : ""}`, ...(rev?.note ? [`note: ${rev.note}`] : []), ...blocks].join("\n\n");
 }
 
+const LINT_FIELDS = ["type", "summary", "userStory", "problem", "ac", "reference", "openToConfirm", "sp", "blockedBy", "decidedRefs", "description"];
+
+function lintRequest(rest, readFile) {
+	if (rest[0] !== "--file" || !rest[1] || rest.length > 2) return { error: "lint needs --file <json>" };
+	let t;
+	try { t = JSON.parse(readText(rest[1], readFile)); } catch (e) { return { error: `cannot read ${rest[1]}: ${e.message}` }; }
+	if (!t || typeof t !== "object" || Array.isArray(t)) return { error: "the lint input is not an object" };
+	for (const f of ["type", "summary", "userStory", "problem", "reference", "openToConfirm", "description"]) if (t[f] !== undefined && t[f] !== null && typeof t[f] !== "string") return { error: `${f} must be a string` };
+	for (const f of ["ac", "blockedBy", "decidedRefs"]) if (t[f] !== undefined && t[f] !== null && (!Array.isArray(t[f]) || t[f].some((l) => typeof l !== "string"))) return { error: `${f} must be an array of strings` };
+	if (t.sp !== undefined && t.sp !== null && (typeof t.sp !== "number" || !Number.isFinite(t.sp))) return { error: "sp must be a number" };
+	const body = {};
+	for (const f of LINT_FIELDS) if (t[f] !== undefined) body[f] = t[f];
+	return { route: "/ticket/lint", body, timeoutMs: 60000 };
+}
+
+// The findings DOCK's writing check returned, one line each: "block W2 ac line 2: text. Fix: fix".
+function lintText(lint) {
+	if (!lint || !Array.isArray(lint.findings)) return null;
+	const blocks = lint.findings.filter((f) => f.level === "block").length;
+	const warns = lint.findings.length - blocks;
+	const head = lint.findings.length ? `lint: ${blocks} block, ${warns} warn` : "lint: ok, no finding";
+	const lines = lint.findings.map((f) => `${f.level} ${f.rule} ${f.field}${f.line ? ` line ${f.line}` : ""}: ${f.text}${f.fix ? ` Fix: ${f.fix}` : ""}`);
+	return [head, ...lines].join("\n");
+}
+
 // RFC 4180 CSV: quoted cells, doubled quotes, newlines inside quotes, CRLF.
 function parseCsv(text) {
 	const rows = [];
@@ -309,6 +339,7 @@ function request(argv, readFile = (f) => fs.readFileSync(f, "utf8")) {
 	if (cmd === "visual") return visualRequest(rest, readFile);
 	if (cmd === "new") return newRequest(rest, readFile);
 	if (cmd === "revise") return reviseRequest(rest, readFile);
+	if (cmd === "lint") return lintRequest(rest, readFile);
 	const sprint = String(rest[0] || "").trim();
 	if (cmd === "storyboard") {
 		const epic = keyOf(rest[0]);
@@ -400,11 +431,21 @@ async function run(argv, deps = {}) {
 	else if (argv[0] === "new" && argv[1] !== "rm" && r.result?.id) out(`${r.result.id}\n${JSON.stringify(r.result, null, 2)}`);
 	else if (argv[0] === "revise" && argv[1] !== "rm" && r.result?.revision) out(revisionText(r.result));
 	else out(JSON.stringify(r.result, null, 2));
+	if (r.code) return r.code;
+	if (argv[0] === "lint") {
+		const text = lintText(r.result);
+		if (text) out(text);
+		return r.result?.ok === false ? 4 : 0;
+	}
+	if ((argv[0] === "new" || argv[0] === "revise") && argv[1] !== "rm") {
+		const text = lintText(r.result?.lint);
+		if (text) out(text);
+	}
 	return r.code;
 }
 
 if (require.main === module) {
 	run(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (e) => { console.error(`sprint-draft: ${e.message || e}`); process.exitCode = 1; });
 } else {
-	module.exports = { request, call, run, acLines, tcProblem, summaryProblem, newTicketProblem, revisionProblem, revisionText, parseCsv, sheetCsvUrl, sheetRows };
+	module.exports = { request, call, run, acLines, tcProblem, summaryProblem, newTicketProblem, revisionProblem, revisionText, lintText, lintRequest, parseCsv, sheetCsvUrl, sheetRows };
 }

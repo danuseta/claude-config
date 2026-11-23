@@ -101,7 +101,30 @@ The planner can ask for tickets that do not exist yet, in chat or as rows of a G
    - Write the AC from what you found: one line per moment the behaviour must hold (first connect, reconnect, edit, import…), per condition that changes the result (empty or missing value, another channel type, a value set by hand…), and a line that names what must stay as it is.
    - What the thread and the code do not settle is a question, not an AC line: ask it in the chat and wait. If the planner says to draft anyway, end the Problem Definition with `Open to confirm:` and the questions.
    - When the request is larger than one ticket (several screens, BE and FE, more than about 8 SP), propose the split in the chat, one line per ticket with its SP, and draft only what the planner agrees to.
-5. Write the ticket in English, QRD format, to a JSON file in the scratchpad:
+### Writing standard (every Jira field you write)
+
+Tickets are read by people and by the QA bot. DOCK checks every draft and revision against the rules below (the same checker `node "$D" lint --file <json>` calls); a `block` finding keeps the ticket out of Jira unless the owner chooses "Create with flag". Write to pass it the first time.
+
+| Rule | Level | What the text must do |
+|---|---|---|
+| W1 | block | AC exists. No `TBD`, `-`, `N/A`, `to be defined` or empty bullet as a line. A part you cannot write is a question in the chat, or its own ticket. |
+| W2 | block | Every AC line says what a tester sees. No `works correctly`, `work properly`, `as expected`, `user friendly`, `properly`, `correctly`, `sesuai`, `dengan baik`, `berjalan normal`, `optimal`, `seamless`, `intuitive`. Name the screen, the action, and the visible result. |
+| W3 | block | An AC line that names another QRD key is a dependency: the ticket has an "is blocked by" link to it. Information about another ticket goes in Reference. |
+| W4 | block | A Bug has an Expected and an Actual part, in the description or the AC (`Expected` / `Actual`, `Seharusnya` / `Aktual`). |
+| W5 | warn | Summary starts with `[FE]`, `[BE]` or an area prefix, is at most 100 characters, says what changes, and is not an implementation plan (no "Implement ... component/resolver/function"). |
+| W6 | warn | Plain words for a human: no `path:line` (`File.tsx:42`), `GUESS`, `D-<n>`, `T<n>`, `I-<n>`, `ledger`, `sous`. An AC line is at most 30 words and holds one behaviour (not three joined by "and" / "dan"). |
+| W7 | warn | User Story and Problem Definition are filled, in ordinary sentences. |
+| W8 | warn | SP below 5. At 5 or more, split the ticket. |
+
+Humanizer checklist, for every field (summary, User Story, Problem Definition, AC, Reference, Open to confirm). Keep what the AC asks; change only how it reads:
+- Say the plain thing: "is", "has", "shows", not "serves as", "boasts", "features". Name who does what; use active voice.
+- Cut significance and promotion words: pivotal, crucial, key, robust, seamless, powerful, comprehensive, vibrant, testament, landscape, enhance, foster, leverage, showcase.
+- Cut tail phrases that add nothing ("ensuring ...", "highlighting ...", "in order to", "it is important to note that", "at the end of the day") and generic closing lines.
+- No "not just X, but Y", no groups of three used for rhythm, no em dash for effect, no bold or emoji in a field, no title-case headings inside a field.
+- Use one word for one thing; do not rotate synonyms. Give the concrete value, number, label or example instead of "various" or "several".
+- Read the field aloud once. If it sounds like a report and not like a teammate, rewrite it.
+
+5. Write the ticket in English, QRD format, by the writing standard above, to a JSON file in the scratchpad:
 
         { "summary": "[BE][Workflow] ...", "type": "Task", "epic": "QRD-1400", "dev": "<name>", "sp": 3, "priority": "Medium",
           "userStory": "As a ... I want ... so that ...", "problem": "...", "ac": ["..."],
@@ -112,6 +135,7 @@ The planner can ask for tickets that do not exist yet, in chat or as rows of a G
    - `reference` (up to 2000) keeps the Discord or source link and anything about other tickets.
    - Propose `type` (Task, Story or Bug; Task by default), `sp` (0-100) and `dev` in the chat table with the reason, as in section 3, and write what the planner agrees to. `epic` must be an existing epic key or left out.
 6. Publish it to the draft: `node "$D" new <sprint> --file <draft.json>`. It prints the `NEW-n` id. To change a draft, run it again with `--id NEW-n`; to remove one: `node "$D" new rm <sprint> --id NEW-n`. Then `get` the draft and check the ticket is in `newTickets`.
+7. **Read the `lint` it returned.** `new` prints DOCK's writing check after the JSON, one line per finding (`block` or `warn`, the rule, the field and AC line, the problem, a fix). Fix every `block` finding in the draft file and run `new ... --id NEW-n` again; repeat until no `block` finding is left. Fix the `warn` findings too unless fixing one would change what the AC asks (a split or an SP change is the planner's call: say it in the chat). Check a text before saving it with `node "$D" lint --file <json>` when you want to. Report to the planner only after the last save, and name any `warn` finding you left and why. If DOCK did not answer, say so; do not claim the ticket passed.
 
 ## 7. Changing tickets that exist
 
@@ -126,9 +150,10 @@ The planner can ask to rewrite a ticket that already exists in Jira, in the spri
 
    - Limits as in section 6: `summary` 1-200, `type` Task, Story or Bug, `userStory`, `problem` and `openToConfirm` up to 4000, `reference` up to 2000, `ac` up to 40 lines of 1000. `ac` is the full new list, not a patch.
    - These are the only fields. Never assignee, sprint, status, labels, links, parent or priority, even when the planner asks; say it is theirs to change in Jira.
-4. Save it: `node "$D" revise <sprint> --key QRD-n --file <rev.json>`. It prints the before and after DOCK read from Jira, one field per block; check them against what you meant. One revision per ticket: running it again replaces the pending one. To drop it: `node "$D" revise rm <sprint> --key QRD-n`.
+4. Save it: `node "$D" revise <sprint> --key QRD-n --file <rev.json>`. It prints the before and after DOCK read from Jira, one field per block; check them against what you meant. Then read the `lint` printed after them (it checks the "after" values): fix every `block` finding and save again until none is left, as in section 6 step 7. The writing standard of section 6 applies to every field you change. One revision per ticket: running it again replaces the pending one. To drop it: `node "$D" revise rm <sprint> --key QRD-n`.
 5. A ticket too big for one is a split, not a revision: propose it in the chat, one line per part with its SP. When the planner agrees, draft the parts with `new` (section 6), each Reference starting "Split from QRD-x", and revise QRD-x down to what stays.
-6. Tell the planner to review it in Planning › Tickets › Revisions and press Apply to Jira. If Jira changed after the revision was written, Apply is refused; write it again.
+6. **Humanize requests.** A message like `Humanize <KEY> for sprint "<sprint>": rewrite its fields for a human reader by the writing standard without changing what the AC asks, and save a revision for me to review.` is a revision, never a direct change: read the ticket (step 1), rewrite only the fields that fail the standard or read like an agent wrote them (keep every AC line's meaning, behaviour count and QRD key; a part that needs a split or an answer is a chat question), save it with `revise`, fix the returned `block` findings, and tell the planner what changed and why in a short table. Leave a field alone when it already passes.
+7. Tell the planner to review it in Planning › Tickets › Revisions and press Apply to Jira. If Jira changed after the revision was written, Apply is refused; write it again.
 
 ## 8. Close each turn
 
