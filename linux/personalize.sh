@@ -251,6 +251,15 @@ s_install() {
   note "applied"
 }
 
+# QA v2 skill from the newest release (kit/qa-skill-sync.sh) and the qonflo-qa-local command from the kit (kit/qa-local/install.sh).
+s_qa() {
+  local kit=$CCFG_CLAUDE_DIR/kit
+  [ -f "$kit/qa-skill-sync.sh" ] && [ -f "$kit/qa-local/install.sh" ] || { note "kit has no QA scripts yet"; return 10; }
+  if [ "$DRY" = 1 ]; then note "would run qa-skill-sync.sh and qa-local/install.sh"; return 0; fi
+  bash "$kit/qa-local/install.sh" || return 1
+  bash "$kit/qa-skill-sync.sh" >"$STEP_NOTE" 2>&1 || return 1
+}
+
 s_coord() {
   local created=0 dirty
   [ "$ENABLE_QONFLO_COORD" = 1 ] || { note "switch ENABLE_QONFLO_COORD is off"; return 10; }
@@ -617,6 +626,7 @@ main() {
   step pdftools s_pdftools 300
   step secrets s_secrets
   step install s_install 300
+  step qa s_qa 600
   step brainhooks s_brainhooks
   step coord s_coord 300
   step tailscale s_tailscale 300
