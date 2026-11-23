@@ -30,13 +30,13 @@ const EXIT = { LOLOS: 0, REVISION: 1, INPUT: 2, ESCALATED: 3, INFRA: 4, BUSY: 5 
 
 const USAGE = `usage: qonflo-qa-local <KEY> [--be <worktree> --fe <worktree>] [--keep-stack]
        qonflo-qa-local <KEY> --no-stack --be-url <http://localhost:PORT> --fe-url <http://localhost:PORT>
-       qonflo-qa-local <KEY> --triage-stop <CODE> "<reason>"
+       qonflo-qa-local <KEY> --triage-stop <CODE> "<reason>" [--fe <FE-KEY> [--fe-status "<status>"]]
        qonflo-qa-local --stop <run folder>
        qonflo-qa-local --help
 
 Runs the Playwright specs in ${QA_LOCAL}/tests/<KEY>/ against a local stack and writes
 ${QA_LOCAL}/runs/<KEY>/<UTC timestamp>/ with videos/<TC-id>.webm, results.json, summary.md
-and a verdict prediction (LOLOS, REVISION or ESCALATED).
+and a verdict prediction (LOLOS, REVISION, ESCALATED or FOLLOWS_FE).
 
 Inputs (written by an agent step first, see ${QA_CODE}/README.md):
   tests/<KEY>/ac.json     key, summary, fetchedAt, ac[] from Jira customfield_10332, tcs[]
@@ -54,6 +54,8 @@ Options:
   --triage-stop <CODE> "<reason>"
                     record a run that stopped at triage or review: verdict ESCALATED with a v2 reason code
                     (${REASON_CODES.join(", ")}); starts no stack and no Playwright
+                    with FE_LINKED, --fe <FE-KEY> names the paired FE ticket the BE ticket follows: verdict
+                    FOLLOWS_FE and followsFe {key, status}; --fe-status is that ticket's Jira status
 
 Users: local@test.com (QONFLO_PASS_FILE or ~/.qonflo-pass) and local2@test.com
 (QONFLO_PASS_FILE_2, else the same file). Logins go through ${KIT}/login-state.cjs.
@@ -82,7 +84,7 @@ function fail(code, msg) {
 }
 
 function parseArgs(argv) {
-	const o = { key: null, be: null, fe: null, keepStack: false, noStack: false, beUrl: null, feUrl: null, help: false, stop: null, triageStop: null };
+	const o = { key: null, be: null, fe: null, feStatus: null, keepStack: false, noStack: false, beUrl: null, feUrl: null, help: false, stop: null, triageStop: null };
 	const value = (i, name) => {
 		if (i >= argv.length || argv[i].startsWith("--")) throw new UsageError(`${name} needs a value`);
 		return argv[i];
@@ -94,6 +96,7 @@ function parseArgs(argv) {
 		else if (a === "--fe") o.fe = value(++i, a);
 		else if (a === "--be-url") o.beUrl = value(++i, a);
 		else if (a === "--fe-url") o.feUrl = value(++i, a);
+		else if (a === "--fe-status") o.feStatus = value(++i, a);
 		else if (a === "--stop") o.stop = value(++i, a);
 		else if (a === "--triage-stop") {
 			o.triageStop = { code: value(++i, a), reason: value(++i, "--triage-stop <CODE> needs a reason;") };
@@ -240,6 +243,11 @@ function triageStop(key, opts) {
 	const { code, reason } = opts.triageStop;
 	if (!REASON_CODES.includes(code)) fail(EXIT.INPUT, `--triage-stop code must be one of ${REASON_CODES.join(", ")}`);
 	if (!reason.trim()) fail(EXIT.INPUT, "--triage-stop needs a reason");
+	const feKey = opts.fe ? opts.fe.toUpperCase() : null;
+	if (feKey && code !== "FE_LINKED") fail(EXIT.INPUT, "--triage-stop takes --fe only with FE_LINKED");
+	if (feKey && !/^[A-Z][A-Z0-9]*-\d+$/.test(feKey)) fail(EXIT.INPUT, `--fe "${opts.fe}" with --triage-stop must be the FE ticket key, like QRD-1582`);
+	if (opts.feStatus && !feKey) fail(EXIT.INPUT, "--fe-status needs --fe <FE-KEY>");
+	const followsFe = feKey ? { key: feKey, status: opts.feStatus && opts.feStatus.trim() ? opts.feStatus.trim() : null } : null;
 	const lockFile = acquireLock(key);
 	try {
 		const startedAt = new Date().toISOString();
@@ -248,9 +256,16 @@ function triageStop(key, opts) {
 		fs.mkdirSync(runDir, { recursive: true });
 		const prog = progress.create(runDir, { key, runId: stamp, startedAt, tcs: [], external: false });
 		for (const id of ["stack", "login", "tests"]) prog.step(id, "skipped");
-		const text = `Stopped at triage or review, no test was run. Reason code ${code}: ${reason.trim()}`;
+		const text = followsFe
+			? `Follows FE ${followsFe.key}${followsFe.status ? ` (${followsFe.status})` : ""}: the BE ticket takes the result of its FE pair, no test was run. Reason code ${code}: ${reason.trim()}`
+			: `Stopped at triage or review, no test was run. Reason code ${code}: ${reason.trim()}`;
 		const counts = { Passed: 0, "Passed with Note": 0, Failed: 0, Blocked: 0 };
-		const verdict = { prediction: "ESCALATED", rule: "J-ESCALATED", ruleText: "The run stopped at triage or review (triage-rules.md, reviewer.md); nothing was tested.", reasons: [text], reasonCode: code };
+		const status = followsFe ? "FOLLOWS_FE" : "ESCALATED";
+		const rule = followsFe ? "J-FOLLOWS-FE" : "J-ESCALATED";
+		const ruleText = followsFe
+			? "The BE ticket follows the result of its FE pair (triage-rules.md, \"Pasangan FE dan BE beda tiket\"); nothing was tested here."
+			: "The run stopped at triage or review (triage-rules.md, reviewer.md); nothing was tested.";
+		const verdict = { prediction: status, rule, ruleText, reasons: [text], reasonCode: code };
 		const finishedAt = new Date().toISOString();
 		const results = {
 			schema: "qonflo-qa-local/1",
@@ -263,29 +278,31 @@ function triageStop(key, opts) {
 			stoppedAt: "triage",
 			reasonCode: code,
 			reason: reason.trim(),
+			...(followsFe ? { followsFe } : {}),
 			verdict,
 			stack: { mode: "none", be: {}, fe: {}, stopped: [], protectedPorts: [] },
 			users: [],
 			counts,
 			tcs: [],
 			ac: [],
-			tickets: [{ ticket: key, action: "TEST", round: 1, ticketStatus: "ESCALATED", counts, flaky: 0, transition: "SKIP", reason: text.slice(0, 1000), durationSec: 0 }],
+			tickets: [{ ticket: key, action: "TEST", round: 1, ticketStatus: status, counts, flaky: 0, transition: "SKIP", reason: text.slice(0, 1000), durationSec: 0 }],
 			verdictIn: [],
 		};
 		fs.writeFileSync(path.join(runDir, "results.json"), JSON.stringify(results, null, 2) + "\n");
 		const summary = [
 			`# Run summary ${stamp}`,
 			"",
-			`**${key}**: stopped at triage or review, status **ESCALATED** (rule J-ESCALATED). No stack, no Playwright, no Jira label, no transition, no Confluence row.`,
+			`**${key}**: stopped at triage or review, status **${status}** (rule ${rule}). No stack, no Playwright, no Jira label, no transition, no Confluence row.`,
 			"",
+			...(followsFe ? [`- Follows FE: ${followsFe.key}${followsFe.status ? ` (${followsFe.status})` : ""}`] : []),
 			`- Reason code: ${code}`,
 			`- Reason: ${reason.trim().split(/\r?\n/).join(" ")}`,
 			"",
 		];
 		fs.writeFileSync(path.join(runDir, "summary.md"), summary.join("\n"));
-		prog.done({ tcs: [], verdict, counts });
+		prog.done({ tcs: [], verdict, counts, followsFe });
 		log(`run folder ${runDir}`);
-		log(`verdict prediction ESCALATED (rule J-ESCALATED), stopped at triage: ${code}`);
+		log(`verdict prediction ${status} (rule ${rule}), stopped at triage: ${code}${followsFe ? `, follows ${followsFe.key}` : ""}`);
 		return EXIT.ESCALATED;
 	} finally {
 		releaseLock(lockFile);
@@ -516,6 +533,7 @@ async function main() {
 	if (!/^[A-Z][A-Z0-9]*-\d+$/.test(key)) fail(EXIT.INPUT, `"${opts.key}" is not a ticket key like QRD-1286`);
 	if (!opts.noStack && (opts.beUrl || opts.feUrl)) fail(EXIT.INPUT, "--be-url and --fe-url work only with --no-stack");
 	if (opts.noStack && (opts.be || opts.fe || opts.keepStack)) fail(EXIT.INPUT, "--no-stack does not take --be, --fe or --keep-stack");
+	if (opts.feStatus && !opts.triageStop) fail(EXIT.INPUT, "--fe-status works only with --triage-stop");
 	if (opts.triageStop) return triageStop(key, opts);
 	const inputs = loadInputs(key);
 	if (!fs.existsSync(PW_CLI)) fail(EXIT.INPUT, `no Playwright runner at ${PW_CLI}; it looks in ~/qa/node_modules and ~/.claude/kit/qa-local/node_modules; run ccfg update (or personalize.sh --only=qa) again`);

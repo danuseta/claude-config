@@ -1,0 +1,29 @@
+{
+  "source": "Shape of the QRD-1579 [BE] / QRD-1582 [FE] pair of 2026-11-23: QA local stopped QRD-1579 with FE_LINKED because DOCK published only a Blocks link (QRD-1579 blocks QRD-1582). AC text shortened.",
+  "tickets": [
+    {
+      "key": "QRD-1579",
+      "summary": "[BE][Playbook] Save the playbook step order",
+      "ac": ["[API] PATCH /playbooks/:id/steps stores the new order", "[UI] Playbook editor: the steps keep their order after a reload"],
+      "links": [{ "key": "QRD-1582", "type": "blocks" }]
+    },
+    {
+      "key": "QRD-1582",
+      "summary": "[FE][Playbook] Reorder playbook steps by drag and drop",
+      "ac": ["The playbook editor lets the user drag a step to a new position", "The new order is kept after a reload"],
+      "links": [{ "key": "QRD-1579", "type": "is blocked by" }]
+    },
+    {
+      "key": "QRD-1590",
+      "summary": "[BE] Index the playbook run table",
+      "ac": ["[Dev evidence] A migration adds the index on playbook_runs.workspace_id"],
+      "links": [{ "key": "QRD-1591", "type": "is tested by", "summary": "[FE] Playbook run list" }]
+    },
+    {
+      "key": "QRD-1595",
+      "summary": "[BE] Expose the playbook export endpoint",
+      "ac": ["[API] GET /playbooks/:id/export answers 200 with the JSON file"],
+      "links": [{ "key": "QRD-1596", "type": "relates to", "summary": "[BE] Export worker" }]
+    }
+  ]
+}

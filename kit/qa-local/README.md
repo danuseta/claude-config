@@ -31,7 +31,7 @@ Every `node` call below runs with `QA_MAP_DIR=~/qa-local/feature-map` so the scr
 > Prepare `~/qa-local/tests/<KEY>/` for `qonflo-qa-local`, following the QA v2 flow against this workspace's local stack. Write nothing outside `~/qa-local`.
 >
 > 1. **Ticket.** Get the Atlassian `cloudId` from `getAccessibleAtlassianResources`. Fetch `<KEY>` with `getJiraIssue` (`view: "evidence"`, fields `summary`, `description`, `issuelinks`, `customfield_10332`). This read is the only Jira call allowed. Number the AC lines as `triage-rules.md` "Mencari AC" says (AC-1, AC-2, ... top to bottom across groups), exactly as written. Save the raw ticket text (title, description, AC as written) to `P/ticket.md`.
-> 2. **Triage** per `S/triage-rules.md`: decide `UJI`, `ESKALASI`, `LEWATI` or `FOLLOW`. Do not decide `DATA_PRASYARAT` here (the rules say so). Write `T/triage.json` with the entry shape of "Kode alasan" and "LEWATI"/"FOLLOW" (`ticket`, `decision`, `reason`, `reasonCode`, `acs`). Anything but `UJI` stops the run: write no plan and no spec, and record the stop with `qonflo-qa-local <KEY> --triage-stop <reasonCode> "<reason>"` (no stack, no Playwright; it writes a run folder with verdict ESCALATED that DOCK shows). `LEWATI` is `BE_ONLY`, `FOLLOW` and a pair FE ticket without a result are `FE_LINKED`, the rest use the code the rules name. Then end with one line `ESCALATED <reasonCode>: <reason>`. No label, no comment, no transition, no `triage-skip.mjs`, `triage-follow.mjs` or `triage-rfp.mjs`.
+> 2. **Triage** per `S/triage-rules.md`: decide `UJI`, `ESKALASI`, `LEWATI` or `FOLLOW`. Do not decide `DATA_PRASYARAT` here (the rules say so). Write `T/triage.json` with the entry shape of "Kode alasan" and "LEWATI"/"FOLLOW" (`ticket`, `decision`, `reason`, `reasonCode`, `acs`). Anything but `UJI` stops the run: write no plan and no spec, and record the stop with `qonflo-qa-local <KEY> --triage-stop <reasonCode> "<reason>"` (no stack, no Playwright; it writes a run folder with verdict ESCALATED that DOCK shows). `LEWATI` is `BE_ONLY`, `FOLLOW` and a pair FE ticket without a result are `FE_LINKED`, the rest use the code the rules name. When the BE ticket has a paired FE ticket (`FOLLOW`, or `FE_LINKED` with the FE key known), add `--fe <FE-KEY> --fe-status "<FE status>"`: the run folder then holds `followsFe` and verdict `FOLLOWS_FE`, and DOCK shows it as following that FE ticket, not as escalated; end with `FOLLOWS_FE <FE-KEY>: <reason>`. Otherwise end with one line `ESCALATED <reasonCode>: <reason>`. No label, no comment, no transition, no `triage-skip.mjs`, `triage-follow.mjs` or `triage-rfp.mjs`.
 > 3. **Perencana** per `S/planner.md`, steps 1 to 9, with the format of `S/plan-schema.md` (example: `S/plan-example.json`). Scan the local frontend (the stack is not running yet: start it with `~/.claude/kit/stack.sh up` for the ticket's worktrees, and stop it when the plan is done), write `P/elements.md`, and use `M/<object>.md` for the feature maps (bootstrap a draft map there when `planner.md` step 4 says so; copy a map from `~/qa/feature-map/` first when it exists). Write `P/plan.json`, then run:
 >    ```
 >    node ~/.claude/skills/skill-qonflo-qa/scripts/plan-filter.mjs filter P/plan.json --out P/plan.json
@@ -112,12 +112,14 @@ test.describe("as local2", () => {
 ```
 qonflo-qa-local <KEY> [--be <worktree> --fe <worktree>] [--keep-stack]
 qonflo-qa-local <KEY> --no-stack --be-url http://localhost:<port> --fe-url http://localhost:<port>
-qonflo-qa-local <KEY> --triage-stop <CODE> "<reason>"
+qonflo-qa-local <KEY> --triage-stop <CODE> "<reason>" [--fe <FE-KEY> [--fe-status "<status>"]]
 qonflo-qa-local --stop <run folder>
 qonflo-qa-local --help
 ```
 
 `--triage-stop` records a run that ended at triage or review: `<CODE>` is a v2 reason code (`BE_ONLY`, `MCP_LUAR`, `DEPENDENSI`, `DATA_PRASYARAT`, `PIHAK_KETIGA`, `AKUN_KEDUA`, `FE_LINKED`, `PARSIAL`, `LAINNYA`). It starts no stack and no Playwright, takes the one-run lock, and writes `runs/<KEY>/<UTC>/` with `progress.json` (state `done`, steps skipped, `tcs` empty, verdict `ESCALATED`, rule `J-ESCALATED`), `summary.md` and `results.json` (`stoppedAt`, `reasonCode`, `reason`). Exit 3.
+
+With `FE_LINKED`, `--fe <FE-KEY>` names the FE ticket a BE ticket follows (`--fe` is a ticket key here, not a worktree) and `--fe-status` its Jira status: `results.json` and `progress.json` get `followsFe: { key, status }`, the verdict is `FOLLOWS_FE` with rule `J-FOLLOWS-FE` instead of `ESCALATED`, and the exit code stays 3 because nothing was tested.
 
 What it does:
 

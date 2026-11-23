@@ -6,12 +6,15 @@
 //
 // Usage:  node qa-predict.mjs < tickets.json
 //
-// stdin:  {"tickets":[{"key":"QRD-1","summary":"...","ac":["line",...],"waitsOn":[{"key":"QRD-2","endDay":4}],"endDay":3}]}
+// stdin:  {"tickets":[{"key":"QRD-1","summary":"...","ac":["line",...],"waitsOn":[{"key":"QRD-2","endDay":4}],"endDay":3,
+//           "links":[{"key":"QRD-3","type":"is tested by","summary":"[FE] ..."}]}]}
 //   ac       the Acceptance Criteria bullets in order. A line that is only "FE" or "BE" (also "**BE**", "*BE*") is a
 //            group header, not an AC line; lines after a "BE" header are system lines (see below).
 //   waitsOn  tickets this one depends on, with the sprint day each lands in UAT. endDay is this ticket's day.
 //            Every ticket in the same input also counts, by its own endDay.
-// stdout: {"results":[{"key":"QRD-1","prediction":"LOLOS"|"ESCALATED","reasons":["..."],"fix":null|"..."}]}
+//   links    optional Jira links of the ticket: type is the link as read from this ticket ("tests", "is tested by",
+//            "blocks", "is blocked by", "relates to"); summary is the other ticket's, else its summary in the same input.
+// stdout: {"results":[{"key":"QRD-1","prediction":"LOLOS"|"ESCALATED"|"FOLLOWS_FE","reasons":["..."],"fix":null|"...","followsFe":"QRD-3"}]}
 //
 // Each reason names the AC line (AC-n, numbered top to bottom across groups, as triage-rules.md "Mencari AC" does),
 // a v2 reason code (scripts/reason-codes.mjs: DEPENDENSI, PIHAK_KETIGA, LAINNYA) or a warning, and the rule it comes from.
@@ -20,7 +23,10 @@
 // accounts-check.mjs, an all-system ticket is explored in the UI or follows its FE ticket).
 //
 // Prediction, strongest first:
-//   ESCALATED      no AC, a placeholder line, a line too vague to verify (v2 marks it Blocked), or any line blocked by a
+//   ESCALATED      no AC
+//   FOLLOWS_FE     a [BE] ticket with an FE pair: a Test link ("tests" / "is tested by"), else another link to an [FE]
+//                  ticket; the bot takes the FE ticket's result instead of testing it (followsFe names the FE key)
+//   ESCALATED      a placeholder line, a line too vague to verify (v2 marks it Blocked), or any line blocked by a
 //                  dependency, a third party, or a role, plan or payment the test account lacks
 //   LOLOS          otherwise
 // REVISION-RISK is no longer produced: the only line it covered, a vague one, is Blocked in v2, so it is ESCALATED with LAINNYA.
@@ -32,6 +38,7 @@ import { fileURLToPath } from "node:url";
 
 const RULE = {
   noAc: "triage-rules.md \"Mencari AC\": AC tidak ditemukan atau placeholder -> ESKALASI",
+  fePair: "triage-rules.md \"Pasangan FE dan BE beda tiket\": tiket BE dengan pasangan FE tidak diuji terpisah, ia mengikuti hasil tiket FE (FOLLOW, atau ESKALASI FE_LINKED selama FE belum punya hasil)",
   systemOnly: "triage-rules.md \"Tiket BE only\": tidak langsung eskalasi; cari pasangan FE (FOLLOW atau FE_LINKED), selain itu jelajah UI (UJI atau LEWATI)",
   dependency: "triage-rules.md \"Kode alasan\" DEPENDENSI (fitur atau tiket yang dibutuhkan belum ada di UAT) dan \"Setengah bisa diuji\"",
   thirdParty: "triage-rules.md \"Selalu eskalasi\", kode PIHAK_KETIGA",
@@ -45,6 +52,8 @@ const RULE = {
 const PLACEHOLDER = /^\s*(tbd|to be defined|tba|-+|n\/?a|none|kosong)?\s*\.?\s*$/i;
 const HEADER = /^\s*\**\s*(FE|BE)\s*\**\s*:?\s*$/i;
 const KEY = /\b[A-Z][A-Z0-9]+-\d+\b/g;
+const TAG_GROUP = /^\s*((?:\[[^\]]*\]\s*)+)/;
+const TEST_LINK = /^(tests|is tested by)$/i;
 
 // A sentence that hands its part to another ticket ("is built in QRD-1297", "not part of this ticket's test",
 // "until QRD-1292 ships that section is hidden") is not this ticket's AC (SKILL.md rule 8), so its keys are not a dependency.
@@ -98,6 +107,12 @@ function validate(input) {
     seen.add(t.key);
     if (t.ac !== undefined && (!Array.isArray(t.ac) || t.ac.some((l) => typeof l !== "string"))) reject(`${where}: 'ac' must be an array of strings`);
     if (t.endDay !== undefined && !Number.isFinite(t.endDay)) reject(`${where}: 'endDay' must be a number`);
+    if (t.links !== undefined) {
+      if (!Array.isArray(t.links)) reject(`${where}: 'links' must be an array`);
+      t.links.forEach((l, j) => {
+        if (!l || typeof l.key !== "string" || typeof l.type !== "string") reject(`${where}.links[${j}]: needs 'key' and 'type'`);
+      });
+    }
     if (t.waitsOn !== undefined) {
       if (!Array.isArray(t.waitsOn)) reject(`${where}: 'waitsOn' must be an array`);
       t.waitsOn.forEach((w, j) => {
@@ -123,7 +138,22 @@ function acLines(ac) {
   return lines;
 }
 
-function predictOne(t, dayOf) {
+/** True when the summary starts with a group of bracket tags holding [tag], as "[BE][Playbook] ..." does. */
+function tagged(summary, tag) {
+  const group = String(summary || "").match(TAG_GROUP);
+  return !!group && (group[1].match(/\[[^\]]*\]/g) || []).some((t) => t.slice(1, -1).trim().toUpperCase() === tag);
+}
+
+/** The FE tickets a [BE] ticket follows: its Test links (the sure marker), else other links to an [FE] ticket. */
+function fePair(t, summaryOf) {
+  if (!tagged(t.summary, "BE")) return [];
+  const links = t.links || [];
+  const tests = links.filter((l) => TEST_LINK.test(l.type.trim())).map((l) => l.key);
+  if (tests.length) return [...new Set(tests)];
+  return [...new Set(links.filter((l) => tagged(l.summary ?? summaryOf(l.key), "FE")).map((l) => l.key))];
+}
+
+function predictOne(t, dayOf, summaryOf) {
   const reasons = [];
   const fixes = [];
   const causes = new Set();
@@ -136,6 +166,16 @@ function predictOne(t, dayOf) {
       prediction: "ESCALATED",
       reasons: [`[LAINNYA] No AC: the Acceptance Criteria field is empty or a placeholder (${RULE.noAc})`],
       fix: "Write the Acceptance Criteria before the sprint starts",
+    };
+  }
+  const pair = fePair(t, summaryOf);
+  if (pair.length) {
+    return {
+      key: t.key,
+      prediction: "FOLLOWS_FE",
+      reasons: [`[FE_LINKED] Follows FE ${pair.join(", ")}: the BE ticket takes its FE pair's QA result and is not tested on its own (${RULE.fePair})`],
+      fix: null,
+      followsFe: pair[0],
     };
   }
   if (lines.every((l) => l.system)) {
@@ -213,7 +253,8 @@ export function predict(input) {
     if (w) return w.endDay;
     return days.has(k) ? days.get(k) : null;
   };
-  return { results: input.tickets.map((t) => predictOne(t, dayOf)) };
+  const summaries = new Map(input.tickets.map((t) => [t.key, t.summary]));
+  return { results: input.tickets.map((t) => predictOne(t, dayOf, (k) => summaries.get(k))) };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
