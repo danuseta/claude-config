@@ -14,6 +14,40 @@ def load_json(path):
         return json.load(handle)
 
 
+KAMUS_NAME = "kamus-pengucapan.md"
+
+
+def kamus_path():
+    """The workspace's pronunciation glossary at the blackboard root, shown in DOCK under Blackboard; None when there is none."""
+    explicit = os.environ.get("DEMO_KAMUS_FILE")
+    if explicit:
+        return explicit if os.path.isfile(explicit) else None
+    roots = [os.environ.get("DOCK_BLACKBOARD_DIR"), os.path.expanduser("~/projects/.evidence"), "E:/qonflo/.evidence"]
+    for root in roots:
+        if root and os.path.isfile(os.path.join(root, KAMUS_NAME)):
+            return os.path.join(root, KAMUS_NAME)
+    return None
+
+
+def load_kamus(path):
+    """Rows of the markdown table `| Tulisan | Dibaca |`: written form -> spoken form. Header, separator and empty cells are skipped."""
+    table = {}
+    if not path:
+        return table
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line.startswith("|"):
+                continue
+            cells = [cell.strip().strip("`") for cell in line.strip("|").split("|")]
+            if len(cells) < 2 or not cells[0] or not cells[1]:
+                continue
+            if re.fullmatch(r"[-: ]+", cells[0]) or cells[0].lower() in ("tulisan", "written"):
+                continue
+            table[cells[0]] = cells[1]
+    return table
+
+
 ONES = ["nol", "satu", "dua", "tiga", "empat", "lima", "enam", "tujuh", "delapan", "sembilan"]
 
 
@@ -104,11 +138,14 @@ def main():
     workdir = os.path.dirname(scenario_path)
     scenario = load_json(scenario_path)
     lexicon = load_json(os.path.join(SKILL_DIR, "lexicon.json"))
+    kamus = kamus_path()
+    lexicon["spoken"] = {**lexicon.get("spoken", {}), **load_kamus(kamus)}
     voice = scenario.get("voice", {"provider": "edge"})
     provider = voice.get("provider", "edge")
     os.makedirs(os.path.join(workdir, "audio"), exist_ok=True)
 
     if len(sys.argv) > 2 and sys.argv[2] == "--say":
+        print(f"kamus: {kamus or 'none'}")
         for step in scenario["steps"]:
             for show in step.get("lines", []):
                 print(f"{show}\n  -> {spoken_text(show, scenario, lexicon)}")
