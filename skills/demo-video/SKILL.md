@@ -53,7 +53,7 @@ The default voice stays ElevenLabs **Chris** (`iP95p4xoKVk53GoZ742B`) on `eleven
 - `AC4` → "A C empat";
 - `PR #928` → "P R sembilan dua delapan".
 
-A scenario can add its own terms under `"lexicon"`. Subtitles always show the written form (`QRD-1261`, `SKILL.md`), and `align.py` maps the spoken words back onto them.
+The workspace can keep its own terms in `kamus-pengucapan.md` at the blackboard root (`DOCK_BLACKBOARD_DIR`, else `~/projects/.evidence`; `DEMO_KAMUS_FILE` overrides), a markdown table `| Tulisan | Dibaca |` that DOCK shows under Blackboard. It wins over `lexicon.json`; `--say` prints which file it read. A scenario can add its own terms under `"lexicon"`, and those win over both. Subtitles always show the written form (`QRD-1261`, `SKILL.md`), and `align.py` maps the spoken words back onto them.
 
 Write narration the way people talk:
 - short sentences, one idea each, 1–2 lines per step;
