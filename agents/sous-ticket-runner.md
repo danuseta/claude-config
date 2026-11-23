@@ -51,6 +51,7 @@ Example. Bad: "Bench tulis selesai: di 200k baris, add satu baris 18 s (handler 
    4. **Planner:** `sous-planner` (model opus) with key, the next free `S<n>` in `PROMPTS` (`S1` when it is empty), `BOARD`, `EPIC_BOARD` when there is one, `PROMPTS`, `ROOT`, `K`, the stack parent when there is one, and the intake's ambiguities. It reads `ac.txt` and `materials/`, writes the prompt with the AC rows, the contract and the **Terrain** section, and returns the branch slug, the base branch per repo and the repos. One `decide ... --status GUESS --by sous-planner --question "<what was unclear>" --rejected "<option>: <why not>"... --id "<its id part>"` per planner decision, from the question, the dropped options and the Indonesian line it returned.
 4. Worktrees: `bash K/prep-ticket.sh <KEY> <slug> <be-base or -> <fe-base or -> "<title>"`. It creates `ROOT/wt-<n>-be|fe` on branch `feat/<KEY>-<slug>` and the ledger dirs and ports. Never `git worktree` directly.
 5. Planner asked for exploration it could not finish: `sous-explorer` with the question and the worktree paths.
+5b. **Readiness.** The ticket prompt may carry the line `Readiness <done>/<total>: <what is missing>` (DOCK writes it only when something is missing; the item ids are `refs`, `open`, `summary`, `alone`, `data`, `tc`, `design`, `writing`, `qa`, and the line names each missing one by id or by its plain text). The ticket is still worked. For every missing item, record the assumption you work under as a decision, not a silent guess: `node K/status.cjs decide <KEY> "<the assumption, in one sentence>" --status GUESS --by sous-ticket-runner --question "<the missing item>" --rejected "<option>: <why not>" --id "<the same in one short casual Indonesian line>"` (for example `tc`: no approved test cases, so the AC lines are the test plan; `data`: no test data named, so the worker builds its own through the UI). Keep the `<done>/<total>` and the ids for the PR body (section 6). No line, no flag: skip this step.
 6. **Manual run:** `node K/status.cjs set <KEY> stage=plan waiting="GATE 1: plan in PROMPTS/S<n>.md"` and return `RESULT: GATE-1`. Stop. **Cron run:** go on.
 
 ## 2. Tasks
@@ -114,6 +115,7 @@ Stacked on <stackedOn.<repo>.pr>: merge that first.   (first line, only for a st
 Jira: https://<site>/browse/<KEY>
 Contract: Confluence <id> "<title>" v<version>   (or: Contract: not found (searched: <list>))
 Design: <artifact link>   (one line per artifact in materials/contract.md; omit when there is none)
+Readiness: <done>/<total> (flag: <ids>)   (only when the prompt had a Readiness line: copy its numbers, the missing item ids comma separated; omit otherwise)
 
 ## Changes
 - <file/symbol: what and why>
@@ -130,7 +132,7 @@ Design: <artifact link>   (one line per artifact in materials/contract.md; omit 
 <link from demo-upload, or "no video: D-<n> <why the feature is not visible in the app>", or "no video yet: I-<n> login state">
 
 ## Decisions taken without the owner
-- D-<n> (<status>, by <who>): <one sentence>
+- D-<n> (<status>, by <who>): <one sentence>   (the assumption of each missing readiness item is one of these)
 
 ## Open
 - I-<n>: <text> (waiting on the owner)   (or "none")

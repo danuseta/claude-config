@@ -20,6 +20,7 @@
 //                                          ELEVENLABS_API_KEY="$(node K/el-rotate.cjs get)" as the only substitution), el-rotate.cjs park,
 //                                          login-state.cjs, cp/rm into the folder, what `browser` allows for playwright-cli, mkdir and
 //                                          ffmpeg/ffprobe inside the folder, read-only file commands; nothing else
+//   sous-guard.cjs lint <root>...          Bash for sous-jira: only node <kit>/sprint-draft.cjs lint --file <json inside a root>
 //   sous-guard.cjs publish                 Bash for sous-publisher: git inside a worktree, add per path, commit -m, push of the current
 //                                          feat|fix/<KEY>-... branch, gh pr create|list|view; never add -A or ., never develop/main/master.
 //                                          gh pr create only on this machine's BE or FE repo, with a base from paths.cjs bases or the
@@ -448,6 +449,18 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 		return ghRepos;
 	};
 
+	// sous-jira's one shell command: the writing check, node <kit>/sprint-draft.cjs lint --file <json inside a root>.
+	function checkLint(cmd, roots) {
+		const bad = simple(cmd);
+		if (bad) return bad;
+		const w = words(cmd);
+		const kitNode = /(^|\/)kit-node$/.test(fwd(w[0] || "")) && norm(w[0]) === `${kit}/bin/kit-node`;
+		const file = w[1] ? fwd(w[1]) : "";
+		const own = kitNode ? file === "sprint-draft.cjs" : w[0] === "node" && norm(w[1] || "") === `${kit}/${win ? file.split("/").pop().toLowerCase() : file.split("/").pop()}` && file.split("/").pop() === "sprint-draft.cjs";
+		if (!own || w[2] !== "lint" || w[3] !== "--file" || !w[4] || w.length !== 5) return "the only shell command here is: node <kit>/sprint-draft.cjs lint --file <json file>";
+		return rootOf(norm(w[4]), roots) ? null : `lint reads a json file inside the evidence folder, not ${w[4]}`;
+	}
+
 	function checkPublish(cmd) {
 		const bad = simple(cmd);
 		if (bad) return bad;
@@ -620,6 +633,7 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 		if (mode === "verify") return tool === "Bash" ? checkVerify(String(ti.command || ""), roots) : null;
 		if (mode === "browser") return tool === "Bash" ? checkBrowser(String(ti.command || ""), roots) : null;
 		if (mode === "video") return tool === "Bash" ? checkVideo(String(ti.command || ""), roots) : null;
+		if (mode === "lint") return tool === "Bash" ? checkLint(String(ti.command || ""), roots) : null;
 		if (mode === "publish") return tool === "Bash" ? checkPublish(String(ti.command || "")) : null;
 		if (mode === "jira") return checkJira(tool, ti);
 		return `unknown guard mode ${mode}`;
