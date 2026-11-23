@@ -83,6 +83,7 @@ function create(runDir, { key, runId, startedAt, tcs, external }) {
 		state.verdict = results.verdict ? results.verdict.prediction : null;
 		state.rule = results.verdict ? results.verdict.rule : null;
 		state.counts = results.counts || null;
+		if (results.followsFe) state.followsFe = results.followsFe;
 		state.error = results.infraError || null;
 		state.state = results.infraError ? "failed" : "done";
 		state.finishedAt = new Date().toISOString();

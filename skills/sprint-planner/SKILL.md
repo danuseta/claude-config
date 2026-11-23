@@ -115,6 +115,9 @@ Tickets are read by people and by the QA bot. DOCK checks every draft and revisi
 | W6 | warn | Plain words for a human: no `path:line` (`File.tsx:42`), `GUESS`, `D-<n>`, `T<n>`, `I-<n>`, `ledger`, `sous`. An AC line is at most 30 words and holds one behaviour (not three joined by "and" / "dan"). |
 | W7 | warn | User Story and Problem Definition are filled, in ordinary sentences. |
 | W8 | warn | SP below 5. At 5 or more, split the ticket. |
+| W9 | warn | Every AC line of a `[BE]` ticket starts with how it is checked: `[UI]` (visible through a feature that exists; name the page, no click steps), `[API]` (through an endpoint) or `[Dev evidence]` (redis, migration, index; the developer attaches proof). A bug's first AC line stays the repro plus the expected result, with its tag in front. |
+
+AC check tags, for a `[BE]` ticket: `[UI] Contacts page: the imported contact shows its tag`, `[API] GET /contacts/:id answers 404 for a contact of another workspace`, `[Dev evidence] A migration adds the index on contacts.workspace_id`. Write no click steps; the QA bot tests the `[UI]` lines through the paired `[FE]` ticket.
 
 Humanizer checklist, for every field (summary, User Story, Problem Definition, AC, Reference, Open to confirm). Keep what the AC asks; change only how it reads:
 - Say the plain thing: "is", "has", "shows", not "serves as", "boasts", "features". Name who does what; use active voice.
