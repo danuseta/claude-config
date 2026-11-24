@@ -133,7 +133,45 @@ def duration_of(path):
     return float(result.stdout.strip())
 
 
+WORD = re.compile(r"[A-Za-z][A-Za-z'-]*")
+
+
+def misplaced_terms(scenario, kamus):
+    """Plain words in a scenario's own lexicon: each belongs in the shared kamus, and one the kamus already has is a double."""
+    rows = []
+    for written in scenario.get("lexicon", {}):
+        if not WORD.fullmatch(written):
+            continue
+        rows.append(f"  dobel, kamus dipakai: {written} -> {kamus[written]}" if written in kamus else f"  pindah ke kamus: {written}")
+    return rows
+
+
+def kamus_add(path, written, spoken):
+    """Adds `| written | spoken |` after the last table row of the kamus; an existing term is left as it is. True when added."""
+    if written in load_kamus(path):
+        return False
+    with open(path, encoding="utf-8") as handle:
+        lines = handle.read().split("\n")
+    last = max((i for i, line in enumerate(lines) if line.strip().startswith("|")), default=None)
+    row = f"| {written} | {spoken} |"
+    if last is None:
+        lines += ["| Tulisan | Dibaca |", "|---|---|", row]
+    else:
+        lines.insert(last + 1, row)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines))
+    return True
+
+
 def main():
+    if len(sys.argv) > 3 and sys.argv[1] == "--kamus-add":
+        path = kamus_path()
+        if not path:
+            sys.exit("no kamus-pengucapan.md found; set DEMO_KAMUS_FILE or DOCK_BLACKBOARD_DIR")
+        for written, spoken in zip(sys.argv[2::2], sys.argv[3::2]):
+            print(f"{'added' if kamus_add(path, written, spoken) else 'already in kamus'}: {written} -> {spoken}")
+        print(f"kamus: {path}")
+        return
     scenario_path = os.path.abspath(sys.argv[1])
     workdir = os.path.dirname(scenario_path)
     scenario = load_json(scenario_path)
@@ -149,6 +187,10 @@ def main():
         for step in scenario["steps"]:
             for show in step.get("lines", []):
                 print(f"{show}\n  -> {spoken_text(show, scenario, lexicon)}")
+        misplaced = misplaced_terms(scenario, lexicon["kamus"])
+        if misplaced:
+            print("lexicon skenario, kata yang harusnya di kamus:")
+            print("\n".join(misplaced))
         return
     if len(sys.argv) > 3 and sys.argv[2] == "--test":
         say = spoken_text(sys.argv[3], scenario, lexicon)
