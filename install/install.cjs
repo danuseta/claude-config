@@ -7,6 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { REPO, readJson, loadManifest, compile, matchesAny, walk, sha256 } = require('./common.cjs');
+const { mergeable, mergeFile, writeReport, KIT_NEW } = require('../kit/kit-merge.cjs');
 
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(n);
@@ -398,15 +399,28 @@ function main() {
   if (cp.absent.length) log(`not in the repo yet (owned by other workers, skipped): ${cp.absent.join(', ')}`);
   const notYet = manifest.ownedByOtherWorkers.filter((d) => !exists(path.join(REPO, d)));
   if (notYet.length) log(`repo folders absent for now: ${notYet.join(', ')}`);
-  pending += by.new + by.changed;
+  // Skill and agent files merge three ways with the local copy; a local edit the kit did not touch stays, and so does a conflicting one.
+  const merges = cp.items.filter((i) => mergeable(i.rel) && (apply || i.state !== 'same')).map((i) => mergeFile({ src: i.src, dst: i.dst, rel: i.rel, configDir, apply }));
+  // A kept file, or a conflict whose .kit-new already holds this kit version, has nothing left to write.
+  const itemOf = new Map(cp.items.map((i) => [i.rel, i]));
+  const settled = (m) => m.action === 'kept' || (m.action === 'conflict' && exists(itemOf.get(m.rel).dst + KIT_NEW) && sameContent(itemOf.get(m.rel).src, itemOf.get(m.rel).dst + KIT_NEW));
+  const quiet = new Set(merges.filter(settled).map((m) => m.rel));
+  pending += cp.items.filter((i) => i.state !== 'same' && !quiet.has(i.rel)).length;
   if (apply) {
     for (const i of cp.items) {
-      if (i.state === 'same') continue;
+      if (i.state === 'same' || mergeable(i.rel)) continue;
       fs.mkdirSync(path.dirname(i.dst), { recursive: true });
       fs.copyFileSync(i.src, i.dst);
     }
     writeAgentsRecord();
     log('applied. Nothing was deleted.');
+  }
+  const counted = (a) => merges.filter((m) => m.action === a);
+  log(`local edits: ${counted('merged').length} merged, ${counted('kept').length} kept, ${counted('conflict').length} conflicts`);
+  for (const m of [...counted('merged'), ...counted('kept'), ...counted('conflict')]) log(`  ${m.action.padEnd(8)} ${m.rel}${m.action === 'conflict' ? ` (${m.reason}; kit version in ${m.rel}${KIT_NEW})` : ''}`);
+  if (apply) {
+    writeReport(configDir, merges);
+    log(`merge report: ${configDir}/kit/merge-report.json`);
   }
   log();
   if (!apply) log(pending ? `${pending} pending change group(s)` : 'nothing to change');
