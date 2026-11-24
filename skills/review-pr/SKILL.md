@@ -144,7 +144,7 @@ Record the review in the ledger so the DOCK Agents page shows it: one `node <kit
 
 ## 8b. The message to the author
 
-Write it with the `review-message` skill (`.claude/skills/review-message/SKILL.md`): addressed to "mas", all lowercase, blocker first and blockers only when one exists, which part is lgtm by name, and each screenshot named by file inside the comment it proves.
+Write it with the `review-message` skill (`.claude/skills/review-message/SKILL.md`): addressed to "mas", all lowercase, blocker first and blockers only when one exists, which part is lgtm by name, and screenshots only for blockers, called `gambar N` in the text, never by file name.
 
 The report above is for the user. What gets sent to the teammate is short: the verdict, then only what they must act on. Three points is the ceiling, one line each. Lowercase, no dashes as connectors.
 
