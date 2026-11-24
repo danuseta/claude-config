@@ -104,7 +104,7 @@ def spoken_text(show, scenario, lexicon):
     text = show
     if scenario.get("ticket") and scenario.get("spokenTicket"):
         text = text.replace(scenario["ticket"], scenario["spokenTicket"])
-    table = {**lexicon.get("spoken", {}), **scenario.get("lexicon", {})}
+    table = {**lexicon.get("spoken", {}), **scenario.get("lexicon", {}), **lexicon.get("kamus", {})}
     text = replace_words(text, table)
     return speak_ids(text)
 
@@ -139,7 +139,7 @@ def main():
     scenario = load_json(scenario_path)
     lexicon = load_json(os.path.join(SKILL_DIR, "lexicon.json"))
     kamus = kamus_path()
-    lexicon["spoken"] = {**lexicon.get("spoken", {}), **load_kamus(kamus)}
+    lexicon["kamus"] = load_kamus(kamus)
     voice = scenario.get("voice", {"provider": "edge"})
     provider = voice.get("provider", "edge")
     os.makedirs(os.path.join(workdir, "audio"), exist_ok=True)
