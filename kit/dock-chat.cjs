@@ -12,7 +12,8 @@
 //     "activity": { "enabled": true, "hooks": true, "subagentText": true } }   "activity": false (or enabled: false) switches the activity feed off
 // Defaults come from paths.cjs. On Linux configDir is unset, so Claude Code keeps its own ~/.claude.
 // The DOCK url and token come from dock-push.cjs (dock.json or env).
-// `run` also pushes doctor.cjs on start, every 6 hours, and when DOCK's Health page asks (wantDoctor on a claim).
+// `run` also pushes doctor.cjs on start, every 6 hours, and when DOCK's Health page asks (wantDoctor on a claim), and the install merge
+// report (<config>/kit/merge-report.json) whenever the file changed since the last push.
 // A claimed message may carry `account: "<name>"`: that turn runs on account-cycle/tokens/<name>.token (see turnAccount).
 const crypto = require("crypto");
 const fs = require("fs");
@@ -30,6 +31,8 @@ const procLib = require("./dock-chat-proc.cjs");
 const preflight = require("./dock-chat-preflight.cjs");
 const outbox = require("./dock-chat-outbox.cjs");
 const agentsLib = require("./agents.cjs");
+const skillsLib = require("./skills-edit.cjs");
+const kitMergeLib = require("./kit-merge.cjs");
 const gmLib = require("./gm.cjs");
 const PATHS = require("./paths.cjs").resolvePaths();
 
@@ -75,7 +78,7 @@ const gmArgs = (script = GM_SCRIPT, node = process.execPath.replace(/\\/g, "/"))
 ];
 // The init event of a gm turn must show Bash as the only tool and no MCP server; anything else stops the turn.
 const gmInitOk = (o) => Array.isArray(o.tools) && o.tools.length === 1 && o.tools[0] === "Bash" && (!Array.isArray(o.mcp_servers) || o.mcp_servers.length === 0);
-const gmPrompt = (script) => `This is a Guild Master session in DOCK. You manage how DOCK works: agent models and tools, DOCK settings, the cron, the dispatch allow-list, guard drafts and the Party of a ticket. You never do the work yourself. Your only tool is Bash running node ${script} <op>, written exactly like that: plain words, no quotes, no backslashes; every other command is refused. Ops: agents | agent <slug> | propose-agent <slug> [--model haiku|sonnet|opus|inherit] [--tools a,b] | settings | propose-settings <key>=<value>... | party <KEY> | propose-party <KEY> --mode light|full [--worker sonnet|haiku|opus] | cron | propose-cron <key>=<value>... | propose-allow add|remove <slug> | propose-guard-draft --profile <p> --rule allow|deny --on read|write|bash --path <p> [--why <words>] | usage [KEY] | propose-rollback <log id> | log | backups | pending. Party: read party <KEY> first and base the mode on its Scout fields, the AC count and the owner's ask. A Party chooses only the runner (mode light is the sous light runner, mode full or no Party is sous as usual) and, for light, the worker model; every other gate stays with the owner's Light settings. You write the Party, sous runs it. Guard rules are drafts only: a draft is saved for the owner to install by hand and is never installed, whether it loosens or tightens a limit; never say a guard rule is active. Suggestions from data: run usage, and every suggestion quotes the numbers it comes from (ticket, tokens, cost, the agent and model with the largest share, gate failures); it is still a proposal that waits for ya. Rules: (1) Every change is a proposal. Run a propose op, show the owner the diff it prints and ask "Tulis?". (2) You never write. DOCK writes the pending change only after the owner answers ya in this chat, backs up the old version and logs it; it tells you the result in a [DOCK] line, which you report with the log number and the backup. Any other answer drops the proposal and nothing is written. (3) Secrets are write-only: you see set / not set, never a value; changing one is done by the owner in Settings. (4) You never write code, run tests, open worktrees, push, merge, approve, move Jira, post to Discord, dispatch agents or start sous: say that is the worker's job and the owner starts it from DOCK. (5) You never read raw ticket, PR or Discord text; you work from the summaries DOCK writes. Write in the owner's language.`;
+const gmPrompt = (script) => `This is a Guild Master session in DOCK. You manage how DOCK works: agent models and tools, the text of the installed skills, DOCK settings, the cron, the dispatch allow-list, guard drafts and the Party of a ticket. You never do the work yourself. Your only tool is Bash running node ${script} <op>, written exactly like that: plain words, no quotes, no backslashes; every other command is refused. Ops: agents | agent <slug> | propose-agent <slug> [--model haiku|sonnet|opus|inherit] [--tools a,b] | skills | skill <path> | propose-skill <path> --find <base64> --replace <base64> | propose-skill <path> --find <base64> --delete | settings | propose-settings <key>=<value>... | party <KEY> | propose-party <KEY> --mode light|full [--worker sonnet|haiku|opus] | cron | propose-cron <key>=<value>... | propose-allow add|remove <slug> | propose-guard-draft --profile <p> --rule allow|deny --on read|write|bash --path <p> [--why <words>] | usage [KEY] | propose-rollback <log id> | log | backups | pending. Skills: you edit the installed copy under ~/.claude/skills, never the claude-config repo, and an install merges your edit with the next kit release. Only .md, .json and .txt files of a skill folder, at most 100 KB; the path is <skill>/<file> such as review-message/SKILL.md, without .. or a leading slash; guards, settings, hooks, the allow-list, the updater and kit code stay locked. Run skill <path> first, then propose-skill with the base64 of one exact snippet of the file (unique in it, without the line numbers) and the base64 of its replacement; keep each change small. Party: read party <KEY> first and base the mode on its Scout fields, the AC count and the owner's ask. A Party chooses only the runner (mode light is the sous light runner, mode full or no Party is sous as usual) and, for light, the worker model; every other gate stays with the owner's Light settings. You write the Party, sous runs it. Guard rules are drafts only: a draft is saved for the owner to install by hand and is never installed, whether it loosens or tightens a limit; never say a guard rule is active. Suggestions from data: run usage, and every suggestion quotes the numbers it comes from (ticket, tokens, cost, the agent and model with the largest share, gate failures); it is still a proposal that waits for ya. Rules: (1) Every change is a proposal. Run a propose op, show the owner the diff it prints and ask "Tulis?". (2) You never write. DOCK writes the pending change only after the owner answers ya in this chat, backs up the old version and logs it; it tells you the result in a [DOCK] line, which you report with the log number and the backup. Any other answer drops the proposal and nothing is written. (3) Secrets are write-only: you see set / not set, never a value; changing one is done by the owner in Settings. (4) You never write code, run tests, open worktrees, push, merge, approve, move Jira, post to Discord, dispatch agents or start sous: say that is the worker's job and the owner starts it from DOCK. (5) You never read raw ticket, PR or Discord text; you work from the summaries DOCK writes. Write in the owner's language.`;
 
 const log = (msg) => console.log(`${new Date().toISOString()} ${String(msg).replace(/[\u0000-\u001f\u007f]+/g, " ")}`);
 const safeId = (v) => String(v).replace(/[^A-Za-z0-9._-]/g, "?").slice(0, 64);
@@ -739,7 +742,7 @@ function buildCaps(opts, flags) {
 		if (flags.replayUser) features.push("steer");
 	}
 	const modes = features.length ? [...interact.MODES] : [];
-	features.push("agents", "gm");
+	features.push("agents", "gm", "skills", "kit-merge");
 	return { v: 2, kit: KIT_ID, claude: bridgeMemo.claudeVersion, features, modes, catalogHash: cat ? cat.hash : null };
 }
 
@@ -1018,11 +1021,41 @@ async function claimOne(wait, caps) {
 async function gmJob(job, opts, settingsApi = gmSettingsApi) {
 	const gm = gmLib.createGm({ stateDir: STATE_DIR, configDir: opts.configDir || PATHS.configDir });
 	if (job.op === "gm-log") return gm.view(job.input && job.input.key).slice(0, 100);
+	// The owner's skill save and install conflict choices from DOCK: DOCK minted the nonce for exactly this path and text.
+	if (job.op === "gm-skill-put") {
+		const input = job.input && typeof job.input === "object" ? job.input : {};
+		return gm.putSkill({ path: input.path, text: input.text, settings: settingsApi, key: input.key, nonce: input.nonce });
+	}
+	if (job.op === "gm-kit-resolve") {
+		const input = job.input && typeof job.input === "object" ? job.input : {};
+		return gm.resolveConflict({ path: input.path, action: input.action, text: input.text, settings: settingsApi, key: input.key, nonce: input.nonce });
+	}
 	if (job.op === "gm-rollback") {
 		const input = job.input && typeof job.input === "object" ? job.input : {};
 		return gm.rollback({ id: input.id, by: "owner (manager log)", settings: settingsApi, key: input.key, confirm: { sessionId: null, nonce: input.nonce, sha256: `rollback:${input.id}` } });
 	}
 	throw new Error(`Unknown gm op ${String(job.op).slice(0, 40)}`);
+}
+
+// The kit library a job op names: skill-<op> reads skill files, kit-merge-<op> the install merge report, the rest is kit/agents.cjs.
+function libraryJob(job, opts) {
+	const configDir = opts.configDir || PATHS.configDir;
+	const op = String(job.op);
+	if (op.startsWith("skill-")) return skillsLib.createSkills({ configDir }).run(op.slice("skill-".length), job.input);
+	if (op.startsWith("kit-merge-")) return kitMergeLib.createKitMerge({ configDir }).run(op.slice("kit-merge-".length), job.input);
+	return agentsLib.createAgents({ configDir }).run(op, job.input);
+}
+
+// The install merge report goes to DOCK when the file changed; DOCK keeps it and pushes a notice for a new conflict.
+const mergeMemo = { mtime: null };
+async function pushMergeReport(opts) {
+	const lib = kitMergeLib.createKitMerge({ configDir: opts.configDir || PATHS.configDir });
+	let mtime;
+	try { mtime = fs.statSync(lib.reportFile).mtimeMs; } catch { return; }
+	if (mtime === mergeMemo.mtime) return;
+	const r = await call("/chat/kit/merge-report", lib.report(), 10000);
+	mergeMemo.mtime = mtime;
+	if (r.status !== 200) log(`merge report: DOCK answered ${r.status}`);
 }
 
 // DOCK's agent library jobs (kit/agents.cjs), in order and outside the turn pool. Each job answers { id, result } or { id, error }.
@@ -1032,7 +1065,7 @@ function runAgentJobs(jobs, opts) {
 		for (const job of jobs) {
 			if (!job || typeof job.id !== "string") continue;
 			let body;
-			try { body = { id: job.id, result: String(job.op).startsWith("gm-") ? await gmJob(job, opts) : agentsLib.createAgents({ configDir: opts.configDir || PATHS.configDir }).run(job.op, job.input) }; }
+			try { body = { id: job.id, result: String(job.op).startsWith("gm-") ? await gmJob(job, opts) : libraryJob(job, opts) }; }
 			catch (e) { body = { id: job.id, error: String((e && e.message) || e).slice(0, 500) }; }
 			try {
 				const r = await call("/chat/agents/result", body, 15000);
@@ -1101,6 +1134,7 @@ async function main(cmd, args) {
 			if (flags) await ensureCatalog(claude, opts, flags);
 			bridgeMemo.caps = buildCaps(opts, flags);
 			if (cmd === "run" && opts.timing.doctorEveryMs > 0 && Date.now() - doctorMemo.at >= opts.timing.doctorEveryMs) runDoctor("scheduled");
+			if (cmd === "run") await pushMergeReport(opts).catch((e) => log(`merge report: ${e.message}`));
 			if (paceUntil > Date.now()) await sleep(paceUntil - Date.now());
 			const began = Date.now();
 			const r = await claimOne(wait, bridgeMemo.caps);
@@ -1130,7 +1164,7 @@ async function main(cmd, args) {
 	}
 }
 
-module.exports = { resolveClaude, killTree, childEnv, turnAccount, accountSettings, numstatOf, touchedPath, changedFiles, limitsOf, settings, createTurnPool, keepAwake, track, snapshotTree, reap, killAllSync, gmArgs, gmInitOk };
+module.exports = { libraryJob, resolveClaude, killTree, childEnv, turnAccount, accountSettings, numstatOf, touchedPath, changedFiles, limitsOf, settings, createTurnPool, keepAwake, track, snapshotTree, reap, killAllSync, gmArgs, gmInitOk };
 
 if (require.main === module) {
 	const [cmd, ...args] = process.argv.slice(2);

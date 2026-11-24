@@ -5,6 +5,8 @@
 //   node gm.cjs settings                                 the DOCK settings it may change; secrets only as set / not set
 //   node gm.cjs propose-settings <key>=<value>...        prints the diff and keeps it as this session's pending change
 //   node gm.cjs propose-rollback <log id>                a rollback, pending like any change
+//   node gm.cjs skills | skill <path>                    the editable skill text files; one file with line numbers
+//   node gm.cjs propose-skill <path> --find <base64> --replace <base64> | --delete   one exact, unique snippet of a skill file replaced
 //   node gm.cjs party <KEY>                              the ticket's Scout fields, Party mode, worker model, log number and AC count; no free text
 //   node gm.cjs propose-party <KEY> --mode light|full [--worker sonnet|haiku|opus]
 //   node gm.cjs cron | propose-cron <key>=<value>...      the orchestrator cron fields DOCK lets it change
@@ -20,6 +22,8 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const agentsLib = require("./agents.cjs");
+const skillsLib = require("./skills-edit.cjs");
+const kitMergeLib = require("./kit-merge.cjs");
 const { resolvePaths } = require("./paths.cjs");
 
 const SESSION = /^[A-Za-z0-9-]{1,64}$/;
@@ -37,7 +41,7 @@ const LOCK_STALE_MS = 30000;
 const sha256 = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
 const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-function createGm({ stateDir = process.env.DOCK_KIT_STATE_DIR || __dirname, configDir = resolvePaths().configDir, kitDir = __dirname, evidence = process.env.QONFLO_EVIDENCE || resolvePaths().evidence, agents, now = () => new Date() } = {}) {
+function createGm({ stateDir = process.env.DOCK_KIT_STATE_DIR || __dirname, configDir = resolvePaths().configDir, kitDir = __dirname, evidence = process.env.QONFLO_EVIDENCE || resolvePaths().evidence, agents, skills, kitMerge, now = () => new Date() } = {}) {
 	const root = path.join(stateDir, "gm");
 	const logFile = path.join(root, "log.jsonl");
 	const lockFile = path.join(root, "log.lock");
@@ -47,6 +51,8 @@ function createGm({ stateDir = process.env.DOCK_KIT_STATE_DIR || __dirname, conf
 	const drafts = path.join(root, "drafts");
 	const allowFile = path.join(kitDir, "agents-allow.json");
 	const lib = agents || agentsLib.createAgents({ configDir, kitDir });
+	const skillLib = skills || skillsLib.createSkills({ configDir });
+	const mergeLib = kitMerge || kitMergeLib.createKitMerge({ configDir, now });
 	const agentFile = (slug) => {
 		if (!SLUG.test(String(slug))) throw new Error("A slug is 2 to 48 lowercase letters, digits or dashes");
 		return path.join(path.resolve(configDir, "agents"), `${slug}.md`);
@@ -177,6 +183,29 @@ function createGm({ stateDir = process.env.DOCK_KIT_STATE_DIR || __dirname, conf
 		if (!p.diff) throw new Error(`Nothing to write: ${p.checks.filter((c) => !c.ok).map((c) => c.text).join("; ") || "the agent already looks like that"}`);
 		const what = [model !== undefined && model !== cur.model ? `model ${cur.model} -> ${model}` : "", tools ? `tools ${cur.tools.join(",")} -> ${tools.join(",")}` : ""].filter(Boolean).join(", ");
 		return keep(sessionId, { type: "agent", slug, target: `agents/${slug}.md`, input, diff: p.diff, summary: `${slug}: ${what || "agent file"}` });
+	}
+
+	// One exact snippet of a skill file, found once, replaced. Only the snippet pair and the file's hash wait, so a 100 KB file fits.
+	const b64 = (v, name) => {
+		if (typeof v !== "string" || !/^[A-Za-z0-9+\/_=-]{1,200000}$/.test(v)) throw new Error(`${name} is the base64 of the text`);
+		return Buffer.from(v, "base64").toString("utf8");
+	};
+	function skillEdit(rel, find, replace) {
+		const cur = skillLib.get({ path: rel });
+		const text = cur.text.replace(/\r\n/g, "\n");
+		const at = find === "" ? -1 : text.indexOf(find);
+		if (at < 0) throw new Error(`The --find text is not in skills/${cur.path}; run skill ${cur.path} and copy it exactly`);
+		if (text.indexOf(find, at + 1) >= 0) throw new Error("The --find text is in the file more than once; make it longer so it is unique");
+		const next = text.slice(0, at) + replace + text.slice(at + find.length);
+		return { rel: cur.path, before: cur.text, next, diff: skillLib.preview({ path: cur.path, text: next }).diff };
+	}
+	function proposeSkill(sessionId, rel, { find, replace, remove = false } = {}) {
+		sid(sessionId);
+		const f = b64(find, "--find");
+		const r = remove ? "" : b64(replace, "--replace");
+		const e = skillEdit(rel, f, r);
+		if (!e.diff) throw new Error("Nothing changes");
+		return keep(sessionId, { type: "skill", path: e.rel, target: `skills/${e.rel}`, find: f, replace: r, beforeSha: sha256(Buffer.from(e.before)), diff: e.diff, summary: `skills/${e.rel}: ${e.diff.split("\n").filter((l) => /^[+-](?![+-]{2} )/.test(l)).length} lines` });
 	}
 
 	function proposeSettings(sessionId, pairs) {
@@ -343,6 +372,9 @@ function createGm({ stateDir = process.env.DOCK_KIT_STATE_DIR || __dirname, conf
 		const tools = field(next, "tools").split(",").map((t) => t.trim()).filter(Boolean);
 		if (tools.some((t) => !/^[A-Za-z][A-Za-z0-9_:.-]{0,119}$/.test(t))) throw new Error("The backup lists a tool that is not a tool name");
 	}
+	const checkSkillBytes = (bytes) => {
+		if (bytes.length > skillsLib.MAX_BYTES || bytes.includes(0)) throw new Error("The skill backup is not a text file of at most 100 KB");
+	};
 	const checkAllowBytes = (bytes) => {
 		const list = JSON.parse(bytes.toString("utf8"));
 		if (!Array.isArray(list) || list.some((s) => typeof s !== "string" || !SLUG.test(s))) throw new Error("The agents-allow.json backup is not a list of slugs");
@@ -387,13 +419,19 @@ function createGm({ stateDir = process.env.DOCK_KIT_STATE_DIR || __dirname, conf
 			saved = backup(cur ?? Buffer.alloc(0), `contract-${raw.ticket}`);
 			await settings.confirm(confirm);
 			atomic(file, withParty(cur ? cur.toString("utf8") : "", party));
+		} else if (raw.type === "skill") {
+			checkSkillBytes(bytes);
+			const { file } = skillLib.fileOf(raw.path);
+			saved = backup(readBytes(file) ?? Buffer.alloc(0), "skill");
+			await settings.confirm(confirm);
+			atomic(file, bytes);
 		} else if (raw.type === "allow") {
 			checkAllowBytes(bytes);
 			saved = backup(readBytes(allowFile) ?? Buffer.from("[]\n"), "agents-allow");
 			await settings.confirm(confirm);
 			atomic(allowFile, bytes);
 		} else throw new Error(`Entry #${raw.id} cannot be rolled back`);
-		return append({ by, sessionId, kind: "rollback", type: raw.type, ...(raw.slug ? { slug: raw.slug } : {}), ...(raw.ticket ? { ticket: raw.ticket } : {}), target: raw.target, summary: `Rollback of #${raw.id} (${raw.summary})`, ...saved, ...(savedAllow ? { allowBackup: savedAllow.backup, allowSha: savedAllow.backupSha } : {}), rollbackOf: raw.id }, key);
+		return append({ by, sessionId, kind: "rollback", type: raw.type, ...(raw.slug ? { slug: raw.slug } : {}), ...(raw.path ? { path: raw.path } : {}), ...(raw.ticket ? { ticket: raw.ticket } : {}), target: raw.target, summary: `Rollback of #${raw.id} (${raw.summary})`, ...saved, ...(savedAllow ? { allowBackup: savedAllow.backup, allowSha: savedAllow.backupSha } : {}), rollbackOf: raw.id }, key);
 	}
 
 	// confirm: { sessionId, nonce, sha256 }, which DOCK consumes on the write (settings.confirm, or settings.put for settings).
@@ -428,6 +466,11 @@ function createGm({ stateDir = process.env.DOCK_KIT_STATE_DIR || __dirname, conf
 				const r = lib.put(change.input);
 				if (!r.ok) return { ok: false, error: r.error };
 				return { ok: true, entry: append({ by, sessionId, kind: "change", type: "agent", slug: change.slug, target: change.target, summary: change.summary, diff: r.diff, ...saved, allowBackup: allow.backup, allowSha: allow.backupSha }, key) };
+			}
+			if (change.type === "skill") {
+				const e = skillEdit(change.path, change.find, change.replace);
+				if (sha256(Buffer.from(e.before)) !== change.beforeSha || e.diff !== change.diff) return { ok: false, error: "The skill file changed since the proposal; ask again" };
+				return await writeSkill({ rel: e.rel, text: e.next, by, sessionId, key, confirm, settings, summary: change.summary });
 			}
 			if (change.type === "settings") {
 				const current = (await settings.get()).values || {};
@@ -482,13 +525,66 @@ function createGm({ stateDir = process.env.DOCK_KIT_STATE_DIR || __dirname, conf
 		} catch (e) { return { ok: false, error: String(e.message || e).slice(0, 300) }; }
 	}
 
+	// Backup, DOCK's confirmation, the atomic write, then the signed log entry: the same order as an agent write, so rollback works.
+	async function writeSkill({ rel, text, by, sessionId, key, confirm, settings, summary }) {
+		const { file } = skillLib.fileOf(rel);
+		const p = skillLib.preview({ path: rel, text });
+		if (!p.diff) return { ok: false, error: "Nothing changes" };
+		const saved = backup(readBytes(file) ?? Buffer.alloc(0), "skill");
+		await settings.confirm(confirm);
+		const r = skillLib.put({ path: rel, text });
+		if (!r.ok) return { ok: false, error: r.error };
+		return { ok: true, entry: append({ by, sessionId, kind: "change", type: "skill", path: rel, target: `skills/${rel}`, summary: summary || `skills/${rel}`, diff: r.diff, ...saved }, key) };
+	}
+
+	// The owner's save from DOCK's editor. DOCK minted the nonce for this path and this exact text (skillPutSha), so nothing else is written.
+	async function putSkill({ path: rel, text, by = "owner (skill editor)", settings, key, nonce }) {
+		if (!key) return { ok: false, error: "DOCK sent no log key, so nothing was written" };
+		try {
+			const { rel: clean } = skillLib.fileOf(rel);
+			return await writeSkill({ rel: clean, text, by, sessionId: null, key, settings, confirm: { sessionId: null, nonce, sha256: skillPutSha(clean, text) } });
+		} catch (e) { return { ok: false, error: String(e.message || e).slice(0, 300) }; }
+	}
+
+	// An install conflict settled from DOCK: keep local, take the kit version, or write the owner's merge. Every action is logged with a
+	// backup of the local file; a merged agent file keeps the kit version's name, hooks and tools.
+	function checkAgentMerge(rel, text, kit) {
+		const slug = rel.slice("agents/".length, -3);
+		const next = agentsLib.parse(text), ship = agentsLib.parse(kit);
+		const field = (doc, k) => (doc.fields[k] ? String(doc.fields[k].value).trim() : "");
+		if (field(next, "name") !== slug) throw new Error(`The merged file is not the agent ${slug}`);
+		if (next.hooksText.replace(/\r/g, "") !== ship.hooksText.replace(/\r/g, "")) throw new Error("The merged agent must keep the kit version's hooks");
+		if (field(next, "tools") !== field(ship, "tools")) throw new Error("The merged agent must keep the kit version's tools");
+	}
+	const relDiff = (rel, before, after) => agentsLib.unifiedDiff(before.replace(/\r\n/g, "\n"), after.replace(/\r\n/g, "\n"), "x").replace(/^--- (?:a\/agents\/x|\/dev\/null)\n\+\+\+ b\/agents\/x\n/, `--- a/${rel}\n+++ b/${rel}\n`);
+	async function resolveConflict({ path: rel, action, text, by = "owner (kit conflict)", settings, key, nonce }) {
+		if (!key) return { ok: false, error: "DOCK sent no log key, so nothing was written" };
+		try {
+			const plan = mergeLib.resolvePlan({ path: rel, action, text });
+			const agent = rel.startsWith("agents/");
+			if (agent && plan.next !== null) checkAgentMerge(rel, plan.next, plan.kit);
+			const saved = backup(readBytes(plan.file) ?? Buffer.alloc(0), agent ? rel.slice("agents/".length, -3) : "skill");
+			await settings.confirm({ sessionId: null, nonce, sha256: resolveSha(rel, action, action === "edit" ? plan.next : null) });
+			const report = mergeLib.resolveCommit(plan);
+			const type = agent ? { type: "agent", slug: rel.slice("agents/".length, -3) } : { type: "skill", path: rel.slice("skills/".length) };
+			const how = action === "local" ? "kept local" : action === "kit" ? "took the kit version" : "merged by hand";
+			const entry = append({ by, sessionId: null, kind: "change", ...type, target: rel, summary: `Kit conflict ${rel}: ${how}`, diff: plan.next === null ? "" : relDiff(rel, plan.before ?? "", plan.next), ...saved }, key);
+			return { ok: true, entry, report };
+		} catch (e) { return { ok: false, error: String(e.message || e).slice(0, 300) }; }
+	}
+
 	const listAgents = () => lib.list().map(({ slug, source, model, tools }) => ({ slug, source, model, tools }));
 	const agent = (slug) => { const a = lib.get({ slug }); return { slug: a.slug, source: a.source, description: a.description, model: a.model, tools: a.tools, locked: a.locked }; };
 
-	return { entries, view, listAgents, agent, saveSettings, settingsView, saveData, dataView, proposeAgent, proposeSettings, proposeCron, partyView, proposeParty, proposeAllow, proposeGuardDraft, proposeRollback, partyBlock: (key) => { const b = readBytes(contractFile(key)); return b ? partyAt(b.toString("utf8")).party : null; }, partyFields, pending, pendingRaw, discard, apply, rollback, backupBytes, agentFile, contractFile, root };
+	return { entries, view, listAgents, agent, listSkills: () => skillLib.list(), skill: (rel) => skillLib.get({ path: rel }), proposeSkill, putSkill, resolveConflict, saveSettings, settingsView, saveData, dataView, proposeAgent, proposeSettings, proposeCron, partyView, proposeParty, proposeAllow, proposeGuardDraft, proposeRollback, partyBlock: (key) => { const b = readBytes(contractFile(key)); return b ? partyAt(b.toString("utf8")).party : null; }, partyFields, pending, pendingRaw, discard, apply, rollback, backupBytes, agentFile, contractFile, root };
 }
 
-const USAGE = "ops: agents | agent <slug> | propose-agent <slug> [--model m] [--tools a,b] | settings | propose-settings <key>=<value>... | party <KEY> | propose-party <KEY> --mode light|full [--worker m] | cron | propose-cron <key>=<value>... | propose-allow add|remove <slug> | propose-guard-draft --profile p --rule allow|deny --on read|write|bash --path p [--why words] | usage [KEY] | propose-rollback <log id> | log | backups | pending";
+// What DOCK's nonce is bound to for a write the owner clicks: the path and the sha256 of the exact text; for a conflict the action, and
+// the text only for a hand merge (DOCK never holds the .kit-new text it did not send).
+const skillPutSha = (rel, text) => `skill:${rel}:${sha256(Buffer.from(String(text), "utf8"))}`;
+const resolveSha = (rel, action, text) => `kit-resolve:${rel}:${action}:${text === null || text === undefined ? "" : sha256(Buffer.from(String(text), "utf8"))}`;
+
+const USAGE = "ops: agents | agent <slug> | propose-agent <slug> [--model m] [--tools a,b] | skills | skill <path> | propose-skill <path> --find <base64> --replace <base64> | --delete | settings | propose-settings <key>=<value>... | party <KEY> | propose-party <KEY> --mode light|full [--worker m] | cron | propose-cron <key>=<value>... | propose-allow add|remove <slug> | propose-guard-draft --profile p --rule allow|deny --on read|write|bash --path p [--why words] | usage [KEY] | propose-rollback <log id> | log | backups | pending";
 const waiting = (c) => `${c.diff}\n\nPending: ${c.summary}. Nothing is written until the owner answers "ya" in this chat.`;
 
 function cli(argv, { gm = createGm(), env = process.env, out = (s) => process.stdout.write(`${s}\n`) } = {}) {
@@ -497,6 +593,9 @@ function cli(argv, { gm = createGm(), env = process.env, out = (s) => process.st
 	const flag = (name) => { const i = rest.indexOf(name); return i >= 0 ? rest[i + 1] : undefined; };
 	if (op === "agents") return out(JSON.stringify(gm.listAgents(), null, 1));
 	if (op === "agent") return out(JSON.stringify(gm.agent(rest[0]), null, 1));
+	if (op === "skills") return out(gm.listSkills().map((f) => f.path).join("\n") || "No skill files.");
+	if (op === "skill") { const f = gm.skill(rest[0]); return out(`skills/${f.path}\n${f.text.replace(/\r\n/g, "\n").split("\n").map((l, i) => `${String(i + 1).padStart(4)}  ${l}`).join("\n")}`); }
+	if (op === "propose-skill") return out(waiting(gm.proposeSkill(session, rest[0], { find: flag("--find"), replace: flag("--replace"), remove: rest.includes("--delete") })));
 	if (op === "settings") return out(JSON.stringify(gm.settingsView(), null, 1));
 	if (op === "log") return out(JSON.stringify(gm.view().slice(0, 30).map(({ diff, ...e }) => e), null, 1));
 	if (op === "backups") return out(JSON.stringify(gm.view().filter((e) => e.backup).slice(0, 30).map((e) => ({ id: e.id, target: e.target, backup: e.backup, rolledBack: e.rolledBack })), null, 1));
@@ -520,7 +619,7 @@ function cli(argv, { gm = createGm(), env = process.env, out = (s) => process.st
 	throw new Error(USAGE);
 }
 
-module.exports = { createGm, cli, sha256 };
+module.exports = { createGm, cli, sha256, skillPutSha, resolveSha };
 
 if (require.main === module) {
 	try { cli(process.argv.slice(2)); } catch (e) { process.stderr.write(`gm: ${e.message}\n`); process.exitCode = 1; }

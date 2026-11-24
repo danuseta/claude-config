@@ -20,6 +20,22 @@ Installer menyalin dan merender. Tidak ada symlink, dan `--apply` tidak menghapu
 2. `node install/install.cjs --apply` menulis. `settings.json` dicadangkan dulu.
 3. `node install/secret-scan.cjs` harus lulus sebelum push.
 
+## Editan lokal skill dan agent
+
+File teks di `skills/**` dan `agents/*.md` digabung tiga arah waktu `--apply`, jadi editan di folder konfigurasi (oleh kamu atau Guild Master) tidak ketimpa. Installer menyimpan isi kit yang dipasang di `kit/.base/<path>`.
+
+| Keadaan | Yang terjadi |
+|---|---|
+| Belum ada base | Ditimpa kit seperti dulu, lalu base dicatat |
+| Lokal sama dengan base | Ditimpa kit baru, base ikut maju |
+| Lokal berubah, kit tidak | File lokal dibiarkan |
+| Dua-duanya berubah di bagian berbeda | Digabung `git merge-file`, base jadi versi kit |
+| Dua-duanya mengubah baris yang sama, atau git tidak ada | File lokal tidak disentuh, versi kit ditulis ke `<file>.kit-new`, base lama tetap |
+
+Laporannya dicetak dan disimpan di `kit/merge-report.json`. Bridge DOCK mengirim laporan itu ke DOCK, yang menampilkan bentrok di Agents > Library dengan pilihan pakai lokal, pakai kit, atau edit gabungan. Guard (`kit/guard*`, `kit/sous-guard.cjs`), `kit/agents-allow.json`, settings, hooks, `linux/`, `install/` dan `manifest.json` tidak pernah digabung: kit selalu menang.
+
+Guild Master mengedit skill lewat `gm.cjs skill <path>` lalu `propose-skill <path> --find <base64> --replace <base64>`: hanya file `.md`, `.json` dan `.txt` di folder skill, maksimal 100 KB, tanpa `..`, path absolut, symlink, atau file biner. Tulisnya tetap menunggu "ya" di DOCK, dengan cadangan dan entri manager log yang bisa di-rollback.
+
 ## Dari mana tiap file berasal
 
 | Hasil di folder konfigurasi | Dirangkai dari |
