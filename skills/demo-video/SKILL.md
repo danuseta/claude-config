@@ -45,7 +45,7 @@ The viewer must see every move, the way a person would do it. Nothing changes on
 ## Narration and pronunciation
 
 The default voice stays ElevenLabs **Chris** (`iP95p4xoKVk53GoZ742B`) on `eleven_v3`, reading Indonesian. Use another voice only when the user names one for that ticket (QRD-1250 used Sarah `EXAVITQu4vr4xnSDxMaL` on `eleven_v4`). On the free plan only premade voices work through the API; library voices return 402. An American-accented voice can read the Indonesian "c" as "k" (baca → "baka"), so `--test` a line with Indonesian c-words before the full run. English words and English-read numbers sound wrong, so every English term in the narration must do one of two things:
-- go through `lexicon.json` (Save → sef, chip → cip, pointer → poin-ter, workflow → werk-flou, SKILL.md → skil dot em de), or
+- go through the kamus or `lexicon.json` (Save → sef, chip → cip, pointer → poin-ter, workflow → werk-flou, SKILL.md → skil dot em de), or
 - be rephrased in Indonesian.
 
 `tts.py` also speaks identifiers in Indonesian on its own:
@@ -53,7 +53,10 @@ The default voice stays ElevenLabs **Chris** (`iP95p4xoKVk53GoZ742B`) on `eleven
 - `AC4` → "A C empat";
 - `PR #928` → "P R sembilan dua delapan".
 
-The workspace can keep its own terms in `kamus-pengucapan.md` at the blackboard root (`DOCK_BLACKBOARD_DIR`, else `~/projects/.evidence/blackboard`, the same default DOCK uses; `DEMO_KAMUS_FILE` overrides), a markdown table `| Tulisan | Dibaca |` that DOCK shows under Blackboard. A scenario can add its own terms under `"lexicon"`, and those win over `lexicon.json`. The kamus wins over both, so never put a term the kamus already has into a scenario; `--say` prints which file it read. Subtitles always show the written form (`QRD-1261`, `SKILL.md`), and `align.py` maps the spoken words back onto them.
+The workspace keeps the shared kamus, `kamus-pengucapan.md` at the blackboard root (`DOCK_BLACKBOARD_DIR`, else `~/projects/.evidence/blackboard`, the same default DOCK uses; `DEMO_KAMUS_FILE` overrides), a markdown table `| Tulisan | Dibaca |` that DOCK shows under Blackboard. It wins over `lexicon.json` and over a scenario's `"lexicon"`.
+- Every English word goes in the kamus, never in the scenario. Before writing the scenario, read the kamus. A word it lacks is added straight away, without asking anyone: `python scripts/tts.py --kamus-add timeout "taim aut" badge bej`. An existing row is never changed.
+- A scenario's `"lexicon"` is only for what belongs to that one video: numbers and versions (`1.0`, `422`), codes, and multi-word button labels (`Add Component`).
+- `--say` prints which kamus it read, then every plain word still in the scenario's `"lexicon"`: "pindah ke kamus" for one to add, "dobel" for one the kamus already has. Fix both before voicing. Subtitles always show the written form (`QRD-1261`, `SKILL.md`), and `align.py` maps the spoken words back onto them.
 
 Write narration the way people talk:
 - short sentences, one idea each, 1–2 lines per step;
