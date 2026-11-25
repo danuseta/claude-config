@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { resolvePaths } = require('../paths.cjs');
-const { createGuard, answer } = require('../guard.cjs');
+const { createGuard, answer, foregroundCheck } = require('../guard.cjs');
 const { SOURCE_KIT, hasSource, tmp, rmrf } = require('./helpers.cjs');
 
 const HOME = '/home/coder';
@@ -168,4 +168,13 @@ test('a junction node_modules is still a hard deny for git worktree remove', { s
     assert.equal(hit.rule, 'worktree-remove');
     assert.equal(hit.hard, true);
   } finally { rmrf(dir); }
+});
+
+test('a DOCK turn runs agents in the foreground only', () => {
+  const dock = { DOCK_CHAT_TURN: '1' };
+  assert.match(foregroundCheck('Agent', { subagent_type: 'sous-review-runner' }, dock), /run_in_background: false/, 'QRD-1659: the default launch is async and dies with the turn');
+  assert.match(foregroundCheck('Task', { subagent_type: 'sous-review-runner', run_in_background: true }, dock), /foreground/);
+  assert.equal(foregroundCheck('Agent', { subagent_type: 'sous-review-runner', run_in_background: false }, dock), null);
+  assert.equal(foregroundCheck('Agent', { subagent_type: 'sous-review-runner' }, {}), null, 'outside a DOCK turn nothing changes');
+  assert.equal(foregroundCheck('Bash', { command: 'ls', run_in_background: true }, dock), null, 'only agents');
 });

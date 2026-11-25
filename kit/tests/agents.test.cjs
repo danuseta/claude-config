@@ -198,7 +198,7 @@ test('every profile hook fails closed, and the runner guard follows agents-allow
   try {
     const paths = resolvePaths({ platform: 'win32', env: {}, kitDir: t.kit, local: { root: 'E:/qonflo', configDir: t.cfg } });
     const guard = createSousGuard({ platform: 'win32', paths, cwd: 'E:/qonflo' });
-    const agent = (s) => ({ tool_name: 'Agent', tool_input: { subagent_type: s } });
+    const agent = (s) => ({ tool_name: 'Agent', tool_input: { subagent_type: s, run_in_background: false } });
     assert.match(guard.check('runner', ['@wt'], agent('my-reader')), /subagent type not allowed/);
     t.lib.put(custom());
     assert.equal(guard.check('runner', ['@wt'], agent('my-reader')), null);
