@@ -19,6 +19,8 @@ hooks:
           command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs browser @wt @evidence @shots || exit 2'
 ---
 
+Lessons first: before your first step, read the file on the `Pelajaran:` line of your prompt; it carries every lesson for this agent (also kept in `kit/lessons/agents/browser-verifier.md`). In a DOCK turn the guard refuses Edit, Write and git commit until you have read it.
+
 You verify acceptance criteria in a real browser using `playwright-cli`. You never edit application code, never write to a database, and never use the user's own Chrome profile.
 
 ## Inputs (from the caller)

@@ -13,6 +13,8 @@
 // DOCK_CHAT_TURN=1 (set by dock-chat.cjs for an unattended chat turn) makes every soft rule a deny at once, ignores softUntil, and
 // applies the rules in any folder, not only inside the workspace root.
 // DOCK_GM=1 (a Guild Master session) denies every shell call except one plain `node <kit>/gm.cjs <op>`, and every PowerShell call.
+// In a DOCK turn with a lessons file (kit/lessons-gate.cjs), Edit, Write, MultiEdit, NotebookEdit and git commit are denied until the
+// session has read that file.
 // Test: echo '{"tool_name":"Bash","cwd":"E:/qonflo","tool_input":{"command":"git add ."}}' | node guard.cjs
 const fs = require("fs");
 const os = require("os");
@@ -645,6 +647,19 @@ function fail(why) {
 	process.exitCode = 2;
 }
 
+// True when the command runs git commit, through wrappers such as rtk, a nested shell or git -C <dir>.
+function commits(command) {
+	for (const unit of parseCommand(command).units) {
+		const w = unit.words;
+		const git = w.findIndex((x) => /(^|[\\/])git(\.exe)?$/i.test(x));
+		if (git < 0) continue;
+		let k = git + 1;
+		while (k < w.length && w[k].startsWith("-")) k += /^(-C|-c|--git-dir|--work-tree|--namespace|--exec-path|--super-prefix|--config-env)$/.test(w[k]) ? 2 : 1;
+		if (w[k] === "commit") return true;
+	}
+	return false;
+}
+
 // In a DOCK chat turn an agent runs in the foreground: an agent left in the background dies when the turn ends, and the
 // session never gets its report (QRD-1659: the review runner was launched async, the lead ended the turn to wait for it).
 function foregroundCheck(tool, input, env = process.env) {
@@ -661,6 +676,11 @@ function main() {
 	if (process.env.DOCK_GM === "1" && (payload?.tool_name !== "Bash" || typeof command !== "string")) return deny("guard: a Guild Master session runs only node <kit>/gm.cjs <op> through Bash");
 	const background = foregroundCheck(payload?.tool_name, payload?.tool_input);
 	if (background) return deny(background);
+	const lesson = require("./lessons-gate.cjs").check(payload, { commits });
+	if (lesson) {
+		try { fs.appendFileSync(path.join(__dirname, "guard.log"), `${new Date().toISOString()} DENY lessons ${payload.agent_type ?? "lead"} :: ${payload.tool_name} ${JSON.stringify(payload.tool_input).slice(0, 200)}\n`); } catch {}
+		return deny(`guard: ${lesson}`);
+	}
 	if (["Read", "Grep", "Glob", "Write", "Edit", "MultiEdit", "NotebookEdit"].includes(payload?.tool_name)) {
 		const hit = createGuard().checkTool(payload.tool_name, payload.tool_input, payload.cwd);
 		if (hit) {
@@ -683,5 +703,5 @@ function main() {
 if (require.main === module) {
 	try { main(); } catch (e) { fail(`internal error (${e.message})`); }
 } else {
-	module.exports = { check: (command, cwd) => createGuard().check(command, cwd), createGuard, answer, foregroundCheck };
+	module.exports = { check: (command, cwd) => createGuard().check(command, cwd), createGuard, answer, foregroundCheck, commits };
 }

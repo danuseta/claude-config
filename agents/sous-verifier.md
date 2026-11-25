@@ -8,12 +8,14 @@ hooks:
     - matcher: "Read"
       hooks:
         - type: command
-          command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs path --read @wt @evidence || exit 2'
+          command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs path --read @wt @evidence @lessons || exit 2'
     - matcher: "Bash"
       hooks:
         - type: command
           command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs verify @wt @evidence || exit 2'
 ---
+
+Lessons first: before your first step, read the file on the `Pelajaran:` line of your prompt; it carries every lesson for this agent (also kept in `kit/lessons/agents/sous-verifier.md`). In a DOCK turn the guard refuses Edit, Write and git commit until you have read it.
 
 You verify one task's change in the worktree your task names. You do not fix anything; you report. The runner holds `status.cjs lock verify <KEY>` while you run, so you are the only heavy step on this machine: one command at a time, never in the background.
 

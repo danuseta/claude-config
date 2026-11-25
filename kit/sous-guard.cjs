@@ -30,7 +30,9 @@
 //   sous-guard.cjs judge                   Bash/PowerShell/MCP of a Judge session only (DOCK_JUDGE=1, or the transcript's first prompt starts
 //                                          "Pakai skill judge:"): read-only git and gh, no Jira/Confluence MCP write, no curl/wget write, status.cjs reads only;
 //                                          any other session passes untouched. Wired globally from settings.base.json
-// Roots: @wt (every <root>/wt-* worktree), @root, @evidence, @board (<evidence>/blackboard), @shots (<root>/<MMDD> screenshot folders),
+// Every mode: in a DOCK turn with a lessons file, Edit/Write/NotebookEdit and git commit are refused until the agent's own transcript
+// shows a read of that file (kit/lessons-gate.cjs).
+// Roots: @wt (every <root>/wt-* worktree), @root, @evidence, @board (<evidence>/blackboard), @lessons (<evidence>/lessons and <kit>/lessons, where DOCK writes the agents' lessons files), @shots (<root>/<MMDD> screenshot folders),
 // @config (only kit/, skills/, agents/ and rules/ of the config dir), @video (<root>/../qonflo-out/<MMDD>/<KEY>, a ticket's demo
 // video folder), @skill (the demo-video skill: <root>/.claude/skills/demo-video or <config>/skills/demo-video). Values come from paths.cjs.
 // Answers like guard.cjs: a deny JSON on stdout, nothing when allowed. A guard that cannot read its input denies.
@@ -39,6 +41,7 @@
 const fs = require("fs");
 const path = require("path");
 const { resolvePaths } = require("./paths.cjs");
+const lessonsGate = require("./lessons-gate.cjs");
 
 const PROTECTED = [/(^|\/)\.git(\/|$)/, /(^|\/)\.husky(\/|$)/, /(^|\/)\.github(\/|$)/, /(^|\/)\.claude(\/|$)/, /(^|\/)node_modules(\/|$)/, /(^|\/)\.env[^/]*$/, /(^|\/)\.npmrc$/, /(^|\/)\.nvmrc$/, /(^|\/)package\.json$/, /(^|\/)package-lock\.json$/, /(^|\/)pnpm-lock\.yaml$/, /(^|\/)yarn\.lock$/, /(^|\/)CLAUDE\.md$/i, /(^|\/)AGENTS\.md$/i];
 const SECRETS = [/(^|\/)\.env(?!\.example$)[^/]*$/, /(^|\/)\.npmrc$/, /(^|\/)\.ssh(\/|$)/, /(^|\/)id_[^/]*$/, /(^|\/)\.credentials\.json$/, /(^|\/)\.git-credentials$/, /\.pem$/, /\.key$/, /(^|\/)secrets?\.(env|local\.json)$/, /(^|\/)\.netrc$/, /(^|\/)dock(-chat)?\.json$/, /(^|\/)elevenlabs-keys\.json$/];
@@ -68,7 +71,7 @@ const VIDEO_ENV = /^(NO_COLOR|FORCE_COLOR|CI|npm_config_cache|DEMO_FE|DEMO_API|D
 const PLAYWRIGHT_PKG = /\/node_modules\/(\.pnpm\/playwright@[^/]+\/node_modules\/)?(playwright|playwright-core|@playwright\/cli\/node_modules\/playwright-core)$/;
 const EL_KEY = /^ELEVENLABS_API_KEY="\$\(node ([^\s"'$`()]+) get\)" +/;
 
-function createSousGuard({ platform = process.platform, paths = resolvePaths(), cwd = process.cwd(), ledgerFile = path.join(__dirname, "sous-jira-created.log"), allowFile = path.join(paths.kitDir, "agents-allow.json") } = {}) {
+function createSousGuard({ platform = process.platform, paths = resolvePaths(), cwd = process.cwd(), ledgerFile = path.join(__dirname, "sous-jira-created.log"), allowFile = path.join(paths.kitDir, "agents-allow.json"), env = process.env } = {}) {
 	const win = platform === "win32";
 	const P = win ? path.win32 : path.posix;
 	const fwd = (p) => String(p).replace(/\\/g, "/");
@@ -81,6 +84,7 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 	};
 	const root = norm(paths.root);
 	const named = { "@root": root, "@evidence": norm(paths.evidence), "@board": norm(`${paths.evidence}/blackboard`) };
+	const lessonRoots = [...new Set([norm(`${paths.evidence}/lessons`), norm(`${paths.kitDir}/lessons`)])];
 	const configRoots = [...new Set([norm(paths.kitDir), ...CONFIG_READ.map((d) => norm(`${paths.configDir}/${d}`))])];
 	const board = named["@board"];
 	const kit = norm(paths.kitDir);
@@ -95,6 +99,9 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 				if (r === "@wt" ? /^wt-[^/]+$/.test(m) : /^\d{4}$/.test(m)) return `${root}/${m}`;
 			} else if (r === "@config" || r === "@skill") {
 				const c = (r === "@config" ? configRoots : skillRoots).find((x) => inside(p, x));
+				if (c) return c;
+			} else if (r === "@lessons") {
+				const c = lessonRoots.find((x) => inside(p, x));
 				if (c) return c;
 			} else if (r === "@video") {
 				const [day, key] = inside(p, videoBase) ? p.slice(videoBase.length + 1).split("/") : [];
@@ -622,6 +629,9 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 		agent = String(payload.agent_type || "");
 		const read = args[0] === "--read";
 		const roots = read ? args.slice(1) : args;
+		// A runner, worker or publisher in a DOCK turn reads its lessons file (the Pelajaran: line of its dispatch prompt) before it writes.
+		const lesson = lessonsGate.check(payload, { env, platform });
+		if (lesson) return lesson;
 		if (mode === "path") return checkPath(tool, ti, roots, read || /^(Read|Grep|Glob)$/.test(tool));
 		if (mode === "bash") return tool === "Bash" ? checkBash(String(ti.command || ""), roots, false) : null;
 		if (mode === "runner") {

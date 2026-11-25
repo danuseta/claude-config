@@ -2,15 +2,18 @@
 // git, GitHub or Jira. DOCK computes the grade from the findings, so the body carries none.
 //   node judge.cjs check <json-file>    validate the result offline and print the body that would be sent
 //   node judge.cjs post <json-file>     validate, then POST it to DOCK
-// The file: { sessionId, untilMessageId, findings: [{ messageId?, threadUrl?, cause, text, quote, shouldHave, call }], ownerWaitMinutes }
+// The file: { sessionId, untilMessageId, findings: [{ messageId?, threadUrl?, cause, text, quote, shouldHave, call, target?, lesson? }], ownerWaitMinutes }
 //   untilMessageId: the last message judged ("-" or null when the whole session was judged without one)
-//   cause: stopped-with-way-out | self-inflicted-rework | misread-ac-scope | skipped-step | asked-instead-of-looking | wrong-code | environment
+//   cause: stopped-with-way-out | self-inflicted-rework | misread-ac-scope | skipped-step | asked-instead-of-looking | wrong-code | lesson-ignored | environment
+//   target: { kind: skill | agent | flow | repo | fact | code, name } and lesson: one actionable sentence; DOCK turns them into a lesson.
+//     Both stay off for environment. A result without them (written before lessons) still posts.
 //   call: mistake | not
 // Exit 0 answered, 3 DOCK refused (its error on stderr), 1 usage error, a result that does not fit, or DOCK did not answer.
 const fs = require("fs");
 const dock = require("./dock-push.cjs");
 
-const CAUSES = ["stopped-with-way-out", "self-inflicted-rework", "misread-ac-scope", "skipped-step", "asked-instead-of-looking", "wrong-code", "environment"];
+const CAUSES = ["stopped-with-way-out", "self-inflicted-rework", "misread-ac-scope", "skipped-step", "asked-instead-of-looking", "wrong-code", "lesson-ignored", "environment"];
+const TARGETS = ["skill", "agent", "flow", "repo", "fact", "code"];
 const CALLS = ["mistake", "not"];
 const TEXT = ["cause", "text", "quote", "shouldHave"];
 const USAGE = ["usage: node judge.cjs check <json-file>", "       node judge.cjs post <json-file>"].join("\n");
@@ -27,6 +30,13 @@ function findingProblem(f, i) {
 	if (!CALLS.includes(f.call)) return `${at}: call must be mistake or not`;
 	if (f.messageId !== undefined && f.messageId !== null && !isId(f.messageId)) return `${at}: messageId must be a message id`;
 	if (f.threadUrl !== undefined && f.threadUrl !== null && !(typeof f.threadUrl === "string" && /^https?:\/\/\S+$/.test(f.threadUrl))) return `${at}: threadUrl must be an http(s) link`;
+	if (f.cause === "environment") return null;
+	const hasTarget = f.target !== undefined && f.target !== null;
+	if (hasTarget && (typeof f.target !== "object" || !TARGETS.includes(f.target.kind) || typeof f.target.name !== "string" || !f.target.name.trim())) return `${at}: target must be { kind: ${TARGETS.join(" | ")}, name }`;
+	const lesson = typeof f.lesson === "string" ? f.lesson.trim() : "";
+	if (hasTarget && !lesson) return `${at}: lesson must be one actionable sentence when the finding has a target`;
+	if (lesson && !hasTarget) return `${at}: a lesson needs its target`;
+	if (f.cause === "lesson-ignored" && !hasTarget) return `${at}: a lesson-ignored finding names the target and the lesson it broke`;
 	return null;
 }
 
@@ -45,6 +55,7 @@ function resultBody(r) {
 		...(isId(f.messageId) ? { messageId: f.messageId } : {}),
 		...(typeof f.threadUrl === "string" ? { threadUrl: f.threadUrl } : {}),
 		cause: f.cause, text: f.text.trim(), quote: f.quote.trim(), shouldHave: f.shouldHave.trim(), call: f.call,
+		...(f.cause !== "environment" && f.target && typeof f.lesson === "string" && f.lesson.trim() ? { target: { kind: f.target.kind, name: f.target.name.trim() }, lesson: f.lesson.trim() } : {}),
 	}));
 	return { body: { sessionId: r.sessionId.trim(), untilMessageId: until, findings, ownerWaitMinutes: Math.round(wait) } };
 }
@@ -90,5 +101,5 @@ async function run(argv, deps = {}) {
 if (require.main === module) {
 	run(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (e) => { console.error(`judge: ${e.message || e}`); process.exitCode = 1; });
 } else {
-	module.exports = { request, resultBody, call, run, CAUSES };
+	module.exports = { request, resultBody, call, run, CAUSES, TARGETS };
 }

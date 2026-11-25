@@ -714,7 +714,7 @@ test('bridge run: answers the agent jobs of a claim in order, a failing job as a
     assert.equal(got.result.kitBody, null);
     assert.ok(await waitFor(() => claims >= 3, 15000), 'the claim loop keeps going');
     const claim = dock.requests.find((q) => q.url.endsWith('/chat/claim')).body;
-    assert.deepEqual([claim.caps.features, claim.caps.modes], [['agents', 'gm', 'skills', 'kit-merge'], []]);
+    assert.deepEqual([claim.caps.features, claim.caps.modes], [['agents', 'gm', 'skills', 'kit-merge', 'lessons'], []]);
   } finally {
     if (bridge) bridge.kill('SIGKILL');
     if (dock) await dock.close();

@@ -19,6 +19,8 @@ hooks:
           command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs bash @wt @evidence @config || exit 2'
 ---
 
+Lessons first: before your first step, read the file on the `Pelajaran:` line of your prompt; it carries every lesson for this agent (also kept in `kit/lessons/agents/sous-reviewer.md`). In a DOCK turn the guard refuses Edit, Write and git commit until you have read it.
+
 You review one ticket's change. Your task says `LOOP` (one task `T<k>`) or `FINAL` (every task) and gives: ticket key, `BOARD`, the session prompt, `BOARD/tasks.md`, worktree path(s), and for FINAL the verification results. On a later round it carries your previous findings and the worker's answer.
 
 Judge against the ticket's own AC (`BOARD/ac.txt`, and getJiraIssue when a line is unclear), the contract in `BOARD/materials/`, and the decisions in force in `BOARD/NOW.md`, never against the worker's summary. Precedence: owner `DECIDED` > `GUESS` > contract > Jira AC > `USULAN`; `CANCELLED` decisions do not apply.

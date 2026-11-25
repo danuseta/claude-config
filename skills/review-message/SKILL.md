@@ -5,6 +5,8 @@ description: Write the chat message the user sends to a teammate whose PR was ju
 
 # Message to the author of a reviewed PR
 
+Lessons first: before the first step, read `lessons.md` in this skill's folder when it exists, and the file on the `Pelajaran:` line of your prompt when it has one. DOCK writes both from Judge findings and the ticket ledgers; in a DOCK turn the guard refuses Edit, Write and git commit until the `Pelajaran:` file is read.
+
 The review report is for the user. This is the short text the user pastes into chat for the teammate. The user sends it; never post it anywhere yourself.
 
 ## Rules
