@@ -626,8 +626,12 @@ function createSousGuard({ platform = process.platform, paths = resolvePaths(), 
 		if (mode === "bash") return tool === "Bash" ? checkBash(String(ti.command || ""), roots, false) : null;
 		if (mode === "runner") {
 			// A DOCK turn ends when the runner's caller answers, and that kills whatever still runs in the background.
-			if (ti.run_in_background === true) return "no background agents or commands: wait for each one, a DOCK turn that ends kills what still runs";
-			if (tool === "Agent" || tool === "Task") return AGENTS.has(ti.subagent_type) || customAllowed(ti.subagent_type) ? null : `subagent type not allowed: ${ti.subagent_type || "(none)"}; a runner calls sous-* agents, browser-verifier and the guarded custom agents of kit/agents-allow.json only`;
+			const background = "no background agents or commands: call agents with run_in_background: false and wait for each one, a DOCK turn that ends kills what still runs";
+			if (tool === "Agent" || tool === "Task") {
+				if (!AGENTS.has(ti.subagent_type) && !customAllowed(ti.subagent_type)) return `subagent type not allowed: ${ti.subagent_type || "(none)"}; a runner calls sous-* agents, browser-verifier and the guarded custom agents of kit/agents-allow.json only`;
+				return ti.run_in_background === false ? null : background;
+			}
+			if (ti.run_in_background === true) return background;
 			return tool === "Bash" ? checkBash(String(ti.command || ""), roots, true) : null;
 		}
 		if (mode === "verify") return tool === "Bash" ? checkVerify(String(ti.command || ""), roots) : null;

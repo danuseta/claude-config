@@ -645,12 +645,22 @@ function fail(why) {
 	process.exitCode = 2;
 }
 
+// In a DOCK chat turn an agent runs in the foreground: an agent left in the background dies when the turn ends, and the
+// session never gets its report (QRD-1659: the review runner was launched async, the lead ended the turn to wait for it).
+function foregroundCheck(tool, input, env = process.env) {
+	if (env.DOCK_CHAT_TURN !== "1" || (tool !== "Agent" && tool !== "Task")) return null;
+	if (input && input.run_in_background === false) return null;
+	return "guard: in a DOCK turn an agent runs in the foreground; call it again with run_in_background: false and wait for its report in this turn, because an agent still running when the turn ends is killed";
+}
+
 function main() {
 	let payload;
 	try { payload = JSON.parse(fs.readFileSync(0, "utf8")); } catch (e) { return fail(`cannot read the hook input (${e.message})`); }
 	const command = payload?.tool_input?.command;
 	const deny = (reason) => process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } }));
 	if (process.env.DOCK_GM === "1" && (payload?.tool_name !== "Bash" || typeof command !== "string")) return deny("guard: a Guild Master session runs only node <kit>/gm.cjs <op> through Bash");
+	const background = foregroundCheck(payload?.tool_name, payload?.tool_input);
+	if (background) return deny(background);
 	if (["Read", "Grep", "Glob", "Write", "Edit", "MultiEdit", "NotebookEdit"].includes(payload?.tool_name)) {
 		const hit = createGuard().checkTool(payload.tool_name, payload.tool_input, payload.cwd);
 		if (hit) {
@@ -673,5 +683,5 @@ function main() {
 if (require.main === module) {
 	try { main(); } catch (e) { fail(`internal error (${e.message})`); }
 } else {
-	module.exports = { check: (command, cwd) => createGuard().check(command, cwd), createGuard, answer };
+	module.exports = { check: (command, cwd) => createGuard().check(command, cwd), createGuard, answer, foregroundCheck };
 }
