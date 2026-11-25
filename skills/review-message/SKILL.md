@@ -11,7 +11,7 @@ The review report is for the user. This is the short text the user pastes into c
 
 ## Rules
 
-1. **Address the author as "mas".** Open with `mas <name>` when the name is known (`mas aken`), plain `mas` otherwise. Use "mas" again inside the text where a pronoun would go, never "lu", "kamu" or "bro".
+1. **Address the author as "mas".** Open with `mas <name>` when the name is known (`mas aken`), plain `mas` otherwise. The name is the person, never a bot or webhook name: `pr-danu`, `pr-alvin`, `sous-shovian` and `Kusuma (DOCK)` are posted by bots for danu, alvin, shovian and indra, so write `mas danu`, never `mas pr-danu`. Use "mas" again inside the text where a pronoun would go, never "lu", "kamu" or "bro".
 2. **Lowercase everything**, including the first letter, names and ticket keys in running text (`qrd-1396`). Only code identifiers, file names and paths keep their real casing, because they must match the code (`chatStore setActiveRoom`, `RoomService.ts`).
 3. **Casual Indonesian**, the way the team chats. No dashes as connectors, no bullet symbols, no bold, no emoji.
 4. **The blocker is the message.** The first sentence says the blocker status, every time.
