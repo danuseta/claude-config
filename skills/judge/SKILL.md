@@ -37,7 +37,7 @@ This session is read-only. `kit/sous-guard.cjs judge` refuses git other than rea
    ```json
    { "sessionId": "<sessionId>", "untilMessageId": "<the until of the prompt, or null for ->",
      "findings": [ { "messageId": "<id of the message>", "cause": "stopped-with-way-out", "text": "...", "quote": "...", "shouldHave": "...", "call": "mistake",
-                     "target": { "kind": "agent", "name": "sous-ticket-runner" }, "lesson": "..." } ],
+                     "target": { "kind": "agent", "name": "sous-ticket-runner" }, "lesson": "...", "lessonId": "..." } ],
      "ownerWaitMinutes": 0 }
    ```
    - `untilMessageId` is the `until` of your prompt, unchanged; `-` becomes `null`.
@@ -58,6 +58,7 @@ This session is read-only. `kit/sous-guard.cjs judge` refuses git other than rea
 | `call` | `mistake`, or `not` when the step was right after all (section 4). |
 | `target` | Where the lesson must live so the next session reads it: `{ "kind": "<kind>", "name": "<name>" }`, kinds in the table below. Left out for `environment`. |
 | `lesson` | One actionable sentence in English, an instruction for the next session (`Walk the whole ElevenLabs rotation with el-rotate.cjs get and park before using edge.`), not a description of what went wrong. Left out for `environment`. DOCK writes it to the target at once; similar lessons are merged and counted. |
+| `lessonId` | The same lesson in short, casual Indonesian for the owner (`Coba semua key ElevenLabs pakai el-rotate.cjs get dan park dulu sebelum pindah ke edge.`), like the `textId` of a decision. Only with a `lesson`; DOCK shows it grey under the English text and never writes it to a lessons file. |
 
 | `target.kind` | `name` | Use when the lesson is about |
 |---|---|---|
