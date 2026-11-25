@@ -81,6 +81,18 @@ test('a read through rtk read or cat counts, a failed read does not, and a file 
   } finally { rmrf(t.dir); }
 });
 
+test('a subagent transcript that replays the read in an api-request-blob line without a timestamp still counts the read', () => {
+  const t = setup();
+  try {
+    const env = turnEnv(t.lessons);
+    const blob = JSON.stringify({ type: 'api-request-blob', sessionId: 's', agentId: 'a', hash: 'h', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: t.lessons } }] } });
+    t.write(userLine('go'), useLine('r1', 'Read', { file_path: t.lessons }), resultLine('r1', false), blob, blob);
+    assert.equal(gate.check(edit(t), { env }), null);
+    t.write(userLine('go'), blob);
+    assert.match(gate.check(edit(t), { env }), /first/, 'a replay alone is not a read');
+  } finally { rmrf(t.dir); }
+});
+
 test('outside a DOCK turn, in a Guild Master or Judge turn, or with no lessons file nothing changes', () => {
   const t = setup();
   try {
