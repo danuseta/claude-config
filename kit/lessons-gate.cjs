@@ -70,12 +70,17 @@ function lastRead(list, file, win) {
 			if (b.type === "tool_result" && b.is_error === true) failed.add(b.tool_use_id);
 			if (b.type !== "tool_use" || !b.id) continue;
 			const input = b.input || {};
+			// Claude Code also writes api-request-blob lines that replay earlier tool calls without a timestamp; they must not
+			// overwrite the time of the call itself.
 			const at = Date.parse(e.timestamp || "") || 0;
-			if (b.name === "Read" && norm(input.file_path, win) === want && !(Number(input.offset) > 1)) reads.set(b.id, at);
+			if (!at) continue;
+			let read = false;
+			if (b.name === "Read" && norm(input.file_path, win) === want && !(Number(input.offset) > 1)) read = true;
 			else if (SHELL_TOOLS.has(b.name) && typeof input.command === "string") {
 				const cmd = norm(input.command.replace(/["']/g, " "), win);
-				if (cmd.includes(want) && READ_VERB.test(cmd)) reads.set(b.id, at);
+				read = cmd.includes(want) && READ_VERB.test(cmd);
 			}
+			if (read && at > (reads.get(b.id) || 0)) reads.set(b.id, at);
 		}
 	}
 	let last = 0;
