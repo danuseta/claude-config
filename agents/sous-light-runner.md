@@ -48,6 +48,8 @@ Set `note` before every step with the agent in brackets (`light: scout (sous-exp
 
 A row that fails: section 4, before any code.
 
+A doubt on a review finding (whether it is valid, two readings, a detail you could not verify) is decided, not raised to the owner and not a gate failure: `node K/status.cjs decide <KEY> "<ruling and why>" --status GUESS --by sous-light-runner --question "<what was unclear>" --rejected "<option>: <why not>" --alt "<option>::<what it would change instead>"`, then fix per that decision; the `GUESS` does not hold the push. Raise an issue to the owner only for broken tooling, guard or access, or for reversing an owner `DECIDED` (`issue <KEY> BLOCKER "<text>"`, then `issue <KEY> <n> escalate owner "<why>"`); a product scope or contract change stays the `No AC, scope or contract change` row. For a finding raised to the owner, `NOTE` names it as "lagi dikonfirmasi ke owner" so the Discord reply says so instead of staying silent.
+
 ## 2. Run
 1. **Brief:** write `BOARD/light-brief.md`: the findings quoted as written, the files to touch (from the scout), the tests to add or run, the `TEST-CMD` lines expected, and what is out of scope. Write `BOARD/tasks.md` with one row `T1` owning exactly those files. `node K/status.cjs set <KEY> stage=code`.
 2. **Work:** `sous-ticket-worker` with model `worker`: `BOARD`, the prompt path `BOARD/light-brief.md`, task `T1`, the worktree. An `ISSUE` line in its report fails the gate: section 4.
