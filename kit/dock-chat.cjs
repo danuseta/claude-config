@@ -32,6 +32,7 @@ const preflight = require("./dock-chat-preflight.cjs");
 const outbox = require("./dock-chat-outbox.cjs");
 const agentsLib = require("./agents.cjs");
 const skillsLib = require("./skills-edit.cjs");
+const lessonsLib = require("./lessons.cjs");
 const kitMergeLib = require("./kit-merge.cjs");
 const gmLib = require("./gm.cjs");
 const PATHS = require("./paths.cjs").resolvePaths();
@@ -172,8 +173,17 @@ function accountSettings(token, tmpRoot = os.tmpdir()) {
 	return { file, remove };
 }
 
+// The ticket's lessons file DOCK names with a turn (<evidence>/lessons/<KEY>.md): an absolute .md path on one line, else null.
+function lessonsPath(value) {
+	if (typeof value !== "string") return null;
+	const p = value.trim();
+	if (!p || p.length > 1000 || /[\0\r\n]/.test(p) || !/\.md$/i.test(p)) return null;
+	return path.isAbsolute(p) || /^[A-Za-z]:[\\/]/.test(p) ? p : null;
+}
+
 // The environment claude runs in. DOCK_CHAT_TURN=1 switches guard.cjs to its unattended profile; CAVEMAN_DEFAULT_MODE switches caveman on,
-// which stays off in a headless session without it; CLAUDE_CONFIG_DIR is set only when configDir is; the proxy variables kit-node sets to
+// which stays off in a headless session without it; DOCK_LESSONS_FILE names the lessons file guard.cjs makes the session read before it
+// writes (kit/lessons-gate.cjs), never in a Guild Master turn; CLAUDE_CONFIG_DIR is set only when configDir is; the proxy variables kit-node sets to
 // reach DOCK are removed so Anthropic traffic does not go through tailscaled.
 function childEnv(opts, base = process.env, platform = process.platform) {
 	const env = { ...base, DOCK_CHAT_TURN: "1", CAVEMAN_DEFAULT_MODE: (opts.agent && opts.agent.caveman) || "caveman" };
@@ -192,6 +202,9 @@ function childEnv(opts, base = process.env, platform = process.platform) {
 	}
 	if (opts.judge) env.DOCK_JUDGE = "1";
 	else delete env.DOCK_JUDGE;
+	const lessons = lessonsPath(opts.lessonsFile);
+	if (lessons && !opts.gm) env.DOCK_LESSONS_FILE = lessons;
+	else delete env.DOCK_LESSONS_FILE;
 	if (opts.gm) { env.DOCK_GM = "1"; env.DOCK_GM_SESSION = opts.gm; }
 	else { delete env.DOCK_GM; delete env.DOCK_GM_SESSION; }
 	delete env.DOCK_GM_CONFIRM;
@@ -742,7 +755,7 @@ function buildCaps(opts, flags) {
 		if (flags.replayUser) features.push("steer");
 	}
 	const modes = features.length ? [...interact.MODES] : [];
-	features.push("agents", "gm", "skills", "kit-merge");
+	features.push("agents", "gm", "skills", "kit-merge", "lessons");
 	return { v: 2, kit: KIT_ID, claude: bridgeMemo.claudeVersion, features, modes, catalogHash: cat ? cat.hash : null };
 }
 
@@ -775,6 +788,7 @@ async function runTurn(msg, cfg, opts) {
 		return;
 	}
 	if (acct.judge) opts = { ...opts, judge: true };
+	opts = { ...opts, lessonsFile: lessonsPath(msg.lessonsFile) };
 	if (!acct.token) return runTurnWith(msg, cfg, opts);
 	const settings = accountSettings(acct.token);
 	try {
@@ -1043,6 +1057,7 @@ function libraryJob(job, opts) {
 	const op = String(job.op);
 	if (op.startsWith("skill-")) return skillsLib.createSkills({ configDir }).run(op.slice("skill-".length), job.input);
 	if (op.startsWith("kit-merge-")) return kitMergeLib.createKitMerge({ configDir }).run(op.slice("kit-merge-".length), job.input);
+	if (op.startsWith("lessons-")) return lessonsLib.createLessons({ configDir }).run(op.slice("lessons-".length), job.input);
 	return agentsLib.createAgents({ configDir }).run(op, job.input);
 }
 
@@ -1164,7 +1179,7 @@ async function main(cmd, args) {
 	}
 }
 
-module.exports = { libraryJob, resolveClaude, killTree, childEnv, turnAccount, accountSettings, numstatOf, touchedPath, changedFiles, limitsOf, settings, createTurnPool, keepAwake, track, snapshotTree, reap, killAllSync, gmArgs, gmInitOk };
+module.exports = { libraryJob, resolveClaude, killTree, childEnv, lessonsPath, turnAccount, accountSettings, numstatOf, touchedPath, changedFiles, limitsOf, settings, createTurnPool, keepAwake, track, snapshotTree, reap, killAllSync, gmArgs, gmInitOk };
 
 if (require.main === module) {
 	const [cmd, ...args] = process.argv.slice(2);

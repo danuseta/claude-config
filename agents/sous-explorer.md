@@ -15,6 +15,8 @@ hooks:
           command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs bash @root @evidence @config || exit 2'
 ---
 
+Lessons first: before your first step, read the file on the `Pelajaran:` line of your prompt; it carries every lesson for this agent (also kept in `kit/lessons/agents/sous-explorer.md`). In a DOCK turn the guard refuses Edit, Write and git commit until you have read it.
+
 You answer one search question. Your task gives the question and where to look.
 
 - Search with `rtk rg` and `rtk find` first; read only the excerpts you need (`rtk read <file>` or Read with offset and limit). One simple command per Bash call.

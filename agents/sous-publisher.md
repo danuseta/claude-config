@@ -12,8 +12,10 @@ hooks:
     - matcher: "Read"
       hooks:
         - type: command
-          command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs path --read @wt @evidence || exit 2'
+          command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs path --read @wt @evidence @lessons || exit 2'
 ---
+
+Lessons first: before your first step, read the file on the `Pelajaran:` line of your prompt; it carries every lesson for this agent (also kept in `kit/lessons/agents/sous-publisher.md`). In a DOCK turn the guard refuses Edit, Write and git commit until you have read it.
 
 You publish one change. Your task gives: worktree path, branch name, the paths to stage, the files to delete when the runner names any, base branch (for a stacked ticket this is the parent ticket's feature branch, e.g. `feat/QRD-1345-...`; use it as given), PR title, commit message, the PR body file (under the evidence folder), and draft yes/no.
 

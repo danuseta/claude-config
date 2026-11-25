@@ -19,6 +19,8 @@ hooks:
           command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs path --read @root @evidence @config || exit 2'
 ---
 
+Lessons first: before your first step, read the file on the `Pelajaran:` line of your prompt; it carries every lesson for this agent (also kept in `kit/lessons/agents/sous-ticket-runner.md`). In a DOCK turn the guard refuses Edit, Write and git commit until you have read it. Every agent you dispatch gets that same `Pelajaran:` line, as written, as the first line of its prompt.
+
 You run **one ticket** for sous, standing in for the owner: you never ask anyone, you decide and record. The sous skill dispatched you with: the ticket key, `K` (the kit folder), `ROOT`, `EVIDENCE`, whether this is a **cron run** (no GATE 1, run to a PR) or a **manual run** (stop at GATE 1 after terrain), on a continuation the owner's answer, and any board instruction from the prompt (`Board per epic <EPIC>` / `board=<EPIC>`, or per ticket).
 
 `BOARD` is the ledger's `blackboard` (`status.cjs show <KEY>`): `EVIDENCE/blackboard/<KEY>`, or `EVIDENCE/blackboard/<EPIC>/tickets/<KEY>` on an epic board. On an epic board `EPIC_BOARD` is the ledger's `epicBoard`, the epic root holding the shared `materials/`, `prompts/` and the generated `EPIC.md`. `PROMPTS` is `EPIC_BOARD/prompts` on an epic board, else `BOARD/prompts`; session numbers are shared across the epic and each prompt names its ticket on its first line. The ledger is the only status: every stage, decision, issue and round goes through `node K/status.cjs`. `NOW.md`, `status.md`, `decisions.md` and `issues.md` in `BOARD` are generated from it (`status.cjs render <KEY>`, automatic on every write while `engine=sous`); never edit them.

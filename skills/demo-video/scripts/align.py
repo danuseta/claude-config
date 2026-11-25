@@ -1,19 +1,22 @@
 """Word timings per cue via ElevenLabs forced alignment, mapped back to the shown text.
 
 Usage: python scripts/align.py <audio.json> <audio_dir> <out.json>
-Reads the API key from ELEVENLABS_API_KEY only. Never prints it.
-Without a key every line falls back to a character-length estimate.
+The key comes from the kit's el-rotate.cjs rotation (el_keys.py): a spent key is parked and the next one tried, until every
+key is parked. Never prints a key. Without a usable key every line falls back to a character-length estimate, and the keys
+tried are listed with their reasons.
 """
 import difflib
 import json
 import os
 import re
 import sys
-import urllib.request
 import uuid
 
+import el_keys
+
 audio_json, public_dir, out_path = sys.argv[1:4]
-key = os.environ.get("ELEVENLABS_API_KEY")
+keys = el_keys.Keys()
+parked = None
 
 
 def norm(w):
@@ -30,14 +33,8 @@ def post_alignment(mp3_path, text):
         audio,
         f"\r\n--{boundary}--\r\n".encode("utf-8"),
     ])
-    req = urllib.request.Request(
-        "https://api.elevenlabs.io/v1/forced-alignment",
-        data=body,
-        headers={"xi-api-key": key, "Content-Type": f"multipart/form-data; boundary={boundary}"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return json.loads(r.read().decode("utf-8"))
+    raw = el_keys.post("/forced-alignment", body, {"Content-Type": f"multipart/form-data; boundary={boundary}"}, 60, keys)
+    return json.loads(raw.decode("utf-8"))
 
 
 def estimate(shown, dur):
@@ -80,11 +77,15 @@ result, failures = {}, []
 for step in json.load(open(audio_json, encoding="utf-8")):
     for line in step["lines"]:
         try:
-            if not key:
-                raise RuntimeError("ELEVENLABS_API_KEY is not set")
+            if parked:
+                raise parked
             data = post_alignment(os.path.join(public_dir, line["file"]), line["say"])
             spoken = [w for w in data.get("words", []) if w["text"].strip()]
             result[os.path.basename(line["file"])] = {"source": "alignment", "words": map_words(line["show"], spoken)}
+        except el_keys.KeysParked as e:
+            parked = e
+            failures.append(f"{line['file']}: KeysParked")
+            result[os.path.basename(line["file"])] = {"source": "estimate", "words": estimate(line["show"], line["dur"])}
         except Exception as e:  # noqa: BLE001
             failures.append(f"{line['file']}: {type(e).__name__} {getattr(e, 'code', '')}")
             result[os.path.basename(line["file"])] = {"source": "estimate", "words": estimate(line["show"], line["dur"])}
@@ -93,3 +94,7 @@ json.dump(result, open(out_path, "w", encoding="utf-8"), indent=1, ensure_ascii=
 print("aligned:", sum(v["source"] == "alignment" for v in result.values()), "/", len(result))
 for f in failures:
     print("FAIL", f)
+if parked:
+    print(f"ELEVENLABS ALL KEYS PARKED: {parked}")
+    for name, reason in parked.tried:
+        print(f"  {name}: {reason}")
