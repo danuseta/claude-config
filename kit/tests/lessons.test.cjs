@@ -212,6 +212,17 @@ test('judge.cjs carries target and lesson, drops them for environment, accepts l
   assert.match(body([{ ...base, cause: 'skipped-step', lesson: 'y' }]).error, /needs its target/);
 });
 
+test('judge.cjs forwards an optional Indonesian lessonId only with a lesson; an old result without it still parses', () => {
+  const base = { messageId: '1', text: 't', quote: 'q', shouldHave: 's', call: 'mistake', cause: 'skipped-step', target: { kind: 'skill', name: 'demo-video' }, lesson: 'Walk the whole rotation.' };
+  const body = (findings) => judge.resultBody({ sessionId: 's', untilMessageId: '-', findings });
+  assert.equal(body([{ ...base, lessonId: ' Coba semua key dulu. ' }]).body.findings[0].lessonId, 'Coba semua key dulu.');
+  assert.ok(!('lessonId' in body([base]).body.findings[0]), 'a result without lessonId');
+  assert.ok(!('lessonId' in body([{ ...base, lessonId: '  ' }]).body.findings[0]), 'an empty lessonId is left out');
+  assert.ok(!('lessonId' in body([{ ...base, cause: 'environment', lessonId: 'x' }]).body.findings[0]), 'environment drops it');
+  assert.match(body([{ ...base, lessonId: 3 }]).error, /lessonId must be/);
+  assert.match(body([{ messageId: '1', text: 't', quote: 'q', shouldHave: 's', call: 'mistake', cause: 'skipped-step', lessonId: 'x' }]).error, /needs its lesson/);
+});
+
 // ---- demo-video: ElevenLabs rotation inside tts.py and align.py ----
 
 const hasPython = (py) => new Promise((r) => execFile(py, ['--version'], (e) => r(!e)));
