@@ -94,6 +94,48 @@ track_branch() {
   { git -C "$dir" checkout -q "$want" 2>/dev/null || git -C "$dir" checkout -q -t "origin/$want"; } && git -C "$dir" branch -q -u "origin/$want"
 }
 
+# Local edits in the checkout survive a pull: tracked edits are stashed and put back on the new commit. A file the
+# upstream also changed in a way that conflicts takes the upstream version, and the local one is copied to
+# $CCFG_LOCAL_DIR/<path>.local. An untracked file the upstream now ships moves there the same way.
+CCFG_LOCAL_DIR="${CCFG_LOCAL_DIR:-$HOME/claude-config-local}"
+LOCAL_STASHED=0
+LOCAL_KEPT=""
+
+local_copy() {
+  mkdir -p "$(dirname "$CCFG_LOCAL_DIR/$1")" && cat > "$CCFG_LOCAL_DIR/$1.local"
+}
+
+local_keep_before_pull() {
+  local f up
+  LOCAL_STASHED=0; LOCAL_KEPT=""
+  up=$(git -C "$CCFG_REPO" rev-parse --abbrev-ref '@{u}' 2>/dev/null) || return 0
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    git -C "$CCFG_REPO" cat-file -e "$up:$f" 2>/dev/null || continue
+    local_copy "$f" < "$CCFG_REPO/$f" && rm -f "$CCFG_REPO/$f" || return 1
+    LOCAL_KEPT="$LOCAL_KEPT$f "
+  done < <(git -C "$CCFG_REPO" ls-files --others --exclude-standard)
+  git -C "$CCFG_REPO" diff --quiet HEAD -- 2>/dev/null && return 0
+  git -C "$CCFG_REPO" stash push -q -m "kit-local $(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
+  LOCAL_STASHED=1
+}
+
+local_keep_after_pull() {
+  local f
+  [ "$LOCAL_STASHED" = 1 ] || return 0
+  LOCAL_STASHED=0
+  git -C "$CCFG_REPO" stash pop -q 2>/dev/null && return 0
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    git -C "$CCFG_REPO" show "stash@{0}:$f" | local_copy "$f"
+    git -C "$CCFG_REPO" checkout -q HEAD -- "$f"
+    LOCAL_KEPT="$LOCAL_KEPT$f "
+  done < <(git -C "$CCFG_REPO" diff --name-only --diff-filter=U)
+  git -C "$CCFG_REPO" reset -q
+  [ -n "$LOCAL_KEPT" ] && git -C "$CCFG_REPO" stash drop -q
+  return 0
+}
+
 s_repo() {
   local before after up tb kept=""
   [ -d "$CCFG_REPO/.git" ] || { note "repo is not a git checkout, using it as is"; return 10; }
@@ -106,7 +148,13 @@ s_repo() {
     *) note "could not switch to $CCFG_BRANCH"; return 1 ;;
   esac
   before=$(git -C "$CCFG_REPO" rev-parse HEAD 2>/dev/null)
-  timeout 60 git -C "$CCFG_REPO" pull --ff-only || { note "${kept}pull failed, using the existing checkout"; return 1; }
+  local_keep_before_pull || { note "${kept}could not set the local edits aside, using the existing checkout"; return 1; }
+  if ! timeout 60 git -C "$CCFG_REPO" pull --ff-only; then
+    local_keep_after_pull
+    note "${kept}pull failed, using the existing checkout"; return 1
+  fi
+  local_keep_after_pull
+  [ -n "$LOCAL_KEPT" ] && kept="${kept}local edits kept, upstream wins on ${LOCAL_KEPT} (copies in $CCFG_LOCAL_DIR); "
   after=$(git -C "$CCFG_REPO" rev-parse HEAD 2>/dev/null)
   # A checkout left on a feature branch pulls only that branch, so main never arrives and the step would still read "up to date".
   up=$(git -C "$CCFG_REPO" rev-parse --abbrev-ref '@{u}' 2>/dev/null)
