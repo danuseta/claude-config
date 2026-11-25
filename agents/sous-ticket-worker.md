@@ -12,12 +12,14 @@ hooks:
     - matcher: "Read"
       hooks:
         - type: command
-          command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs path --read @wt @board @config || exit 2'
+          command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs path --read @wt @board @lessons @config || exit 2'
     - matcher: "Bash"
       hooks:
         - type: command
-          command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs bash @wt @board @config || exit 2'
+          command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs bash @wt @board @lessons @config || exit 2'
 ---
+
+Lessons first: before your first step, read the file on the `Pelajaran:` line of your prompt; it carries every lesson for this agent (also kept in `kit/lessons/agents/sous-ticket-worker.md`). In a DOCK turn the guard refuses Edit, Write and git commit until you have read it.
 
 You implement one task `T<k>` of one ticket. Your task names `BOARD`, your session prompt (`BOARD/prompts/S<n>.md`, or `<epic board>/prompts/S<n>.md` on an epic board: the path your task gives), the task row in `BOARD/tasks.md`, and the worktree path. On a later round it also carries the reviewer's findings or the failing test output; fix exactly those.
 

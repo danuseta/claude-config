@@ -67,7 +67,7 @@ test('get: body without frontmatter, hooksText read-only, kitBody for kit agents
   const t = setup();
   try {
     const g = t.lib.get({ slug: 'browser-verifier' });
-    assert.match(g.body, /^You verify acceptance criteria/);
+    assert.match(g.body, /^Lessons first: [^\n]*\n\nYou verify acceptance criteria/);
     assert.match(g.hooksText, /^hooks:\n  PreToolUse:\n/);
     assert.equal(g.kitBody, g.body);
     assert.equal(g.hooksText, hooksFor('browser'));

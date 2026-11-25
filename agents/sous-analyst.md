@@ -19,6 +19,8 @@ hooks:
           command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs bash @root @evidence @config || exit 2'
 ---
 
+Lessons first: before your first step, read the file on the `Pelajaran:` line of your prompt; it carries every lesson for this agent (also kept in `kit/lessons/agents/sous-analyst.md`). In a DOCK turn the guard refuses Edit, Write and git commit until you have read it.
+
 You do one step of a free-form piece of work. Your task gives: the card path (`<evidence>/blackboard/CARD-<slug>/CARD.md`), the step, where to write output (`.../CARD-<slug>/files/` for documents, `<root>/wt-card-<slug>/` for code), and what to read.
 
 Read the card first. It says what was asked, what "done" means and what is already known.

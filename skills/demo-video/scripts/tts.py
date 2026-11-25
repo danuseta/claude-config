@@ -4,7 +4,8 @@ import re
 import shutil
 import subprocess
 import sys
-import urllib.request
+
+import el_keys
 
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -109,15 +110,29 @@ def spoken_text(show, scenario, lexicon):
     return speak_ids(text)
 
 
+KEYS = None
+
+
+def keys():
+    global KEYS
+    if KEYS is None:
+        KEYS = el_keys.Keys()
+    return KEYS
+
+
 def synth_elevenlabs(text, voice, out_path):
-    key = os.environ.get("ELEVENLABS_API_KEY")
-    if not key:
-        sys.exit("ELEVENLABS_API_KEY is not set; use voice.provider = edge or set the key")
+    """One line through ElevenLabs. A spent key is parked and the next one tried (el_keys); every key parked exits 3."""
     body = json.dumps({"text": text, "model_id": voice.get("model", "eleven_v3"), "voice_settings": {"stability": voice.get("stability", 0.5)}}).encode()
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice['voiceId']}?output_format=mp3_44100_128"
-    request = urllib.request.Request(url, data=body, headers={"xi-api-key": key, "Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=120) as response, open(out_path, "wb") as handle:
-        handle.write(response.read())
+    try:
+        audio = el_keys.post(f"/text-to-speech/{voice['voiceId']}?output_format=mp3_44100_128", body, {"Content-Type": "application/json"}, 120, keys())
+    except el_keys.KeysParked as parked:
+        print(f"ELEVENLABS ALL KEYS PARKED: {parked}", file=sys.stderr)
+        for name, reason in parked.tried:
+            print(f"  {name}: {reason}", file=sys.stderr)
+        print("Only now may the narration use voice.provider = edge; add a key with el-rotate.cjs add <name>.", file=sys.stderr)
+        sys.exit(3)
+    with open(out_path, "wb") as handle:
+        handle.write(audio)
 
 
 def synth_edge(text, voice, out_path):

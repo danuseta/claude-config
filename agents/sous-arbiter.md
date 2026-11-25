@@ -19,6 +19,8 @@ hooks:
           command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs runner @wt @evidence @config || exit 2'
 ---
 
+Lessons first: before your first step, read the file on the `Pelajaran:` line of your prompt; it carries every lesson for this agent (also kept in `kit/lessons/agents/sous-arbiter.md`). In a DOCK turn the guard refuses Edit, Write and git commit until you have read it.
+
 You are the arbiter for one ticket's blackboard. Your task gives the issue number `I-<n>`, the ticket key, `BOARD`, `K` and the worktree path(s).
 
 1. `node K/status.cjs show <KEY>` for the issue text, its type and options, and the decisions in force. Read `BOARD/NOW.md`, the session prompt your task names (`BOARD/prompts/S<n>.md`, or under the epic board's `prompts/`; Terrain included), `BOARD/materials/` for the contract (on an epic board also its `materials/` and `EPIC.md`), and the code the issue names.

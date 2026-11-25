@@ -3,6 +3,8 @@ name: demo-video
 description: Use when making a narrated demo video of a Qonflo ticket or PR (for the boss or a reviewer). Writes Indonesian narration from the AC, voices it with ElevenLabs (Chris), records the local app headless in sharp 1080p as a real demo (a visible cursor that glides to each target and clicks, navigation by clicking, no jumps), and renders the final video in Remotion with an editorial intro, karaoke subtitles, zoom-and-callout notes on the component being discussed, the AC checklist before the outro, and a calm outro.
 ---
 
+Lessons first: before the first step, read `lessons.md` in this skill's folder when it exists, and the file on the `Pelajaran:` line of your prompt when it has one. DOCK writes both from Judge findings and the ticket ledgers; in a DOCK turn the guard refuses Edit, Write and git commit until the `Pelajaran:` file is read.
+
 > On the Linux workspace, read the Machine map at the top of `AGENTS.md` first: it maps the Windows paths and commands below.
 
 # Demo video for a Qonflo ticket
@@ -20,7 +22,7 @@ Work in a scratch folder, never in a repo.
 
 - **Data and screen.** Record the local stack (FE + BE) on test data you created, never real customer data. Dark mode, 1920×1080, 30 fps.
 - **Plugins.** First run `node <kitDir>/plugins.cjs`; it prints the choices from DOCK Settings › Plugins. `voice: none`: never call ElevenLabs (no keys, no alignment); voice the narration with `voice.provider = "edge"`, or tell the owner when edge-tts is missing. `storage: none`: do not run `demo-upload.cjs`; leave the video in the evidence folder and give the owner its path. `storage: local` and `s3`: upload as below, DOCK puts the file where the plugin says.
-- **Keys.** The ElevenLabs keys live in DOCK and rotate. Before the TTS and alignment runs, set the env from the rotation: `export ELEVENLABS_API_KEY="$(node <kitDir>/el-rotate.cjs get)"`. When a run fails with 401, 402 or 429, run `node <kitDir>/el-rotate.cjs park`, take the next key the same way and run again. Never write a key to a file or a script, and never echo it or paste it into chat.
+- **Keys.** The ElevenLabs keys live in DOCK and rotate, and `tts.py` and `align.py` rotate them themselves (`scripts/el_keys.py`): each request takes the key `node <kitDir>/el-rotate.cjs get` gives, and on 401, 402, 403, 429 or a quota error it runs `el-rotate.cjs park`, takes the next key and tries again, until a key works or every key is parked. The kit folder is `DEMO_KIT_DIR`, else `$CLAUDE_CONFIG_DIR/kit`, else `~/.claude/kit`; el-rotate reaches DOCK with the turn's DOCK env. Do not park or switch keys by hand. **Edge only when tts.py reports every key parked**: it exits 3 with `ELEVENLABS ALL KEYS PARKED` and one line per key it tried with the reason (`suryo: quota_exceeded`). Quote those lines to the owner and only then voice with `voice.provider = "edge"`; never choose edge yourself after a 401. Never write a key to a file or a script, and never echo it or paste it into chat.
 - **Recording.** Record headless only. OBS and screen capture record whatever is on the user's screen.
 - **Look.**
   - Intro is "editorial": a left-aligned headline, a mono caption with the ticket, and a real frame of the demo that scales up into the body.
@@ -97,7 +99,7 @@ Write narration the way people talk:
    ```
    python scripts/align.py <work>/audio.json <work>/audio <work>/words.json
    ```
-   This uses ElevenLabs forced alignment on the existing audio; nothing is regenerated. Without the key, it falls back to a length estimate and says so.
+   This uses ElevenLabs forced alignment on the existing audio; nothing is regenerated. It rotates the keys like `tts.py`; when every key is parked it falls back to a length estimate and prints the keys it tried.
 6. **Remotion input.**
    ```
    python scripts/build_input.py <work>/scenario.json <work>/cues.json <work>/words.json <work>/recording.mp4 <work>/demo.json

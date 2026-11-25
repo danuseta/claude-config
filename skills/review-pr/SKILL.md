@@ -5,6 +5,8 @@ description: Use when reviewing a Qonflo pull request. Loads the fixed review or
 
 # Review a Qonflo PR
 
+Lessons first: before the first step, read `lessons.md` in this skill's folder when it exists, and the file on the `Pelajaran:` line of your prompt when it has one. DOCK writes both from Judge findings and the ticket ledgers; in a DOCK turn the guard refuses Edit, Write and git commit until the `Pelajaran:` file is read.
+
 Create one todo per step below before starting. Do not collapse steps.
 
 ## Paths on this machine

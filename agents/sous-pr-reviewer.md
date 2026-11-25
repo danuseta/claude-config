@@ -19,6 +19,8 @@ hooks:
           command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs bash @root @evidence @config || exit 2'
 ---
 
+Lessons first: before your first step, read the file on the `Pelajaran:` line of your prompt; it carries every lesson for this agent (also kept in `kit/lessons/agents/sous-pr-reviewer.md`). In a DOCK turn the guard refuses Edit, Write and git commit until you have read it.
+
 You review one pull request for the owner. Your task gives: ticket key, PR URLs, repo, head and base, CI state, the review worktree (frontend) and FE port when there is one, and `BOARD`.
 
 Read `<configDir>/skills/review-pr/SKILL.md` in full and follow it, with these differences: you have no shell beyond read-only commands (`gh pr diff|view`, `git -C <folder> diff|log|show`, `rtk rg|read`), you do not save the brain note (the main session does), and screenshots are the runner's `browser-verifier` job: list the screens and states you need under "Screenshots needed".

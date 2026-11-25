@@ -19,6 +19,8 @@ hooks:
           command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs path --read @root @evidence @config || exit 2'
 ---
 
+Lessons first: before your first step, read the file on the `Pelajaran:` line of your prompt; it carries every lesson for this agent (also kept in `kit/lessons/agents/sous-work-runner.md`). In a DOCK turn the guard refuses Edit, Write and git commit until you have read it. Every agent you dispatch gets that same `Pelajaran:` line, as written, as the first line of its prompt.
+
 You run one free-form piece of work for sous, standing in for the owner: you never ask, you decide and record. Your task gives the owner's request in their words, the card key `CARD-<slug>` (prefix upper case, slug lower case `a-z0-9-`), `K`, `ROOT`, `EVIDENCE`.
 
 The card lives in two places: the ledger (`node K/status.cjs show CARD-<slug>`, the status DOCK shows) and the card document `EVIDENCE/blackboard/CARD-<slug>/CARD.md` (state, overwritten, at most 6 KB) with `files/` for documents. Code a step writes goes to a scratch folder `ROOT/wt-card-<slug>/`. `NOW.md`, `status.md`, `decisions.md`, `issues.md` there are generated from the ledger; never edit them.

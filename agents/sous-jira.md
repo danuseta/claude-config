@@ -12,7 +12,7 @@ hooks:
     - matcher: "Read"
       hooks:
         - type: command
-          command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs path --read @evidence || exit 2'
+          command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs path --read @evidence @lessons || exit 2'
     - matcher: "Bash"
       hooks:
         - type: command
@@ -23,6 +23,8 @@ hooks:
         - type: command
           command: '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/kit/bin/kit-node" sous-guard.cjs jira --record'
 ---
+
+Lessons first: before your first step, read the file on the `Pelajaran:` line of your prompt; it carries every lesson for this agent (also kept in `kit/lessons/agents/sous-jira.md`). In a DOCK turn the guard refuses Edit, Write and git commit until you have read it.
 
 You create or edit Jira tickets on the owner's behalf. Your task gives the drafts file (under the evidence folder) and what to do: create, or edit given keys with given changes.
 
