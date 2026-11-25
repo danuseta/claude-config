@@ -113,6 +113,8 @@ test('the hook fails closed: unreadable input exits 2 with the reason, and the s
   const base = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'settings', 'settings.base.json'), 'utf8'));
   const cmds = base.hooks.PreToolUse.flatMap((e) => e.hooks.map((h) => h.command)).filter((c) => /guard\.cjs/.test(c));
   assert.deepEqual(cmds, ['{{kit:guard.cjs}} || exit 2']);
+  const matcher = base.hooks.PreToolUse.find((e) => e.hooks.some((h) => /guard\.cjs/.test(h.command))).matcher.split('|');
+  for (const tool of ['Agent', 'Task']) assert.ok(matcher.includes(tool), `guard matcher misses ${tool}, so the foreground rule never runs`);
 });
 
 test('the rendered settings command blocks with exit 2 when node or the guard is missing', { skip: process.platform === 'win32' && !process.env.SHELL && !fs.existsSync('C:/Program Files/Git/bin/bash.exe') }, () => {
