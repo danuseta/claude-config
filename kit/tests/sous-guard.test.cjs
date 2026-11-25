@@ -101,8 +101,9 @@ test('runner guard: sous agents and browser-verifier only; kit scripts by their 
   const g = winGuard();
   const roots = ['@root', '@evidence', '@config'];
   for (const t of ['sous-intake', 'sous-planner', 'sous-ticket-worker', 'sous-reviewer', 'sous-verifier', 'sous-arbiter', 'sous-publisher', 'sous-explorer', 'sous-jira', 'sous-video', 'browser-verifier']) {
-    assert.equal(g.check('runner', roots, { tool_name: 'Agent', tool_input: { subagent_type: t } }), null, t);
+    assert.equal(g.check('runner', roots, { tool_name: 'Agent', tool_input: { subagent_type: t, run_in_background: false } }), null, t);
   }
+  assert.match(g.check('runner', roots, { tool_name: 'Agent', tool_input: { subagent_type: 'sous-reviewer' } }), /no background agents/, 'QRD-1659: an agent without run_in_background: false launches async and dies with the turn');
   assert.match(g.check('runner', roots, { tool_name: 'Agent', tool_input: { subagent_type: 'sous-ticket-worker', run_in_background: true } }), /no background agents/, 'QRD-1346: background workers died with the turn');
   assert.match(g.check('runner', roots, { tool_name: 'Bash', tool_input: { command: 'rtk ls E:/qonflo', run_in_background: true } }), /no background/);
   assert.equal(g.check('runner', roots, { tool_name: 'Agent', tool_input: { subagent_type: 'sous-ticket-worker', run_in_background: false } }), null);
