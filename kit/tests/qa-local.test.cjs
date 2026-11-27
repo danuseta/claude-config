@@ -147,3 +147,16 @@ test('--triage-stop refuses an unknown code, a missing reason, and an active run
     assert.equal(fs.existsSync(path.join(data, 'runs')), false);
   } finally { rmrf(data); }
 });
+
+test('qa-local judge: most failed TCs stopping on one locator are Blocked as setup out of date, not REVISION', () => {
+  const { markSharedSetup, qaStatus } = require('../qa-local/lib/judge.cjs');
+  const stale = 'Error: expect(locator).toBeVisible() failed\n\nLocator: getByRole(\'button\', { name: \'New Workflow\' })\nExpected: visible';
+  const tc = (id, error) => ({ id, error, kind: 'assertion', ...qaStatus({ kind: 'assertion' }) });
+  const tcs = [tc('T1', stale), tc('T2', stale), tc('T3', stale), tc('T4', stale), tc('T5', 'Error: expect(locator).toHaveCount(expected) failed\n\nLocator: getByText(\'qa-folder\')'), { id: 'T6', kind: 'pass', ...qaStatus({ kind: 'pass' }) }];
+  assert.deepEqual(markSharedSetup(tcs), { locator: "getByRole('button', { name: 'New Workflow' })", count: 4, failed: 5 });
+  assert.deepEqual(tcs.map((t) => t.qaStatus), ['Blocked', 'Blocked', 'Blocked', 'Blocked', 'Failed', 'Passed']);
+  assert.equal(tcs[0].kind, 'setup');
+  const real = [tc('A', stale), tc('B', 'Error: expect(x).toBe(y)\n\nLocator: getByText(\'a\')'), tc('C', 'Error: expect(x).toBe(y)\n\nLocator: getByText(\'b\')')];
+  assert.equal(markSharedSetup(real), null, 'different failures stay REVISION');
+  assert.equal(markSharedSetup([tc('A', stale), tc('B', stale)]), null, 'two failures are too few to call it setup');
+});
