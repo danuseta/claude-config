@@ -26,8 +26,37 @@ const STATUS_RULES = {
 	timeout: "judge.md Cara mengeksekusi: selector not found or page not loaded is not a feature FAIL -> Blocked",
 	skipped: "judge.md Pemetaan: AC not verifiable automatically, or setup failed -> Blocked",
 	missing: "judge.md Pemetaan: cannot run (declared TC has no test) -> Blocked",
+	setup: "judge.md Cara mengeksekusi: the same selector not found in most TCs is the tests' setup out of date with the UI, not a feature FAIL -> Blocked",
 	unknown: "judge.md Pemetaan: cannot run -> Blocked",
 };
+
+const LOCATOR = /^\s*Locator:\s*(.+)$/m;
+/** At least this many failed TCs, and this share of them, stopping on one locator mean the tests' setup no longer fits the UI. */
+const SETUP_MIN_FAILED = 3;
+const SETUP_SHARE = 0.8;
+
+/**
+ * Failed TCs that all stop on the same locator, most of the run: the tests were written for an older UI (a page moved,
+ * a button renamed) and never reached what they test. They become Blocked with kind "setup", so the run is ESCALATED
+ * instead of a REVISION that would send a fix for a feature that was never exercised. Returns the locator, or null.
+ */
+function markSharedSetup(tcs) {
+	const failed = tcs.filter((t) => t.qaStatus === "Failed");
+	if (failed.length < SETUP_MIN_FAILED) return null;
+	const counts = new Map();
+	for (const t of failed) {
+		const m = LOCATOR.exec(String(t.error || ""));
+		if (m) counts.set(m[1].trim(), (counts.get(m[1].trim()) || 0) + 1);
+	}
+	const [locator, count] = [...counts].sort((a, b) => b[1] - a[1])[0] || [];
+	if (!locator || count < Math.ceil(failed.length * SETUP_SHARE)) return null;
+	for (const t of failed) {
+		const m = LOCATOR.exec(String(t.error || ""));
+		if (!m || m[1].trim() !== locator) continue;
+		Object.assign(t, { kind: "setup", qaStatus: "Blocked", finding: null, severity: null, statusRule: STATUS_RULES.setup });
+	}
+	return { locator, count, failed: failed.length };
+}
 
 const ENV_PATTERNS = [
 	/net::ERR_/,
@@ -103,8 +132,9 @@ function computeVerdict(rows) {
 
 const RULE_OF = { REVISION: "J-REVISION", "AC-GAP": "J-AC-GAP", ESCALATED: "J-ESCALATED", LOLOS: "J-LOLOS" };
 
-function judge({ infraError, tcs, acRows }) {
+function judge({ infraError, tcs, acRows, setup = null }) {
 	const { rows, extra } = verdictRows({ infraError, tcs, acRows });
+	if (setup) extra.unshift(`tests out of date with the UI: ${setup.count} of ${setup.failed} failed TCs stop on ${setup.locator}; update the setup steps and run again`);
 	const out = computeVerdict(rows);
 	const r = RULES.find((x) => x.id === RULE_OF[out.ticketStatus]);
 	const failed = tcs.filter((t) => t.qaStatus === "Failed");
@@ -118,4 +148,4 @@ function judge({ infraError, tcs, acRows }) {
 	return { prediction: out.ticketStatus, rule: r.id, ruleText: r.text, reasons, rulesSource: RULES_SOURCE, computedBy: "skill-qonflo-qa/scripts/compute-verdict.mjs", computeVerdict: out };
 }
 
-module.exports = { RULES, RULES_SOURCE, STATUS_RULES, classify, qaStatus, acStatus, verdictRows, judge };
+module.exports = { RULES, RULES_SOURCE, STATUS_RULES, classify, qaStatus, acStatus, verdictRows, judge, markSharedSetup };

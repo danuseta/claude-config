@@ -4,7 +4,7 @@ const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
 const stack = require("./stack.cjs");
-const { judge, acStatus } = require("./judge.cjs");
+const { judge, acStatus, markSharedSetup } = require("./judge.cjs");
 const report = require("./report.cjs");
 const progress = require("./progress.cjs");
 
@@ -482,8 +482,9 @@ function finish(ctx) {
 	const acDoc = ctx.inputs.ac;
 	const tcs = ctx.pw ? report.collect(ctx.pw.json, ctx.runDir, acDoc) : [];
 	const infraError = ctx.infraError || (ctx.pw && ctx.pw.topErrors.length ? `Playwright errors outside tests: ${ctx.pw.topErrors.join(" | ").slice(0, 2000)}` : null);
+	const setup = markSharedSetup(tcs);
 	const acRows = acStatus(acDoc.ac, tcs);
-	const verdict = judge({ infraError, tcs, acRows });
+	const verdict = judge({ infraError, tcs, acRows, setup });
 	const part = (name, d) => {
 		const proc = ctx.started.find((p) => p.name === name);
 		const url = name === "be" ? ctx.urls && ctx.urls.beUrl : ctx.urls && ctx.urls.feUrl;
