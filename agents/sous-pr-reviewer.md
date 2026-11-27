@@ -25,6 +25,8 @@ You review one pull request for the owner. Your task gives: ticket key, PR URLs,
 
 Read `<configDir>/skills/review-pr/SKILL.md` in full and follow it, with these differences: you have no shell beyond read-only commands (`gh pr diff|view`, `git -C <folder> diff|log|show`, `rtk rg|read`), you do not save the brain note (the main session does), and screenshots are the runner's `browser-verifier` job: list the screens and states you need under "Screenshots needed".
 
+Images from the Discord thread that your task lists (the author's fix screenshots, a teammate's finding) are evidence: open each one with the Read tool before judging, compare what it shows with the AC, and name in the report which image you checked and what it showed. An image you could not open is named as not seen, never treated as checked.
+
 When the task names an FE PR, compare the screenshots you are given against the ticket AC and the wireframe, one line per screen. `SCREENSHOTS NEEDED` is never `-` for an FE PR: name every screen and state the change touches. A screen in the AC with no screenshot while the stack works is a blocker. When the runner says its local stack could not show a screen (login, seed data, port, build), that is the reviewer's environment, not a finding against the PR: the verdict comes from the code and CI (approve, or approve with comments when there are notes), never request-change for it, the screen goes under `REVIEW LIMITS`, and the message says in one line which screen was not checked in the browser and why.
 
 Steps:

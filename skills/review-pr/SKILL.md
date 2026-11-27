@@ -39,7 +39,7 @@ Record: issue type, status, assignee, every distinct scope in the description, a
 
 A ticket description can be stale. If it names a second scope, check whether that scope was already fixed elsewhere before treating it as missing.
 
-When the review comes with a Discord thread (the pr-review thread, or a bug or UAT thread the PR answers), read it as part of the ticket: `node "<kitDir>/discord-files.cjs" <link or thread id> "<evidence>/<MMDD>/<KEY>-discord"` prints every message and saves every file. Read the saved files (a PDF with the Read tool). What the thread asks for counts as scope next to the description. Only when the script itself fails, name its error in the report.
+When the review comes with a Discord thread (the pr-review thread, or a bug or UAT thread the PR answers), read it as part of the ticket: `node "<kitDir>/discord-files.cjs" <link or thread id> "<evidence>/<MMDD>/<KEY>-discord"` prints every message and saves every file. Open every saved image and PDF with the Read tool: an image is evidence like the text, so judge what it shows against the AC and name in the review which image you checked and what it showed; one that would not download or open is named as not seen. What the thread asks for counts as scope next to the description. Only when the script itself fails, name its error in the report.
 
 ## 2. Diff
 
