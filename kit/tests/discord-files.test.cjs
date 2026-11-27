@@ -48,7 +48,7 @@ test('main: asks DOCK for the thread with the ingest token, prints the messages 
       if (req.url === '/ingest/orchestrator/discord-thread') {
         const url = `http://127.0.0.1:${server.address().port}/files/evidence.pdf`;
         res.setHeader('content-type', 'application/json');
-        return res.end(JSON.stringify({ ok: true, result: { threadId: '1564141300721393694', messages: [{ at: '2026-10-26T08:00:00Z', author: 'aken', text: 'evidence', files: [{ name: 'evidence.pdf', size: 8, type: 'application/pdf', url }] }] } }));
+        return res.end(JSON.stringify({ ok: true, result: { threadId: '1564141300721393694', messages: [{ at: '2026-10-26T08:00:00Z', author: 'aken', text: 'evidence', files: [{ name: 'evidence.pdf', size: 8, type: 'application/pdf', url }, { name: 'gambar-1.png', size: 8, type: 'image/png', url }] }] } }));
       }
       res.end('%PDF-1.4');
     });
@@ -64,6 +64,8 @@ test('main: asks DOCK for the thread with the ingest token, prints the messages 
     });
     assert.equal(r.code, 0, r.stdout);
     assert.match(r.stdout, /aken: evidence/);
+    assert.match(r.stdout, /gambar-1\.png \(image: open it with the Read tool\)/);
+    assert.doesNotMatch(r.stdout, /evidence\.pdf \(image/);
     assert.equal(fs.readFileSync(path.join(out, 'evidence.pdf'), 'utf8'), '%PDF-1.4');
     assert.deepEqual(seen[0].slice(0, 4), ['POST', '/ingest/orchestrator/discord-thread', 'Bearer tok', '{"threadId":"1564141300721393694"}']);
   } finally {

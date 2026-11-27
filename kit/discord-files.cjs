@@ -8,6 +8,7 @@ const os = require("os");
 const path = require("path");
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
+const IMAGE = /\.(png|jpe?g|gif|webp)$/i;
 
 function threadIdOf(input) {
 	const text = String(input || "").trim();
@@ -79,7 +80,7 @@ async function main() {
 			if (!dl.ok) { console.log(`  failed ${file.name}: ${dl.status}`); continue; }
 			const target = path.join(out, safeName(file.name, taken));
 			fs.writeFileSync(target, Buffer.from(await dl.arrayBuffer()));
-			console.log(`  saved ${target}`);
+			console.log(`  saved ${target}${IMAGE.test(target) ? " (image: open it with the Read tool)" : ""}`);
 			saved += 1;
 		}
 	}
