@@ -16,8 +16,8 @@ const LINE = /Runner jalan:/i;
 const AUTOMATED = /Cron run:|auto review dari DOCK/i;
 const REASON = "runner-announce: write one line to the owner first, starting `Runner jalan:`, naming what the runner does next in order " +
 	"(for example `Runner jalan: intake -> planner -> T1 -> review -> verify -> FINAL -> video -> PR draft. Progress live di DOCK.`), " +
-	"or put `Runner jalan: ...` in the Agent description. Otherwise write it together with another tool call (for example `node K/status.cjs set <KEY> note=...`) and dispatch in your next message: " +
-	"a line in the same message as the dispatch is not on disk yet when this hook reads the transcript.";
+	"or put `Runner jalan: ...` in the Agent description. Otherwise write it together with another tool call (for example `node K/status.cjs set <KEY> note=...`) and dispatch with your next tool call in this same turn: " +
+	"a line in the same message as the dispatch is not on disk yet when this hook reads the transcript. Never end the turn after the line: an ended turn ends the run.";
 
 const VIDEO_WORDS = /re-?render|re-?record|new video|video (ulang|baru)|memperbarui video|update the (demo )?video|redo the (demo )?video/i;
 const VIDEO_LINE = /^\s*new video:\s*(no\b.*|yes, first video never made\b.*|yes, owner:\s*"([^"]+)")\s*$/im;
