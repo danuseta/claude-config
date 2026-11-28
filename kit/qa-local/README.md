@@ -117,7 +117,7 @@ qonflo-qa-local --stop <run folder>
 qonflo-qa-local --help
 ```
 
-`--triage-stop` records a run that ended at triage or review: `<CODE>` is a v2 reason code (`BE_ONLY`, `MCP_LUAR`, `DEPENDENSI`, `DATA_PRASYARAT`, `PIHAK_KETIGA`, `AKUN_KEDUA`, `FE_LINKED`, `PARSIAL`, `LAINNYA`). It starts no stack and no Playwright, takes the one-run lock, and writes `runs/<KEY>/<UTC>/` with `progress.json` (state `done`, steps skipped, `tcs` empty, verdict `ESCALATED`, rule `J-ESCALATED`), `summary.md` and `results.json` (`stoppedAt`, `reasonCode`, `reason`). Exit 3.
+`--triage-stop` records a run that ended at triage or review: `<CODE>` is a v2 reason code (`BE_ONLY`, `MCP_LUAR`, `DEPENDENSI`, `DATA_PRASYARAT`, `PIHAK_KETIGA`, `AKUN_KEDUA`, `FE_LINKED`, `PARSIAL`, `LAINNYA`). It starts no stack and no Playwright, takes a run slot, and writes `runs/<KEY>/<UTC>/` with `progress.json` (state `done`, steps skipped, `tcs` empty, verdict `ESCALATED`, rule `J-ESCALATED`), `summary.md` and `results.json` (`stoppedAt`, `reasonCode`, `reason`). Exit 3.
 
 With `FE_LINKED`, `--fe <FE-KEY>` names the FE ticket a BE ticket follows (`--fe` is a ticket key here, not a worktree) and `--fe-status` its Jira status: `results.json` and `progress.json` get `followsFe: { key, status }`, the verdict is `FOLLOWS_FE` with rule `J-FOLLOWS-FE` instead of `ESCALATED`, and the exit code stays 3 because nothing was tested.
 
@@ -133,7 +133,9 @@ What it does:
 8. Stops exactly the process groups it started, also on Ctrl+C, SIGTERM or a crash, unless `--keep-stack` is given. It deletes the copied login states.
 9. Writes the run folder and prints the verdict prediction.
 
-One run at a time: a second run while one is active stops with exit 5.
+At most `QA_LOCAL_MAX_RUNS` runs at a time (default 2, each in its own slot `.run.lock.<n>` with ports 50 apart). A run of a ticket that already has one, a run on a worktree another run is using, or one past the limit stops with exit 5; wait and run it again.
+
+`--smoke` marks a trial run made while the specs are still being written: `progress.json` and `results.json` carry `smoke: true`, and DOCK takes no verdict and sends no fix from it.
 
 ## Run folder
 

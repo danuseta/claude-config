@@ -141,7 +141,7 @@ test('--triage-stop refuses an unknown code, a missing reason, and an active run
     assert.equal(runMain(['QRD-1', '--triage-stop', 'NOPE', 'x'], data).status, 2);
     assert.equal(runMain(['QRD-1', '--triage-stop', 'LAINNYA'], data).status, 2);
     assert.equal(runMain(['QRD-1', '--triage-stop', 'LAINNYA', '  '], data).status, 2);
-    fs.writeFileSync(path.join(data, '.run.lock'), JSON.stringify({ pid: process.pid, key: 'QRD-9', at: new Date().toISOString() }));
+    fs.writeFileSync(path.join(data, '.run.lock.1'), JSON.stringify({ pid: process.pid, key: 'QRD-1', at: new Date().toISOString() }));
     const busy = runMain(['QRD-1', '--triage-stop', 'LAINNYA', 'why'], data);
     assert.equal(busy.status, 5);
     assert.equal(fs.existsSync(path.join(data, 'runs')), false);
@@ -159,4 +159,29 @@ test('qa-local judge: most failed TCs stopping on one locator are Blocked as set
   const real = [tc('A', stale), tc('B', 'Error: expect(x).toBe(y)\n\nLocator: getByText(\'a\')'), tc('C', 'Error: expect(x).toBe(y)\n\nLocator: getByText(\'b\')')];
   assert.equal(markSharedSetup(real), null, 'different failures stay REVISION');
   assert.equal(markSharedSetup([tc('A', stale), tc('B', stale)]), null, 'two failures are too few to call it setup');
+});
+
+test('two runs at a time by default, never two of one ticket; dead locks are taken over', () => {
+  const home = tmp('qa-local-slots');
+  try {
+    const data = path.join(home, 'data');
+    fs.mkdirSync(data, { recursive: true });
+    const run = (key, env = {}) => spawnSync(process.execPath, [path.join(LOCAL, 'lib', 'main.cjs'), key, '--triage-stop', 'LAINNYA', 'slot test'], { encoding: 'utf8', env: { ...process.env, QA_LOCAL_DIR: data, ...env }, timeout: 60000 });
+    const hold = (name, key) => fs.writeFileSync(path.join(data, name), JSON.stringify({ pid: process.pid, key }));
+    hold('.run.lock.1', 'QRD-1');
+    assert.equal(run('QRD-1').status, 5, 'the same ticket waits');
+    assert.equal(run('QRD-2').status, 3, 'a second ticket gets slot 2');
+    assert.ok(!fs.existsSync(path.join(data, '.run.lock.2')), 'slot 2 is released after the run');
+    hold('.run.lock.2', 'QRD-2');
+    const full = run('QRD-3');
+    assert.equal(full.status, 5);
+    assert.match(full.stderr, /2 runs are active \(QRD-1, QRD-2\)/);
+    assert.equal(run('QRD-3', { QA_LOCAL_MAX_RUNS: '3' }).status, 3, 'QA_LOCAL_MAX_RUNS raises the limit');
+    fs.writeFileSync(path.join(data, '.run.lock.2'), JSON.stringify({ pid: 999999999, key: 'QRD-2' }));
+    assert.equal(run('QRD-3').status, 3, 'a lock whose process died is taken over');
+    fs.rmSync(path.join(data, '.run.lock.1'));
+    hold('.run.lock', 'QRD-9');
+    hold('.run.lock.2', 'QRD-2');
+    assert.equal(run('QRD-3').status, 5, 'the old single lock of a live older run counts as slot 1');
+  } finally { rmrf(home); }
 });
