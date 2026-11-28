@@ -10,11 +10,12 @@ const STEPS = [
 ];
 const LINE_RE = /^\s*(✓|✘|×|-|ok|x)\s+\d+\s+\[[^\]]+\]\s+›.*$/;
 
-function create(runDir, { key, runId, startedAt, tcs, external }) {
+function create(runDir, { key, runId, startedAt, tcs, external, smoke = false }) {
 	const state = {
 		schema: "qonflo-qa-local-progress/1",
 		key,
 		runId,
+		...(smoke ? { smoke: true } : {}),
 		pid: process.pid,
 		startedAt,
 		updatedAt: startedAt,

@@ -48,6 +48,8 @@ Options:
   --fe <dir>        frontend worktree
                     default: ${PROJECTS}/wt-<number>*-be|fe when exactly one matches,
                     else the main clones as they are (no branch switch)
+  --smoke           a trial run while the specs are still being written: results and progress carry
+                    smoke: true and DOCK reads no verdict from it
   --keep-stack      leave the started backend and frontend running; stop later with --stop
   --no-stack        start nothing; use --be-url and --fe-url (localhost only)
   --stop <dir>      stop the processes recorded in <run folder>/stack.json
@@ -61,7 +63,8 @@ Users: local@test.com (QONFLO_PASS_FILE or ~/.qonflo-pass) and local2@test.com
 (QONFLO_PASS_FILE_2, else the same file). Logins go through ${KIT}/login-state.cjs.
 
 Exit codes: 0 LOLOS, 1 REVISION, 2 missing input or refused, 3 ESCALATED,
-4 ESCALATED because the stack, login or Playwright failed, 5 another run is active.
+4 ESCALATED because the stack, login or Playwright failed, 5 busy: a run of the same ticket or
+worktree is active, or QA_LOCAL_MAX_RUNS (default 2) runs are; wait and run it again.
 `;
 
 class UsageError extends Error {}
@@ -84,7 +87,7 @@ function fail(code, msg) {
 }
 
 function parseArgs(argv) {
-	const o = { key: null, be: null, fe: null, feStatus: null, keepStack: false, noStack: false, beUrl: null, feUrl: null, help: false, stop: null, triageStop: null };
+	const o = { key: null, be: null, fe: null, feStatus: null, keepStack: false, noStack: false, beUrl: null, feUrl: null, help: false, stop: null, triageStop: null, smoke: false };
 	const value = (i, name) => {
 		if (i >= argv.length || argv[i].startsWith("--")) throw new UsageError(`${name} needs a value`);
 		return argv[i];
@@ -101,6 +104,7 @@ function parseArgs(argv) {
 		else if (a === "--triage-stop") {
 			o.triageStop = { code: value(++i, a), reason: value(++i, "--triage-stop <CODE> needs a reason;") };
 		} else if (a === "--keep-stack") o.keepStack = true;
+		else if (a === "--smoke") o.smoke = true;
 		else if (a === "--no-stack") o.noStack = true;
 		else if (a.startsWith("-")) throw new UsageError(`unknown option ${a}`);
 		else if (!o.key) o.key = a;
@@ -218,21 +222,46 @@ function alive(pid) {
 	}
 }
 
-function acquireLock(key) {
-	const file = path.join(QA_LOCAL, ".run.lock");
-	if (fs.existsSync(file)) {
-		let cur = null;
-		try {
-			cur = JSON.parse(fs.readFileSync(file, "utf8"));
-		} catch {}
-		if (cur && cur.pid && alive(cur.pid)) fail(EXIT.BUSY, `another run is active: ${cur.key} (pid ${cur.pid}); one run at a time`);
-		fs.unlinkSync(file);
+const MAX_RUNS = Math.max(1, Math.min(4, Number(process.env.QA_LOCAL_MAX_RUNS) || 2));
+
+function readLock(file) {
+	try {
+		const cur = JSON.parse(fs.readFileSync(file, "utf8"));
+		return cur && cur.pid && alive(cur.pid) ? cur : null;
+	} catch {
+		return null;
 	}
-	fs.writeFileSync(file, JSON.stringify({ pid: process.pid, key, at: new Date().toISOString() }) + "\n", { flag: "wx" });
-	return file;
 }
 
-function releaseLock(file) {
+/**
+ * One of MAX_RUNS slots (.run.lock.<n>), never two runs of one ticket and never two stacks on the same worktree.
+ * The old single .run.lock of an older binary still counts as slot 1 while its run lives.
+ */
+function acquireLock(key, dirs = null) {
+	const used = [path.join(QA_LOCAL, ".run.lock"), ...Array.from({ length: 4 }, (_, i) => path.join(QA_LOCAL, `.run.lock.${i + 1}`))]
+		.map((file) => ({ file, cur: readLock(file) }))
+		.filter((x) => x.cur);
+	const same = used.find((x) => x.cur.key === key);
+	if (same) fail(EXIT.BUSY, `a run of ${key} is already active (pid ${same.cur.pid})`);
+	const mine = dirs ? [dirs.be.dir, dirs.fe.dir] : [];
+	const shared = used.find((x) => mine.some((d) => [x.cur.be, x.cur.fe].includes(d)));
+	if (shared) fail(EXIT.BUSY, `another run is active on the same worktree: ${shared.cur.key} (pid ${shared.cur.pid}); wait for it`);
+	const legacy = used.some((x) => path.basename(x.file) === ".run.lock");
+	for (let slot = legacy ? 2 : 1; slot <= MAX_RUNS; slot++) {
+		const file = path.join(QA_LOCAL, `.run.lock.${slot}`);
+		if (fs.existsSync(file) && !readLock(file)) fs.rmSync(file, { force: true });
+		try {
+			fs.writeFileSync(file, JSON.stringify({ pid: process.pid, key, slot, be: mine[0] || null, fe: mine[1] || null, at: new Date().toISOString() }) + "\n", { flag: "wx" });
+			return { file, slot };
+		} catch (e) {
+			if (e.code !== "EEXIST") throw e;
+		}
+	}
+	fail(EXIT.BUSY, `${MAX_RUNS} runs are active (${used.map((x) => x.cur.key).join(", ")}); at most ${MAX_RUNS} at a time`);
+}
+
+function releaseLock(lock) {
+	const file = lock && lock.file;
 	try {
 		const cur = JSON.parse(fs.readFileSync(file, "utf8"));
 		if (cur.pid === process.pid) fs.unlinkSync(file);
@@ -355,8 +384,9 @@ function runChild(cmd, args, { cwd, env, logFile, tee, timeoutMs, onSpawn, onLin
 
 async function bootStack(ctx, dirs, guard) {
 	const bases = KIT_PATHS.ticketPortBase || { be: 3200, fe: 5300 };
-	const bePort = await stack.freePort(Math.max(3200, Number(bases.be) || 3200), guard);
-	const fePort = await stack.freePort(Math.max(5300, Number(bases.fe) || 5300), guard, [bePort]);
+	const offset = ((ctx.lockFile && ctx.lockFile.slot) || 1) * 50 - 50;
+	const bePort = await stack.freePort(Math.max(3200, Number(bases.be) || 3200) + offset, guard);
+	const fePort = await stack.freePort(Math.max(5300, Number(bases.fe) || 5300) + offset, guard, [bePort]);
 	for (const p of [bePort, fePort]) if (guard.has(String(p))) throw new Error(`refused protected port ${p}`);
 	log(`ports: backend ${bePort}, frontend ${fePort}`);
 	const preload = path.join(KIT, "ai-preload.cjs");
@@ -498,6 +528,7 @@ function finish(ctx) {
 		startedAt: ctx.startedAt,
 		finishedAt: new Date().toISOString(),
 		target: "local",
+		...(ctx.opts.smoke ? { smoke: true } : {}),
 		acSource: { file: path.relative(QA_LOCAL, path.join(ctx.inputs.dir, "ac.json")), fetchedAt: acDoc.fetchedAt || null, source: acDoc.source || null },
 		tcFile: ctx.inputs.tcFile ? path.relative(QA_LOCAL, ctx.inputs.tcFile) : null,
 		verdict,
@@ -535,6 +566,7 @@ async function main() {
 	if (!opts.noStack && (opts.beUrl || opts.feUrl)) fail(EXIT.INPUT, "--be-url and --fe-url work only with --no-stack");
 	if (opts.noStack && (opts.be || opts.fe || opts.keepStack)) fail(EXIT.INPUT, "--no-stack does not take --be, --fe or --keep-stack");
 	if (opts.feStatus && !opts.triageStop) fail(EXIT.INPUT, "--fe-status works only with --triage-stop");
+	if (opts.smoke && opts.triageStop) fail(EXIT.INPUT, "--smoke does not go with --triage-stop");
 	if (opts.triageStop) return triageStop(key, opts);
 	const inputs = loadInputs(key);
 	if (!fs.existsSync(PW_CLI)) fail(EXIT.INPUT, `no Playwright runner at ${PW_CLI}; it looks in ~/qa/node_modules and ~/.claude/kit/qa-local/node_modules; run ccfg update (or personalize.sh --only=qa) again`);
@@ -543,13 +575,13 @@ async function main() {
 	const guard = stack.protectedPorts(KIT_PATHS.protectedPorts || []);
 	const external = opts.noStack ? preflightExternal(opts, guard) : null;
 	const dirs = opts.noStack ? null : preflightStack(key, opts);
-	const lockFile = acquireLock(key);
+	const lockFile = acquireLock(key, dirs);
 	const stamp = utcStamp();
 	const runDir = path.join(QA_LOCAL, "runs", key, stamp);
 	for (const d of ["logs", "videos", "auth"]) fs.mkdirSync(path.join(runDir, d), { recursive: true });
 	fs.chmodSync(path.join(runDir, "auth"), 0o700);
 	const ctx = { key, stamp, runDir, opts, inputs, dirs, guard, lockFile, started: [], startedAt: new Date().toISOString(), urls: external, states: null, pw: null, pwChild: null, infraError: null, stopped: null, cleaned: false };
-	ctx.progress = progress.create(runDir, { key, runId: stamp, startedAt: ctx.startedAt, tcs: inputs.ac.tcs, external: opts.noStack });
+	ctx.progress = progress.create(runDir, { key, runId: stamp, startedAt: ctx.startedAt, tcs: inputs.ac.tcs, external: opts.noStack, smoke: opts.smoke });
 	installCleanup(ctx);
 	log(`run folder ${runDir}`);
 	try {
